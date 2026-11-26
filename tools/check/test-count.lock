@@ -1612,6 +1612,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientCoalesci
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientCoalescingTest.negative_tooManyRefusalsRefuseEveryNewHost
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientCoalescingTest.negative_webTransportNeverCoalesces
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConfigMappingTest.defaults
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConfigMappingTest.echBlockReachesTheEngine
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConfigMappingTest.knownServers
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConfigMappingTest.lowLevelBlocksReachTheEngine
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConfigMappingTest.negative_contradictoryCombinationsFailAtCreation
@@ -4233,8 +4234,10 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.ApiLocationTest.versionProfi
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.ConfigGroupsTest.derivedOptionsAreRecordedWhenAssigned
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.ConfigGroupsTest.endpointAppliesItsConnectionIdLengthAndQlogToClientConnections
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.ConfigGroupsTest.endpointAppliesItsConnectionIdLengthAndQlogToTheServer
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.ConfigGroupsTest.everyClientAndServerOptionReachesTheConfig
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.ConfigGroupsTest.everyEndpointOptionReachesTheConfig
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.ConfigGroupsTest.everyQuicOptionReachesTheConfig
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.ConfigGroupsTest.everyServerEndpointOptionReachesTheConfig
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.ConfigGroupsTest.negative_zeroDatagramFrameSizeIsRefusedNullIsOff
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.ConfigGroupsTest.negative_zeroIdleTimeoutIsRefusedNullIsNone
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.ConfigGroupsTest.serverAcceptEarlyDataReachesTheConfig

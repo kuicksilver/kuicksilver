@@ -245,4 +245,47 @@ class ConfigGroupsTest {
         assertEquals(true, quicServerConfig(CoreFixtures.server()) { acceptEarlyData = true }.acceptEarlyData)
         assertEquals(false, quicServerConfig(CoreFixtures.server()) {}.acceptEarlyData)
     }
+
+    /** The options only a server endpoint takes (loops, admission, QUIC-LB) land in the built configuration and survive toBuilder. */
+    @Test fun everyServerEndpointOptionReachesTheConfig() {
+        val admission = ConnectionAdmission.AlwaysRetry
+        val lb = QuicLbConfig(2, byteArrayOf(1, 2, 3, 4), 4, io.kuicksilver.quic.endpoint.QuicLbFixtures.key())
+        val e =
+            quicEndpointConfig {
+                server = quicServerConfig(CoreFixtures.server()) {}
+                connectionIdLength = 9
+                loops = 3
+                this.admission = admission
+                loadBalancer = lb
+            }
+        for (q in listOf(e, e.toBuilder().build())) {
+            assertEquals(3, q.loops)
+            assertSame(admission, q.admission)
+            assertSame(lb, q.loadBalancer)
+        }
+    }
+
+    /** Every option of the QUIC client and server configurations lands in what they build (earlyDataContext: by its limit). */
+    @Test fun everyClientAndServerOptionReachesTheConfig() {
+        val store = MemoryTokenStore()
+        val c =
+            quicClientConfig(CoreFixtures.client()) {
+                earlyData = io.kuicksilver.tls.EarlyDataState.Allowed
+                tokenStore = store
+            }
+        assertEquals(io.kuicksilver.tls.EarlyDataState.Allowed, c.earlyData)
+        assertSame(store, c.tokenStore)
+        val preferred = PreferredAddress(io.ktor.network.sockets.InetSocketAddress("10.0.0.3", 4433), null)
+        val s =
+            quicServerConfig(CoreFixtures.server()) {
+                newTokenLifetime = 1.minutes
+                newTokenReplayCapacity = 4096
+                preferredAddress = preferred
+                earlyDataContext = ByteArray(256)
+            }
+        assertEquals(1.minutes, s.newTokenLifetime)
+        assertEquals(4096, s.newTokenReplayCapacity)
+        assertSame(preferred, s.preferredAddress)
+        assertFailsWith<IllegalArgumentException> { quicServerConfig(CoreFixtures.server()) { earlyDataContext = ByteArray(257) } }
+    }
 }

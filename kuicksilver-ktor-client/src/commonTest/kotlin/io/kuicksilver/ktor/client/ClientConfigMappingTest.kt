@@ -110,6 +110,32 @@ class ClientConfigMappingTest {
         assertEquals(listOf("h2", "http/1.1"), t.alpn)
     }
 
+    /**
+     * `tls { ech { } }`: a `configLists` entry reaches the engine's creation checks (an unusable list is refused naming its
+     * host); `fromHttpsRecords` defaults to true, and its effect on the records' `ech` is tested in ClientHttpsRecordTest.
+     */
+    @Test fun echBlockReachesTheEngine() {
+        assertEquals(true, KuicksilverEngineConfig().tls.ech.fromHttpsRecords)
+        assertEquals(true, KuicksilverEngineConfig().tls.ech.grease)
+        val other = byteArrayOf(0xfe.toByte(), 0x0c, 0, 3, 1, 2, 3)
+        val unusable = io.kuicksilver.tls.EchConfigList.parse(byteArrayOf(0, other.size.toByte()) + other)
+        val e =
+            assertFailsWith<IllegalArgumentException> {
+                io.ktor.client
+                    .HttpClient(Kuicksilver) {
+                        engine {
+                            tls {
+                                ech {
+                                    configLists = mapOf("ech.test" to unusable)
+                                    fromHttpsRecords = false
+                                }
+                            }
+                        }
+                    }.close()
+            }
+        assertTrue("ech.test" in e.message.orEmpty(), e.message)
+    }
+
     /** `proxies { tls { } }` starts from the origin's trust minus its name and no identity; without it the origin's block is taken. */
     @Test fun proxyTlsBlock() {
         val pinned = TrustConfig.ExpectedName("other.test", ClientFixtures.trust)
