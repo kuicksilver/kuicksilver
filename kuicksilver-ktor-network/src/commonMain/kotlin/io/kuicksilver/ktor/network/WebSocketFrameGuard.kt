@@ -253,7 +253,12 @@ public fun guardWebSocketInput(
             // the stream ended (between or inside frames): so does the session's input. ktor-io's readFully answers an input
             // failed with a cause with an EOFException too: that one fails the session's input with the cause
             val cause = input.closedCause
-            if (cause == null) out.flushAndClose() else out.cancel(cause)
+            if (cause == null) {
+                pongs?.inputEnded() // the peer ended its side in order: a held end of ours may go in order
+                out.flushAndClose()
+            } else {
+                out.cancel(cause)
+            }
         } catch (cause: Throwable) {
             out.cancel(cause)
         } finally {

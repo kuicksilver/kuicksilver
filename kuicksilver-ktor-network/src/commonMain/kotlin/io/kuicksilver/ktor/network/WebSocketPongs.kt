@@ -94,8 +94,21 @@ public class WebSocketPongs(
 
     @kotlin.concurrent.Volatile private var scope: CoroutineScope? = null
 
-    /** The input guard read the peer's Close: from here the transport end the output guard holds may go. */
+    /**
+     * The peer's Close was read, or its input ended in order (its FIN, END_STREAM or FIN of the stream): the peer is done,
+     * and a held end goes in order. Never set by a cancellation or a failure of the input ([stop] alone).
+     */
+    @kotlin.concurrent.Volatile private var peerEndedInOrder = false
+
+    /** The input guard read the peer's Close: from here the transport end the output guard holds may go, in order. */
     internal fun peerClosed() {
+        peerEndedInOrder = true
+        peerDone.complete(Unit)
+    }
+
+    /** The input ended in order (no cause): as [peerClosed] for the held end. */
+    internal fun inputEnded() {
+        peerEndedInOrder = true
         peerDone.complete(Unit)
     }
 
@@ -103,11 +116,14 @@ public class WebSocketPongs(
      * The writer ended the output guard's channel after this side's Close, before the peer's Close: the transport stays
      * open for Pongs until the peer's Close is read, the input ends, or [closeWait] passes (RFC 6455 section 5.5.2: Pongs
      * are owed "unless it already received a Close frame"; section 5.5.1: the transport is closed "after both sending and
-     * receiving a Close message"), then [OutputPongs.endHeld] ends it. The engine's own end of the session (its job
-     * cancelled) ends the wait too: when the peer's Close was read or the input ended by then, the held end is still ended
-     * in order, within one more close wait (the engine ends the transport cleanly next and looks at that end); otherwise
-     * it is only marked ended and the engine ends the transport itself. False when there is no scope to wait in (the
-     * input guard never started): the caller ends the transport at once.
+     * receiving a Close message"), then [OutputPongs.endHeld] ends it in order. An input that stopped otherwise (it
+     * failed, or the engine stopped the input guard) and the engine's own end of the session (the guard's job cancelled)
+     * end the wait too, and then the held end is ended in order only when the peer's Close was read or its input ended in
+     * order before (`peerEndedInOrder`, never set by a cancellation): the engine ends the transport cleanly next and looks
+     * at that end. Otherwise the end is only marked ended and the engine ends or resets the transport itself. Whatever
+     * happens, also when a bound fires while the end waits for the lock, the held end is marked ended
+     * ([OutputPongs.markEnded]) once this coroutine is over, so a wait for it ([awaitWebSocketOutputEnd]) always ends.
+     * False when there is no scope to wait in (the input guard never started): the caller ends the transport at once.
      */
     @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class) // ATOMIC: the held end is ended also when the job was cancelled first
     internal fun holdEnd(guard: OutputPongs): Boolean {
@@ -115,18 +131,24 @@ public class WebSocketPongs(
         s.launch(CoroutineName("ws-held-end"), start = CoroutineStart.ATOMIC) {
             var ended = false
             try {
-                withTimeoutOrNull(closeWait) { peerDone.await() }
-                lock.withLock { guard.endHeld(this@WebSocketPongs, close = true) }
+                // the peer's Close, its end in order, or the close wait passing end the hold in order; an input stopped
+                // otherwise ends it too, and then in order only if the peer had ended in order before
+                val waited = withTimeoutOrNull(closeWait) { peerDone.await() }
+                val inOrder = waited == null || peerEndedInOrder
+                lock.withLock { guard.endHeld(this@WebSocketPongs, close = inOrder) }
                 ended = true
             } finally {
-                if (!ended) {
-                    // cancelled (the engine ended the session): once the peer's Close was read, or the input ended, the
-                    // held end is still ended in order (the engine is about to end the transport cleanly), within one close
-                    // wait (a peer that reads nothing more cannot keep it); otherwise it is only marked ended
-                    val inOrder = peerDone.isCompleted
-                    withContext(NonCancellable) {
-                        withTimeoutOrNull(closeWait) { lock.withLock { guard.endHeld(this@WebSocketPongs, close = inOrder) } }
+                try {
+                    if (!ended) {
+                        // cancelled (the engine ended the session): in order only after the peer's Close or its end in order,
+                        // within one close wait (a peer that reads nothing more cannot keep it); a cancellation alone never is
+                        val inOrder = peerEndedInOrder
+                        withContext(NonCancellable) {
+                            withTimeoutOrNull(closeWait) { lock.withLock { guard.endHeld(this@WebSocketPongs, close = inOrder) } }
+                        }
                     }
+                } finally {
+                    guard.markEnded() // whatever happened above, a bound that fired while waiting for the lock included
                 }
             }
         }
@@ -221,4 +243,10 @@ internal interface OutputPongs {
         pongs: WebSocketPongs,
         close: Boolean,
     )
+
+    /**
+     * Without the lock: the held end is over, whether [endHeld] ran or not (a bound fired while it waited for the lock): no
+     * Pong is sent any more, and a wait for the end ([awaitWebSocketOutputEnd]) is over.
+     */
+    fun markEnded()
 }

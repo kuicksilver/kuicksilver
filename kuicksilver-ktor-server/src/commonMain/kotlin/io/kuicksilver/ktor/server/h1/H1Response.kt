@@ -124,10 +124,12 @@ internal class H1Response(
         } finally {
             // the frame guard stops first, then the extension's state is freed (the guard inflates with a codec of its own, so
             // the order is for clarity, not safety)
+            // the transport end the frame guard held for Pongs after the server's Close is ended first, while the guard
+            // still reads the client's Pings and Close (RFC 6455 section 5.5.2): a handler that returns right after its
+            // Close (a raw session) leaves that to the engine
+            sessionOutput?.awaitWebSocketOutputEnd()
             guard.cancel()
             webSocket?.done()
-            // the transport end the frame guard held for Pongs after the server's Close is ended first (RFC 6455 section 5.5.2)
-            sessionOutput?.awaitWebSocketOutputEnd()
             if (sessionOutput?.isWebSocketFrameCut() == true) {
                 // a session whose writer ended inside a frame (the guard resets that already): never a FIN after the cut
                 // frame, which would end a truncated stream as if whole (RFC 6455 section 7.1.1); a failed response resets

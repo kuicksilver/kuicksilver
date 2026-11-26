@@ -48,7 +48,8 @@ internal object WebSocketOverH2 {
     /**
      * How long a session that ended in order waits, after its END_STREAM, for the client's (RFC 8441 section 5: "Orderly
      * TCP-level closures are represented as END_STREAM flags"); only a client that has not ended by then is stopped with
-     * RST_STREAM. As the client engine's wait (RFC 6455 section 7.1.1).
+     * RST_STREAM. As the client engine's wait (RFC 6455 section 7.1.1). The server's frame guard holds its end for Pongs
+     * after the server's Close for as long at most, over every transport (ServerWebSocket).
      */
     val CLOSE_WAIT: kotlin.time.Duration = 5.seconds
 
@@ -169,10 +170,11 @@ internal class H2UpgradeResponse(
         } finally {
             // the frame guard stops first, then the extension's state is freed (the guard inflates with a codec of its own, so
             // the order is for clarity, not safety)
+            // the stream end the frame guard held for Pongs after the server's Close is ended first, while the guard still
+            // reads the client's Pings and Close (RFC 6455 section 5.5.2): a handler that returns right after its Close
+            sessionOutput?.awaitWebSocketOutputEnd()
             guard.cancel()
             webSocket?.done()
-            // the stream end the frame guard held for Pongs after the server's Close is ended first (RFC 6455 section 5.5.2)
-            sessionOutput?.awaitWebSocketOutputEnd()
             // a call cancelled while the session ran cannot end the stream in order: CANCEL both ways (RFC 8441 section 5).
             // Otherwise the session's output ends the stream: END_STREAM once its last frames went out, then the client's
             // END_STREAM is waited for (CLOSE_WAIT), so an orderly close ends with both flags and no RST_STREAM; a client

@@ -16,6 +16,8 @@ import io.kuicksilver.ktor.network.WsTestFrames.frames
 import io.kuicksilver.ktor.network.WsTestFrames.header
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -258,6 +260,65 @@ class WebSocketPongsTest {
             peer.flush()
             advanceUntilIdle()
             assertEquals(0, wire.availableForRead, "no Pong after the transport end")
+            peer.flushAndClose()
+        }
+
+    /**
+     * The engine ends the session (it cancels the guards' job) while the transport end is held after our Close and the
+     * peer is silent: that is no end in order, so the guard does not end the transport (the engine ends or resets it);
+     * the held end is marked ended and a wait for it is over. Before, the input guard's stop on cancellation looked like
+     * the peer's end and the transport was ended in order.
+     */
+    @Test
+    fun negative_anEngineCancelDoesNotEndTheHeldTransportInOrder() =
+        runTest {
+            val job = Job()
+            val peer = ByteChannel()
+            val wire = ByteChannel()
+            val pongs = WebSocketPongs()
+            guardWebSocketInput(peer, 0, false, peerMasks = true, context = coroutineContext + job, pongs = pongs)
+            val session = guardWebSocketOutput(wire, masking = false, pongs = pongs)
+            session.writeFully(close(1000))
+            session.flushAndClose()
+            assertEquals(0x88, oneFrame(wire).b0)
+            job.cancel()
+            advanceUntilIdle()
+            session.awaitWebSocketOutputEnd()
+            assertTrue(!wire.isClosedForWrite, "the guard left the transport's end to the engine")
+            wire.flushAndClose()
+            peer.flushAndClose()
+        }
+
+    /**
+     * The engine's cancel lands while the guard's lock is taken (here by the test, as by a writer stuck on a full output)
+     * and stays taken past the bound: the held end is still marked ended, so a wait for it ends. Before, the bound fired
+     * inside the wait for the lock and left the end open, and awaitWebSocketOutputEnd waited for ever.
+     */
+    @Test
+    fun negative_aBoundThatFiresWhileTheLockIsTakenStillEndsTheHold() =
+        runTest {
+            val job = Job()
+            val peer = ByteChannel()
+            val wire = ByteChannel()
+            val pongs = WebSocketPongs()
+            guardWebSocketInput(peer, 0, false, peerMasks = true, context = coroutineContext + job, pongs = pongs)
+            val session = guardWebSocketOutput(wire, masking = false, pongs = pongs)
+            session.writeFully(close(1000))
+            session.flushAndClose()
+            assertEquals(0x88, oneFrame(wire).b0)
+            pongs.lock.lock()
+            try {
+                job.cancel()
+                val waited = async { session.awaitWebSocketOutputEnd() }
+                runCurrent()
+                assertTrue(!waited.isCompleted, "the end is held while the lock is taken")
+                advanceTimeBy(WebSocketPongs.DEFAULT_CLOSE_WAIT + 1.milliseconds)
+                runCurrent()
+                assertTrue(waited.isCompleted, "the wait for the held end is over")
+            } finally {
+                pongs.lock.unlock()
+            }
+            wire.flushAndClose()
             peer.flushAndClose()
         }
 

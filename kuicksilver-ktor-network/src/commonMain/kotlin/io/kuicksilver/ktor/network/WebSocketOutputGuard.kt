@@ -122,9 +122,11 @@ public fun ByteWriteChannel.isWebSocketFrameCut(): Boolean =
 /**
  * Waits until this channel, made by [guardWebSocketOutput], has ended the transport end it held for the engine's Pongs
  * after this side's Close ([WebSocketPongs]): at once when it holds none, as for any other channel. An engine calls it
- * before it ends the transport itself after the session, so that no Pong is written while it does; bounded by the close
- * wait of the [WebSocketPongs], and over at once when the engine stopped the input guard (its job). A cancelled caller
- * returns without waiting (the engine then resets the transport anyway).
+ * before it stops the input guard and ends the transport itself after the session, so that a Pong the peer is owed
+ * before its Close still goes out and none is written while the engine ends the transport. The wait ends with the peer's
+ * Close or the end of its input, or after the close wait of the [WebSocketPongs] (twice that at most, when the end itself
+ * must wait for the output); the held end is marked ended however its coroutine ends. A cancelled caller returns without
+ * waiting (the engine then resets the transport anyway).
  */
 @InternalKuicksilverApi
 public suspend fun ByteWriteChannel.awaitWebSocketOutputEnd() {
@@ -324,6 +326,14 @@ private class OutputGuard(
         }
     }
 
+    override fun markEnded() {
+        abandoned = true
+        heldEnded.complete(Unit)
+    }
+
+    /** The held end is over ([markEnded]) without [endHeld] having run: no Pong goes out any more. */
+    @kotlin.concurrent.Volatile private var abandoned = false
+
     /** Waits for a held end ([holding]) to be ended; at once when none is held. */
     suspend fun awaitHeldEnd() {
         if (holding) heldEnded.await()
@@ -362,7 +372,7 @@ private class OutputGuard(
     ) {
         pongs.takeRequests()
         // after this side's Close too (RFC 6455 section 5.5.2): only a failure, a closed output or the writer's end stop them
-        if (failure != null || closed || output.isClosedForWrite) {
+        if (failure != null || closed || abandoned || output.isClosedForWrite) {
             pongs.dropWaiting()
             return
         }

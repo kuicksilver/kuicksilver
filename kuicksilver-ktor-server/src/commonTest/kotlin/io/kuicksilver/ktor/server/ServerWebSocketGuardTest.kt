@@ -225,6 +225,70 @@ class ServerWebSocketGuardTest {
             }
         }
 
+    /** A raw session that sends its Close and returns at once: everything after it is the engine's. */
+    private fun Application.rawCloseAndReturn() {
+        install(WebSockets)
+        routing {
+            webSocketRaw("/ws") {
+                outgoing.send(Frame.Close(io.ktor.websocket.CloseReason(io.ktor.websocket.CloseReason.Codes.NORMAL, "bye")))
+            }
+        }
+    }
+
+    /**
+     * The same after a raw session's Close, whose handler returns right after it: the engine keeps the guard reading after
+     * the handler is over, so the client's Ping still gets its Pong, and the connection ends after the client's Close.
+     * Before, the engine stopped the input guard as soon as the handler returned, before it waited for the held end: the
+     * FIN followed the Close and the Ping went unanswered.
+     */
+    @Test fun negative_pingAfterARawSessionsCloseIsAnswered() =
+        serverTest {
+            h1WebSocket({ rawCloseAndReturn() }) { w, r ->
+                withTimeout(10.seconds) {
+                    assertEquals(0x88, serverFrame(r).first, "the server's Close")
+                    w.writeFully(masked(0x89, "raw".encodeToByteArray()))
+                    val (b0, payload) = serverFrame(r)
+                    assertEquals(0x8A, b0, "the Pong after the raw session's Close")
+                    assertEquals("raw", payload.decodeToString())
+                    w.writeFully(masked(0x88, byteArrayOf(0x03, 0xE8.toByte())))
+                    assertTrue(r.readBuffer().exhausted(), "nothing more, then the end of the connection")
+                }
+            }
+        }
+
+    /** [negative_pingAfterARawSessionsCloseIsAnswered] over HTTP/3 (RFC 9220): the stream's FIN after the client's Close. */
+    @Test fun negative_pingAfterARawSessionsCloseIsAnsweredH3() =
+        h3ServerTest {
+            val (server, port) = tlsServer { rawCloseAndReturn() }
+            val ep = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))
+            try {
+                val c = ep.connect(InetSocketAddress("127.0.0.1", port), ServerFixtures.clientTls(alpn = listOf("h3")))
+                try {
+                    val request =
+                        http3Request("CONNECT", "server.test", "/ws") {
+                            headers = Http3Headers.of("sec-websocket-version" to "13")
+                        }
+                    val stream = c.connect(request, "websocket")
+                    withTimeout(10.seconds) {
+                        assertEquals(0x88, serverFrame(stream.input).first, "the server's Close")
+                        stream.output.writeFully(masked(0x89, "raw".encodeToByteArray()))
+                        stream.output.flush()
+                        val (b0, payload) = serverFrame(stream.input)
+                        assertEquals(0x8A, b0, "the Pong after the raw session's Close")
+                        assertEquals("raw", payload.decodeToString())
+                        stream.output.writeFully(masked(0x88, byteArrayOf(0x03, 0xE8.toByte())))
+                        stream.output.flush()
+                        assertTrue(stream.input.readBuffer().exhausted(), "nothing more, then the stream's FIN")
+                    }
+                } finally {
+                    c.close()
+                }
+            } finally {
+                ep.close()
+                server.stop(100, 500)
+            }
+        }
+
     @Test fun negative_rsv1WithoutNegotiationClosesWith1002H3() = h3ServerTest { h3Violation(rsv1Frame) }
 
     @Test fun negative_unmaskedFrameFromClientClosesWith1002H3() = h3ServerTest { h3Violation(unmaskedFrame) }
