@@ -24,9 +24,10 @@ import io.kuicksilver.ktor.server.Kuicksilver as KuicksilverServer
 
 /**
  * The host side of `iosHostInteropTest` (the Gradle task starts it before the simulator tests and stops it after): a Kuicksilver
- * Ktor server (HTTP/1.1 and HTTP/3 on one port) and a raw QUIC echo server, each on 127.0.0.1 and on ::1, and a line-based
- * control port on 127.0.0.1 whose number goes to `args[0]` once everything listens. The simulator shares the host's network
- * stack, so its loopback reaches these sockets and the host reaches the simulator's.
+ * Ktor server (HTTP/1.1 and HTTP/3 on one port; HTTP/2, on by default, is off: `ktorH1ToTheHost` checks HTTP/1.1) and a
+ * raw QUIC echo server, each on 127.0.0.1 and on ::1, and a line-based control port on 127.0.0.1 whose number goes to
+ * `args[0]` once everything listens. The simulator shares the host's network stack, so its loopback reaches these sockets
+ * and the host reaches the simulator's.
  *
  * Control protocol, one request per line, one answer line:
  * - `PORTS` answers `http4=<p> http6=<p> echo4=<p> echo6=<p>`;
@@ -48,6 +49,7 @@ fun main(args: Array<String>) {
                                 this.host = host
                                 port = 0
                             }
+                            http2 { enabled = false }
                         }) {
                             routing { get("/hello") { call.respondText("hello over ${call.request.local.version}") } }
                         }

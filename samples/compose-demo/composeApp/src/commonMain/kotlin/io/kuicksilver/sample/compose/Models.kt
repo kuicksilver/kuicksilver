@@ -251,8 +251,8 @@ data class DiagnosticsState(
 )
 
 /**
- * The Diagnostics screen's model: a GET of any URL with Kuicksilver in Auto discovery (HTTP/1.1 first, HTTP/3 once the
- * origin announced it with Alt-Svc, as an app would run it), and the kill switch [setHttp3Allowed], which the engine reads
+ * The Diagnostics screen's model: a GET of any URL with Kuicksilver in Auto discovery (HTTP/2 or HTTP/1.1 first, HTTP/3
+ * once the origin announced it with Alt-Svc, as an app would run it), and the kill switch [setHttp3Allowed], which the engine reads
  * on every request. [clientFor] builds the client for a trust and the switch.
  */
 class DiagnosticsModel(

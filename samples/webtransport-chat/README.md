@@ -76,8 +76,8 @@ certificate from a CA of your own and give the clients that CA: `client <host> <
 
 ## What to look at
 
-- `ChatServer.kt`: the whole server is `chatServer()` (one `tlsConnector`, which serves HTTP/1.1 on TCP and HTTP/3 on
-  UDP on the same port) and a `webTransport` route. The route checks the `origin` field with `sameHostOrigin` by
+- `ChatServer.kt`: the whole server is `chatServer()` (one `tlsConnector`, which serves HTTP/2 and HTTP/1.1 on TCP and
+  HTTP/3 on UDP on the same port) and a `webTransport` route. The route checks the `origin` field with `sameHostOrigin` by
   default: clients that are no browser send none and are admitted.
 - `ChatClient.kt`: `join` is one `webTransport(url)` call and one stream; `events` merges the stream's lines with the
   datagrams. Sessions share the client engine's pooled HTTP/3 connection to the server (up to 4 per connection with

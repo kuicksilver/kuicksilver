@@ -190,7 +190,10 @@ internal class RawServer private constructor(
 
 internal typealias SoakHttpServer = EmbeddedServer<KuicksilverApplicationEngine, KuicksilverApplicationEngine.Configuration>
 
-/** The Ktor server: HTTP/1.1 over TLS and HTTP/3 on one port of 127.0.0.1. */
+/**
+ * The Ktor server: HTTP/1.1 over TLS and HTTP/3 on one port of 127.0.0.1. HTTP/2 is off (it is on by default), so the
+ * KtorH1 scenario and the TCP half of KtorAbort run HTTP/1.1, as they say.
+ */
 internal object HttpServer {
     suspend fun start(): Pair<SoakHttpServer, Int> {
         val server =
@@ -200,6 +203,7 @@ internal object HttpServer {
                     host = "127.0.0.1"
                     port = 0
                 }
+                http2 { enabled = false }
                 SoakQlog.sink?.let { sink -> observability { qlog = sink } }
             }) {
                 routing {

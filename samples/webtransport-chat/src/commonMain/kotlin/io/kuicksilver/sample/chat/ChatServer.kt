@@ -29,8 +29,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.time.TimeSource
 
 /**
- * The chat server on Kuicksilver's Ktor engine: one TLS connector with [identity], which serves HTTP/1.1 on TCP and
- * HTTP/3 on UDP on the same port, with WebTransport on; [chatModule] routes the sessions. Port 0 picks a free one
+ * The chat server on Kuicksilver's Ktor engine: one TLS connector with [identity], which serves HTTP/2 and HTTP/1.1 on
+ * TCP and HTTP/3 on UDP on the same port, with WebTransport on; [chatModule] routes the sessions. Port 0 picks a free one
  * (`resolvedConnectors()`). It listens on loopback by default: binding [host] to the network needs a certificate and key
  * of your own as [identity], never the sample's public test identity.
  */

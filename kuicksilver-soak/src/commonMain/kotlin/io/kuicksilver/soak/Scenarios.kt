@@ -7,8 +7,11 @@ import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.prepareGet
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsChannel
 import io.ktor.client.statement.bodyAsText
+import io.ktor.client.statement.request
+import io.ktor.http.HttpProtocolVersion
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.discard
@@ -152,18 +155,53 @@ internal class Workload(
         r: Random,
     ): Outcome =
         when (s) {
-            Scenario.QuicTransfer -> quicTransfer(r)
-            Scenario.QuicAbort -> quicAbort(r)
-            Scenario.QuicIdleTimeout -> idleTimeout()
-            Scenario.QuicStatelessReset -> statelessReset()
-            Scenario.QuicMigration -> migration(r)
-            Scenario.QuicZeroRtt -> zeroRtt(r)
-            Scenario.QuicEndpointChurn -> endpointChurn(r)
-            Scenario.QuicRefusal -> refusal()
-            Scenario.KtorH1 -> ktor(h1, r)
-            Scenario.KtorH3 -> ktor(h3, r)
-            Scenario.KtorAbort -> ktorAbort(if (r.nextBoolean()) h1 else h3, r)
-            Scenario.KtorClientChurn -> clientChurn(r)
+            Scenario.QuicTransfer -> {
+                quicTransfer(r)
+            }
+
+            Scenario.QuicAbort -> {
+                quicAbort(r)
+            }
+
+            Scenario.QuicIdleTimeout -> {
+                idleTimeout()
+            }
+
+            Scenario.QuicStatelessReset -> {
+                statelessReset()
+            }
+
+            Scenario.QuicMigration -> {
+                migration(r)
+            }
+
+            Scenario.QuicZeroRtt -> {
+                zeroRtt(r)
+            }
+
+            Scenario.QuicEndpointChurn -> {
+                endpointChurn(r)
+            }
+
+            Scenario.QuicRefusal -> {
+                refusal()
+            }
+
+            Scenario.KtorH1 -> {
+                ktor(h1, r, HttpProtocolVersion.HTTP_1_1)
+            }
+
+            Scenario.KtorH3 -> {
+                ktor(h3, r, HttpProtocolVersion.HTTP_3_0)
+            }
+
+            Scenario.KtorAbort -> {
+                if (r.nextBoolean()) ktorAbort(h1, r, HttpProtocolVersion.HTTP_1_1) else ktorAbort(h3, r, HttpProtocolVersion.HTTP_3_0)
+            }
+
+            Scenario.KtorClientChurn -> {
+                clientChurn(r)
+            }
         }
 
     private suspend fun QuicConnection.get(n: Int) {
@@ -352,28 +390,43 @@ internal class Workload(
 
     private val base get() = "https://127.0.0.1:$httpPort"
 
+    /** One upload or download over [client], which must have used one of [versions]: a silent protocol change fails. */
     private suspend fun ktor(
         client: HttpClient,
         r: Random,
+        vararg versions: HttpProtocolVersion,
     ): Outcome {
         if (r.nextInt(4) == 0) {
             val n = size(r, 1 shl 20)
-            val text = client.post("$base/upload") { setBody(ByteArray(n)) }.bodyAsText()
+            val resp = client.post("$base/upload") { setBody(ByteArray(n)) }
+            checkVersion(resp, versions)
+            val text = resp.bodyAsText()
             check(text == "ok $n") { "upload $n answered $text" }
         } else {
             val n = size(r, 1 shl 20)
-            val got = client.get("$base/bytes/$n").bodyAsChannel().discard()
+            val resp = client.get("$base/bytes/$n")
+            checkVersion(resp, versions)
+            val got = resp.bodyAsChannel().discard()
             check(got == n.toLong()) { "GET /bytes/$n returned $got" }
         }
         return Outcome.Ok
+    }
+
+    private fun checkVersion(
+        resp: HttpResponse,
+        versions: Array<out HttpProtocolVersion>,
+    ) = check(resp.version in versions) {
+        "${resp.request.method.value} ${resp.request.url} went over ${resp.version}, not ${versions.toList()}"
     }
 
     /** A streamed body read partway, then the call is left: the engine must cancel the stream (RST/STOP_SENDING or a dropped HTTP/1.1 connection). */
     private suspend fun ktorAbort(
         client: HttpClient,
         r: Random,
+        version: HttpProtocolVersion,
     ): Outcome {
         client.prepareGet("$base/stream/${8 shl 20}").execute { resp ->
+            checkVersion(resp, arrayOf(version))
             val ch: ByteReadChannel = resp.bodyAsChannel()
             val buf = ByteArray(16 * 1024)
             var read = 0
@@ -389,9 +442,13 @@ internal class Workload(
 
     /** A new HttpClient (engine, selector, HTTP/3 endpoint, pools) for two requests, then closed. */
     private suspend fun clientChurn(r: Random): Outcome {
-        val client = soakHttpClient(if (r.nextBoolean()) Http3Discovery.H3Only else Http3Discovery.Auto)
+        val h3Only = r.nextBoolean()
+        val client = soakHttpClient(if (h3Only) Http3Discovery.H3Only else Http3Discovery.Auto)
         try {
-            repeat(2) { ktor(client, r) }
+            // Auto: HTTP/1.1 until the server's Alt-Svc moved it to HTTP/3 (or the race already chose HTTP/3)
+            val versions =
+                if (h3Only) arrayOf(HttpProtocolVersion.HTTP_3_0) else arrayOf(HttpProtocolVersion.HTTP_1_1, HttpProtocolVersion.HTTP_3_0)
+            repeat(2) { ktor(client, r, *versions) }
         } finally {
             client.close()
         }

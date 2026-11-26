@@ -318,6 +318,7 @@ internal class Soak(
                 "ksl.session" to 0,
                 "ksl.udp" to 0,
                 "ksl.wake" to 0,
+                "ksl.echKeys" to 0,
                 "quic.loops" to 0,
                 "quic.connections" to 0,
                 "quic.runtimes" to 0,
@@ -390,6 +391,6 @@ internal class Sampler(
 
     companion object {
         val LIVE_NAMES: List<String> =
-            listOf("ctx", "ssl", "key", "pkey", "session", "udp", "wake").also { check(it.size == KslConst.LIVE_COUNT) }
+            listOf("ctx", "ssl", "key", "pkey", "session", "udp", "wake", "echKeys").also { check(it.size == KslConst.LIVE_COUNT) }
     }
 }

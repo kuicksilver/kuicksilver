@@ -133,7 +133,7 @@ class ClientMigrationAndroidTest {
         http3 { quic { maxIdleTimeout = 10.seconds } }
         observability { eventListener = listener }
         http3 {
-            expert { raceHeadStart = RaceHeadStart.NoRace } // HTTP/1.1 only after HTTP/3 failed
+            expert { raceHeadStart = RaceHeadStart.NoRace } // TCP (HTTP/2 or HTTP/1.1) only after HTTP/3 failed
             if (migrate) {
                 // guide:ktor:android-migration
                 migration = Http3ConnectionMigration.followDefaultNetwork(connectivity)
