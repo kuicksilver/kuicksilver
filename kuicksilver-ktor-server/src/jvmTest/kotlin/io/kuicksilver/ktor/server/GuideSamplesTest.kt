@@ -948,6 +948,7 @@ class GuideSamplesTest {
             val server =
                 embeddedServer(Kuicksilver, configure = {
                     tlsConnector {
+                        // built, never started
                         tls { this.identity = identity }
                         port = 443
                         tls { echKeys = keys }

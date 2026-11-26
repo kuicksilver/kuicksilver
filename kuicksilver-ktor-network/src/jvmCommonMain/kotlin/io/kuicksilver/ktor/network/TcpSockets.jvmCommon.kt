@@ -113,6 +113,17 @@ public actual suspend fun bindTcp(
     port: Int,
 ): ServerSocket = KslNioServerSocket(aSocket(selector).tcp().bind(host, port), selector)
 
+@InternalKuicksilverApi
+public actual fun ipv6Bindable(): Boolean =
+    try {
+        java.nio.channels.ServerSocketChannel
+            .open()
+            .use { it.bind(java.net.InetSocketAddress(java.net.InetAddress.getByName("::"), 0)) }
+        true
+    } catch (_: Exception) {
+        false // UnsupportedAddressTypeException under preferIPv4Stack, a SocketException where the kernel has no IPv6
+    }
+
 internal actual fun Socket.rawBytesSent(): Long? = (this as? KslNioSocket)?.bytesWritten?.get()
 
 internal actual fun Socket.setRawCloseTimeout(timeout: Duration?) {

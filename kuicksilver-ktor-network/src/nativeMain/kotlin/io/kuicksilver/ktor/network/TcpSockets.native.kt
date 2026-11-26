@@ -285,6 +285,17 @@ internal actual fun platformResolveFamily(
 ): List<TcpAddress> = kslResolveFamily(name, ipv6) ?: throw IOException("Failed to resolve $name: the native library is not usable")
 
 @InternalKuicksilverApi
+public actual fun ipv6Bindable(): Boolean {
+    tcpStartup()
+    return try {
+        tcpClose(tcpOpen(afInet6))
+        true
+    } catch (_: Exception) {
+        false // EAFNOSUPPORT: a kernel without IPv6
+    }
+}
+
+@InternalKuicksilverApi
 public actual suspend fun bindTcp(
     selector: SelectorManager,
     host: String,
@@ -294,6 +305,8 @@ public actual suspend fun bindTcp(
     val at = tcpResolve(host.unbracketed(), port).firstOrNull()?.unmapped() ?: throw IOException("Failed to resolve address for $host")
     val fd = tcpOpen(at.family)
     try {
+        // `::` is every interface of both families, as on the JVM: Windows (and a Linux with bindv6only) would take IPv6 alone
+        if (at.family == afInet6 && at.ip.all { it.toInt() == 0 }) tcpDualStack(fd)
         tcpBindListen(fd, at, BACKLOG)
         return NativeTcpServerSocket(selector, fd, tcpAddressOf(fd, peer = false).toInet())
     } catch (e: Throwable) {

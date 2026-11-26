@@ -98,14 +98,23 @@ class ServerConfigMappingTest {
 
     @Test fun defaultConnectors() {
         val tls = KuicksilverTlsConnector.Builder()
-        assertEquals("0.0.0.0", tls.host, "host changes with the commit that binds every interface")
+        assertNull(tls.host, "every interface, IPv6 and IPv4")
         assertEquals(443, tls.port)
         assertEquals(false, tls.allowMisdirectedHosts)
         val plain = KuicksilverPlainConnector.Builder()
-        assertEquals("0.0.0.0", plain.host)
+        assertNull(plain.host)
         assertEquals(80, plain.port)
         assertEquals(false, plain.allowMisdirectedHosts)
         assertEquals(H2cMode.Off, plain.h2c)
+        // null binds the dual-stack wildcard; an explicit host binds as given
+        assertEquals("::", tls.build().host)
+        assertEquals(true, tls.build().everyInterface)
+        assertEquals("::", plain.build().host)
+        tls.host = "0.0.0.0"
+        assertEquals("0.0.0.0", tls.build().host)
+        assertEquals(false, tls.build().everyInterface)
+        tls.host = "::"
+        assertEquals(false, tls.build().everyInterface, "an explicit :: is not the IPv4 fallback's to change")
         val proxy = ProxyProtocolConfig.Builder()
         assertEquals(5.seconds, proxy.headerTimeout)
         assertEquals(4096, proxy.maxHeaderSize)

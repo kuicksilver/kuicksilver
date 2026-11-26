@@ -229,6 +229,21 @@ internal actual fun tcpConnectedNow(fd: Int): Boolean {
 
 internal actual fun tcpWouldBlock(error: Int): Boolean = error == WSAEWOULDBLOCK || error == WSAEINPROGRESS
 
+internal actual fun tcpDualStack(fd: Int) {
+    memScoped {
+        val err = alloc<IntVar>()
+        val off = alloc<IntVar>()
+        off.value = 0
+        // ws2ipdef.h: IPPROTO_IPV6 41, IPV6_V6ONLY 27 (on by default on Windows)
+        if (ksl_wsa_setsockopt(fd.convert(), WIN_IPPROTO_IPV6, WIN_IPV6_V6ONLY, off.ptr, sizeOf<IntVar>().toInt(), err.ptr) != 0) {
+            throw PosixException.forErrno(err.value, "setsockopt(IPV6_V6ONLY)")
+        }
+    }
+}
+
+private const val WIN_IPPROTO_IPV6 = 41
+private const val WIN_IPV6_V6ONLY = 27
+
 internal actual fun tcpBindListen(
     fd: Int,
     to: Sockaddr,

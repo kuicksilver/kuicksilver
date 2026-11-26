@@ -38,6 +38,8 @@ public class KuicksilverTlsConnector internal constructor(
     internal val allowMisdirectedHosts: Boolean,
     /** The TLS as served, once the engine resolved it ([resolved]); null before. */
     private val resolvedTls: ResolvedServerTls?,
+    /** Bound to every interface ([Builder.host] null): `::`, or `0.0.0.0` where the host has no IPv6. */
+    internal val everyInterface: Boolean = false,
 ) : EngineConnectorConfig {
     /** Always HTTPS. */
     override val type: ConnectorType get() = ConnectorType.HTTPS
@@ -65,7 +67,7 @@ public class KuicksilverTlsConnector internal constructor(
             "tlsConnector { } on port $port needs an identity: tls { pemFiles(...) } or tls { identity }, in the engine or " +
                 "in the connector (or an sniSelector)"
         }
-        return KuicksilverTlsConnector(host, port, tlsBlocks, proxyProtocol, allowMisdirectedHosts, r)
+        return KuicksilverTlsConnector(host, port, tlsBlocks, proxyProtocol, allowMisdirectedHosts, r, everyInterface)
     }
 
     /**
@@ -128,7 +130,11 @@ public class KuicksilverTlsConnector internal constructor(
 
     /** The same connector bound to [port] (resolved connectors report the real port). */
     internal fun withPort(port: Int): KuicksilverTlsConnector =
-        KuicksilverTlsConnector(host, port, tlsBlocks, proxyProtocol, allowMisdirectedHosts, resolvedTls)
+        KuicksilverTlsConnector(host, port, tlsBlocks, proxyProtocol, allowMisdirectedHosts, resolvedTls, everyInterface)
+
+    /** The same connector on [host] (every interface on a host without IPv6: `0.0.0.0`). */
+    internal fun withHost(host: String): KuicksilverTlsConnector =
+        KuicksilverTlsConnector(host, port, tlsBlocks, proxyProtocol, allowMisdirectedHosts, resolvedTls, everyInterface)
 
     /** For logs. */
     override fun toString(): String = "HTTPS (Kuicksilver TLS) $host:$port"
@@ -136,8 +142,13 @@ public class KuicksilverTlsConnector internal constructor(
     /** Builds a [KuicksilverTlsConnector]; used by `tlsConnector { ... }` in the engine configuration. */
     @KuicksilverDsl
     public class Builder internal constructor() {
-        /** The address to bind, for TCP and UDP alike; `0.0.0.0` (every IPv4 interface) by default. */
-        public var host: String = "0.0.0.0"
+        /**
+         * The address to bind, for TCP and UDP alike; null (the default): every interface, IPv6 and IPv4, with one dual-stack
+         * socket per protocol bound to `::` (IPv4 clients reach it as IPv4-mapped addresses), or `0.0.0.0` where the host
+         * has no IPv6 (logged at Info). `"0.0.0.0"` keeps IPv4 alone, `"::1"` or `"127.0.0.1"` one loopback. Since 0.3.0
+         * (0.2: `0.0.0.0`).
+         */
+        public var host: String? = null
 
         /** The TCP port, and the UDP port of HTTP/3; 0 picks a free port (see `resolvedConnectors()`); 443 by default. */
         public var port: Int = 443
@@ -184,7 +195,14 @@ public class KuicksilverTlsConnector internal constructor(
         @OptIn(DelicateKuicksilverApi::class)
         internal fun build(): KuicksilverTlsConnector {
             require(port in 0..65_535) { "tlsConnector { port } must be 0..65535" }
-            return KuicksilverTlsConnector(host, port, tlsBlocks.toList(), proxy, allowMisdirectedHosts, null)
+            val h = host
+            return KuicksilverTlsConnector(h ?: EVERY_INTERFACE, port, tlsBlocks.toList(), proxy, allowMisdirectedHosts, null, h == null)
         }
     }
 }
+
+/** What a connector without a host binds: the IPv6 unspecified address, a dual-stack socket. */
+internal const val EVERY_INTERFACE: String = "::"
+
+/** What it binds on a host without IPv6. */
+internal const val IPV4_EVERY_INTERFACE: String = "0.0.0.0"

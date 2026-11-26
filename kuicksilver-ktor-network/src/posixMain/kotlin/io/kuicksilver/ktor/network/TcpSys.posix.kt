@@ -39,7 +39,9 @@ import platform.posix.FD_CLOEXEC
 import platform.posix.F_GETFL
 import platform.posix.F_SETFD
 import platform.posix.F_SETFL
+import platform.posix.IPPROTO_IPV6
 import platform.posix.IPPROTO_TCP
+import platform.posix.IPV6_V6ONLY
 import platform.posix.O_NONBLOCK
 import platform.posix.SOCK_DGRAM
 import platform.posix.SOCK_STREAM
@@ -158,6 +160,16 @@ internal actual fun tcpPendingError(fd: Int): Int =
 internal actual fun tcpConnectedNow(fd: Int): Boolean = runCatching { tcpAddressOf(fd, peer = true) }.isSuccess
 
 internal actual fun tcpWouldBlock(error: Int): Boolean = error == EAGAIN || error == EWOULDBLOCK || error == EINPROGRESS
+
+internal actual fun tcpDualStack(fd: Int) {
+    memScoped {
+        val off = alloc<IntVar>()
+        off.value = 0
+        if (setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, off.ptr, sizeOf<IntVar>().convert()) != 0) {
+            throw PosixException.forErrno(errno, "setsockopt(IPV6_V6ONLY)")
+        }
+    }
+}
 
 internal actual fun tcpBindListen(
     fd: Int,

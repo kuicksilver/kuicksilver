@@ -22,6 +22,7 @@ import io.kuicksilver.annotations.SecuritySensitive
 import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3Settings
+import io.kuicksilver.ktor.network.ipv6Bindable
 import io.kuicksilver.ktor.server.h1.installH1CallHandling
 import io.kuicksilver.native.LeakRegistry
 import io.kuicksilver.quic.ConnectionAdmission
@@ -566,6 +567,21 @@ public class KuicksilverApplicationEngine(
         val h2c: H2cMode = if (tls != null) H2cMode.Off else (config as? KuicksilverPlainConnector)?.h2c ?: deploymentH2c
     }
 
+    /**
+     * A connector of ours without a host binds `::`, one dual-stack socket per protocol; on a host without IPv6 (a kernel
+     * with it disabled, a JVM with `java.net.preferIPv4Stack`) it binds `0.0.0.0` instead, and says so at Info.
+     */
+    private fun everyInterfaceOf(c: EngineConnectorConfig): EngineConnectorConfig {
+        val every = (c as? KuicksilverTlsConnector)?.everyInterface ?: (c as? KuicksilverPlainConnector)?.everyInterface ?: false
+        if (!every || ipv6Bindable()) return c
+        environment.log.info("$c: no IPv6 on this host, so every interface is every IPv4 one (0.0.0.0)")
+        return when (c) {
+            is KuicksilverTlsConnector -> c.withHost(IPV4_EVERY_INTERFACE)
+            is KuicksilverPlainConnector -> c.withHost(IPV4_EVERY_INTERFACE)
+            else -> c
+        }
+    }
+
     private fun resolve(c: EngineConnectorConfig): Listener =
         when {
             c is KuicksilverTlsConnector -> {
@@ -678,7 +694,7 @@ public class KuicksilverApplicationEngine(
                     h3Settings = configuration.resolveHttp3Settings()
                     h2Settings = configuration.resolveHttp2Settings()
                     engineTls = configuration.tls.resolve("tls").also { resolvedTls += it }
-                    val listeners = configuration.connectors.map { resolve(it) }
+                    val listeners = configuration.connectors.map { resolve(everyInterfaceOf(it)) }
 
                     // the PROXY protocol header's wait is cut to the request-head deadline: below 3 s it would be shorter than
                     // the spec's "at least 3 seconds to cover a TCP retransmit" (section 2)

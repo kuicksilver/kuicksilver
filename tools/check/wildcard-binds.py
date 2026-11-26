@@ -18,7 +18,7 @@ kuicksilver-engine-interop) and samples' tests, Kotlin and Java. A file counts o
 127.0.0.1, ::1 (also as [::1] in a URL) or localhost, InetAddress.getLoopbackAddress(), or calls rawHttp/slowHttp (ktor-server's fixtures, which
 connect to 127.0.0.1). What is a wildcard bind:
   connector     tlsConnector(...) { }, sslConnector(...) { }, plainConnector { } and Ktor's connector { } whose block
-                sets no `host` (the default is 0.0.0.0), or a call of those without a block; `host = "0.0.0.0"` / "::"
+                sets no `host` (the default is every interface, ::), or a call of those without a block; `host = "0.0.0.0"` / "::"
   literal       a wildcard InetSocketAddress("0.0.0.0" | "::", ...), over any number of lines, as an argument (also a
                 named one, `local = ...`) of a bind or an open (QuicEndpoint.bind, Http3Endpoint.bind, DatagramIo.open,
                 KslDatagramIo.open, bindTcp, aSocket(...).bind, ...), directly or through a `val`/`var` of the same
