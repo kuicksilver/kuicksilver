@@ -10,6 +10,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.time.ComparableTimeMark
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -49,6 +50,25 @@ internal object LeakSentinel {
     var strict: Boolean = false
 
     private val changes = Channel<Unit>(Channel.CONFLATED)
+
+    /**
+     * How much longer than 3 x its reported PTO a period may be and still be excused (RFC 9000 section 10.2: the closing and
+     * draining states last 3 x PTO): the time between the core setting its deadline and the record noting it only shortens
+     * the period seen, so this covers the rounding of the conversion between the core's clock and [LeakRegistry.clockForTest].
+     * The check is per connection, whatever its RTT: a period from an inflated RTT sample (a starved host whose peer
+     * answered late: a 500 ms sample makes a PTO of 1.5 s and a 4.5 s period) is excused, one of 6 x PTO or from a doubled
+     * PTO is not. Above that, no period longer than the sentinel's own wait bound is excused (a runaway PTO).
+     */
+    val PERIOD_TOLERANCE: Duration = 10.milliseconds
+
+    /** The TLS sessions a closing QUIC connection holds: its own. */
+    const val SSL_PER_PERIOD = 1
+
+    /**
+     * The packet protectors a closing QUIC connection may hold: Initial, Handshake and 1-RTT read and write keys, the original
+     * Initial read key, the next and previous 1-RTT generations and the header protection keys of the 1-RTT key phase.
+     */
+    const val KEYS_PER_PERIOD = 16
 
     /**
      * Turns the registry on (once per process); [sites]: each object keeps the stack that opened it; [slowMs] and [strict]:
@@ -132,6 +152,19 @@ internal object LeakSentinel {
      * What [scope] left open, once teardown settled or [wait] passed: null when nothing, else the failure message naming
      * each kind, its count and (with sites) where each object was opened. [test] is `Class.method`, or the class name for a
      * class's check.
+     *
+     * Teardown longer than [slow] is reported (and fails with [strict]), except the wait for a closing period the protocol
+     * requires ([LeakRegistry.closing]: a QUIC connection's closing or draining state, 3 x PTO, RFC 9000 section 10.2, about
+     * 3 s before its first RTT sample). Each object that closed later than [slow] after the test is judged on its own
+     * ([LeakRegistry.takeClosed]: also one opened and closed between two looks): it passes only when it noted its period
+     * within [slow], the period is at most 3 x the PTO it was set from ([PERIOD_TOLERANCE]) and at most [wait] long, and it
+     * closed within [slow] of the period's end (plus how late its own deadline timer ran, when that ended it: a held-up loop). ksl's counters
+     * belong to no object: after [slow] only `ksl.ssl` and `ksl.key` are excused, at most [SSL_PER_PERIOD] and
+     * [KEYS_PER_PERIOD] per object in its period at that look (a closing QUIC connection keeps its TLS session and keys to
+     * repeat its CONNECTION_CLOSE; a draining one frees them at once), never `ksl.udp`, `ksl.wake` or `ksl.session`.
+     * Marks on another clock than [LeakRegistry.clockForTest] excuse nothing. It fails closed: an object a look saw whose
+     * close was not logged makes the teardown slow, since nothing tells when it closed. Time over [slow] after every close
+     * and free was accounted for is the sentinel's own looks (each empties the process caches) and is not slow.
      */
     fun end(
         scope: Scope,
@@ -143,37 +176,158 @@ internal object LeakSentinel {
         strict: Boolean = this.strict,
         /** Called once the first look found something open (the sentinel's own negative controls). */
         afterFirstLookForTest: (() -> Unit)? = null,
+        /** Called after each look at what is open, with its number from 0 (the sentinel's own tests step their teardown). */
+        afterLookForTest: ((Int) -> Unit)? = null,
     ): String? {
         val allowed = allowedKinds(allow, className, test)
         val where = if (test == null) className else "$className.$test"
-        val started = TimeSource.Monotonic.markNow()
+        val clock = LeakRegistry.clockForTest
+        LeakRegistry.logCloses(true) // from now on: what closed before the wait began is not timed
+        val started = clock.markNow()
         var first: List<Leak> = emptyList()
-        val left =
-            runBlocking {
-                var left = settledLeftOpen(scope, allowed)
-                first = left
-                if (left.isNotEmpty()) {
-                    afterFirstLookForTest?.invoke()
-                    withTimeoutOrNull(wait) {
-                        while (true) {
-                            changes.receive()
-                            left = settledLeftOpen(scope, allowed)
-                            if (left.isEmpty()) break
+        // natives: whether the last look found ksl counters a period does not excuse, and the first look after that found
+        // none (every native free wakes a look)
+        var nativesBad = false
+        var nativesBadUntil = Duration.ZERO
+        var looks = 0
+        // every registry object a look found open: each must have a logged close once teardown took longer than [slow]
+        val seen = HashSet<Long>()
+
+        fun look(left: List<Leak>) {
+            val elapsed = started.elapsedNow()
+            for (l in left) seen += l.ids
+            val periods = left.sumOf { l -> l.closing.count { it != null } }
+            val bad =
+                left.any { l ->
+                    l.native &&
+                        when (l.kind) {
+                            "ksl.ssl" -> l.count > SSL_PER_PERIOD * periods
+                            "ksl.key" -> l.count > KEYS_PER_PERIOD * periods
+                            else -> true
                         }
-                    }
-                    left = settledLeftOpen(scope, allowed)
                 }
-                left
+            if (bad || nativesBad) nativesBadUntil = elapsed
+            nativesBad = bad
+            afterLookForTest?.invoke(looks++)
+        }
+        val loggedCloses: List<LeakRegistry.Closed>
+        val left =
+            try {
+                runBlocking {
+                    var left = settledLeftOpen(scope, allowed)
+                    first = left
+                    look(left)
+                    if (left.isNotEmpty()) {
+                        afterFirstLookForTest?.invoke()
+                        withTimeoutOrNull(wait) {
+                            while (true) {
+                                changes.receive()
+                                left = settledLeftOpen(scope, allowed)
+                                look(left)
+                                if (left.isEmpty()) break
+                            }
+                        }
+                        left = settledLeftOpen(scope, allowed)
+                        look(left)
+                    }
+                    left
+                }
+            } finally {
+                loggedCloses = LeakRegistry.takeClosed()
+                LeakRegistry.logCloses(false)
+            }
+        val shared = locked { sharedIds.toSet() }
+        val closed =
+            loggedCloses.filter {
+                it.id >= scope.mark && it.id !in shared && "*" !in allowed && it.kind !in allowed
             }
         freedBefore(scope)?.let { println("leak sentinel: $where $it") }
         if (left.isNotEmpty()) return message(where, left, wait)
         val took = started.elapsedNow()
         if (first.isEmpty() || took <= slow) return null
+        val kinds = first.joinToString(", ") { "${it.kind} x${it.count}" }
+        val late = closed.filter { after(it.closedAt, started, slow) }
+        val unexcused = late.mapNotNull { e -> unexcusedBecause(e, started, slow, wait)?.let { e to it } }
+        // fails closed: an object a look saw whose close was not logged (logging was cut short) has no known close time,
+        // so nothing explains the time and it counts as slow
+        val unlogged = seen - closed.map { it.id }.toSet()
+        if (unexcused.isEmpty() && unlogged.isEmpty() && nativesBadUntil <= slow) {
+            // every close and free is accounted for: the time over the bound was waiting for closing periods, or the
+            // sentinel's own looks (each empties the process caches first), which are no teardown
+            val waitedFor =
+                if (late.isEmpty()) {
+                    "every object closed within ${slow.inWholeMilliseconds} ms (the rest was the sentinel's own looks)"
+                } else {
+                    // a period whose deadline timer ran late names that lateness: a loop stall shows in the log
+                    val periods =
+                        late.joinToString(", ") { e ->
+                            e.kind + (e.periodLateBy?.let { ", timer ${it.inWholeMilliseconds} ms late" } ?: "")
+                        }
+                    "waiting for closing periods (RFC 9000 section 10.2) of $periods"
+                }
+            println("leak sentinel: $where took ${took.inWholeMilliseconds} ms to close $kinds, $waitedFor: not slow")
+            return null
+        }
+        val why =
+            buildList {
+                for ((k, list) in unexcused.groupBy { it.first.kind }) {
+                    val reasons = list.map { it.second }.distinct().joinToString(", ")
+                    add("$k x${list.size} closed after ${slow.inWholeMilliseconds} ms ($reasons)")
+                }
+                if (unlogged.isNotEmpty()) {
+                    add("${unlogged.size} object(s) closed without a logged close: nothing logged explains ${took.inWholeMilliseconds} ms")
+                }
+                if (nativesBadUntil > slow) add("ksl counters until ${nativesBadUntil.inWholeMilliseconds} ms")
+            }.joinToString("; ")
         val note =
-            "leak sentinel: $where took ${took.inWholeMilliseconds} ms to close " +
-                first.joinToString(", ") { "${it.kind} x${it.count}" } + " (more than ${slow.inWholeMilliseconds} ms)"
+            "leak sentinel: $where took ${took.inWholeMilliseconds} ms to close $kinds (more than ${slow.inWholeMilliseconds} ms: $why)"
         println(note)
         return if (strict) "$note; KUICKSILVER_LEAK_STRICT fails slow teardown" else null
+    }
+
+    /** Whether [mark] is more than [slow] after [started]; a mark of another clock counts as late (nothing excuses it). */
+    private fun after(
+        mark: ComparableTimeMark,
+        started: ComparableTimeMark,
+        slow: Duration,
+    ): Boolean =
+        try {
+            mark - started > slow
+        } catch (_: IllegalArgumentException) {
+            true
+        }
+
+    /**
+     * Why [e], which closed late, did not just wait out a closing period, or null when it did: noted within [slow] of
+     * [started], at most 3 x the PTO it was set from ([PERIOD_TOLERANCE]) and at most [ceiling] long, and closed within
+     * [slow] of its end, plus how late its own deadline timer ran when that ended it (a held-up loop: GC, a starved host;
+     * [LeakRegistry.Closed.periodLateBy], at most [ceiling]). Marks of different clocks excuse nothing.
+     */
+    private fun unexcusedBecause(
+        e: LeakRegistry.Closed,
+        started: ComparableTimeMark,
+        slow: Duration,
+        ceiling: Duration,
+    ): String? {
+        val until = e.closingUntil ?: return "no closing period"
+        val noted = e.closingNoted ?: return "no closing period"
+        val pto = e.closingPto ?: return "a period without its PTO"
+        val ms = { d: Duration -> "${d.inWholeMilliseconds} ms" }
+        return try {
+            val period = until - noted
+            // the loop's own lateness in running the period's deadline (a held-up loop) is no longer period, up to the wait
+            val lateTimer = (e.periodLateBy ?: Duration.ZERO).coerceAtMost(ceiling)
+            val timerNote = e.periodLateBy?.let { ", its timer ${ms(it)} late" } ?: ""
+            when {
+                noted - started > slow -> "its period began ${ms(noted - started)} after the test"
+                period > pto * 3 + PERIOD_TOLERANCE -> "a period of ${ms(period)}, more than 3 x its PTO of ${ms(pto)}"
+                period > ceiling -> "a period of ${ms(period)}, longer than the ${ms(ceiling)} wait"
+                e.closedAt - until > slow + lateTimer -> "closed ${ms(e.closedAt - until)} after its period$timerNote"
+                else -> null
+            }
+        } catch (_: IllegalArgumentException) {
+            "marks of another clock"
+        }
     }
 
     /**
@@ -197,6 +351,12 @@ internal object LeakSentinel {
         val kind: String,
         val count: Long,
         val sites: List<String>,
+        /** Per registry object, the end of its closing period ([LeakRegistry.closing]), null outside one; empty for ksl's counters. */
+        val closing: List<ComparableTimeMark?> = emptyList(),
+        /** One of ksl's counters, not registry objects. */
+        val native: Boolean = false,
+        /** The registry ids of the objects (empty for ksl's counters). */
+        val ids: List<Long> = emptyList(),
     )
 
     /** [leftOpen] once the process's caches were emptied (a connection that ends late may still store its session there). */
@@ -216,14 +376,21 @@ internal object LeakSentinel {
         val sharedNow = locked { sharedIds.toSet() to sharedNative.copyOf() }
         for ((kind, entries) in LeakRegistry.openSince(scope.mark).filter { it.id !in sharedNow.first }.groupBy { it.kind }) {
             if ("*" in allowed || kind in allowed) continue
-            out += Leak(kind, entries.size.toLong(), entries.mapNotNull { it.site })
+            out +=
+                Leak(
+                    kind,
+                    entries.size.toLong(),
+                    entries.mapNotNull { it.site },
+                    entries.map { it.closingUntil },
+                    ids = entries.map { it.id },
+                )
         }
         val before = scope.native
         val now = if (before != null) LeakRegistry.nativeObjects() else null
         if (before != null && now != null) {
             for ((i, kind) in nativeKinds) {
                 val more = now[i] - before[i] - (sharedNow.second[i] - scope.sharedNative[i])
-                if (more > 0 && "*" !in allowed && kind !in allowed) out += Leak(kind, more, emptyList())
+                if (more > 0 && "*" !in allowed && kind !in allowed) out += Leak(kind, more, emptyList(), native = true)
             }
         }
         return out

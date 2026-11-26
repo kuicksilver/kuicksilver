@@ -38,12 +38,19 @@ internal fun utf8Prefix(
     return if (b[n].toInt() and 0xc0 == 0x80) max else n
 }
 
+/** The closing or draining period starts now: it ends 3 x the current PTO from now (RFC 9000 section 10.2). */
+private fun ConnectionCore.startClosePeriod() {
+    val p = pto()
+    timers.closePto = p
+    timers.closeDeadline = now + p * 3
+}
+
 internal fun ConnectionCore.enterClosing(reason: QuicException.ConnectionLost) {
     state = ConnectionState.Closing
     closedReason = reason
     closeSent =
         false
-    timers.closeDeadline = now + pto() * 3
+    startClosePeriod()
     paths.dropAllResponses()
     streams.settleHeldUntilAnswer(false) // an answer that never comes stands for no acceptance
     events += ConnectionEvent.Closed(reason)
@@ -116,7 +123,7 @@ internal fun ConnectionCore.peerClosed(
     if (state == ConnectionState.Draining || state == ConnectionState.Closed) return
     val closing = state == ConnectionState.Closing
     state = ConnectionState.Draining
-    timers.closeDeadline = now + pto() * 3
+    startClosePeriod()
     paths.dropAllResponses()
     streams.settleHeldUntilAnswer(false) // an answer that never comes stands for no acceptance
     // RFC 9000 section 10.2.2: a closing endpoint that receives CONNECTION_CLOSE may drain; the connection already ended with our
@@ -171,7 +178,7 @@ internal fun ConnectionCore.checkStatelessReset(
     }
     this.now = now
     state = ConnectionState.Draining
-    timers.closeDeadline = now + pto() * 3
+    startClosePeriod()
     paths.dropAllResponses()
     streams.settleHeldUntilAnswer(false) // an answer that never comes stands for no acceptance
     val reason = QuicException.ConnectionLost.StatelessReset()
