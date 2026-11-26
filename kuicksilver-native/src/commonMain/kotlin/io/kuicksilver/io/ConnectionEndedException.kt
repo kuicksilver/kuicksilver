@@ -24,8 +24,10 @@ public sealed class ConnectionEndedException(
 ) : IOException(message, cause) {
     /**
      * The peer or the network ended the connection: the input reached its end (the peer's FIN, a closed socket) where
-     * more was expected (`the peer closed the connection`), or, on Kotlin/Native, a write waiting for room found the
-     * connection reset (`Connection reset by peer`; on the JVM and Android a reset is the platform's `SocketException`).
+     * more was expected: an HTTP/2 connection's input (`the peer closed the connection`), or an HTTP/1.1 response cut
+     * short, where it is the cause of the `EOFException` thrown as before. On Kotlin/Native also a write waiting for room
+     * that found the connection reset (`Connection reset by peer`). A reset met otherwise is not typed: it stays the
+     * platform's exception (a `SocketException` on the JVM and Android, the receive error on Kotlin/Native).
      */
     public class PeerClosed
         @InternalKuicksilverApi
@@ -38,7 +40,9 @@ public sealed class ConnectionEndedException(
      * The peer stopped answering on a connection whose transport looked sound: an HTTP/2 PING went unacknowledged (the
      * `pingInterval` keepalive, `no PING acknowledgement within ... ms`, or the health check of a pooled connection, `the
      * HTTP/2 connection did not answer a health PING`), or nothing arrived within the socket timeout (`the socket timeout
-     * expired`). The library ended the connection because of the peer's silence.
+     * expired`) or a WebSocket's connect timeout (`the WebSocket handshake was not answered within the connect timeout`)
+     * while the whole request was out and only the answer was awaited. The library ended the connection because of the
+     * peer's silence. A timeout that expired while the request was still going out is a plain IOException.
      */
     public class PeerUnresponsive
         @InternalKuicksilverApi

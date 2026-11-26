@@ -16,11 +16,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 - Ktor client, HTTP/2 and the TLS socket (experimental): `ConnectionEndedException` (package `io.kuicksilver.io`, in
   `kuicksilver-native`) says who ended a TCP connection under a call, so callers no longer match message strings.
-  `PeerClosed` is the peer's FIN where more was expected; `PeerUnresponsive` is an HTTP/2 PING unanswered (keepalive or
-  health check) or the socket timeout; `LocalClose` is this client closing the connection or reading after its close.
-  The sites that threw a plain `IOException` for these throw them now, the TCP socket's own `Socket closed` and `The
-  connection was aborted` included; the messages are unchanged and the types are still `IOException`s. An HTTP/2 call sees one as the cause of `Http2Exception.ConnectionClosed` (`docs/guide/ktor.md`, "Who
-  ended the connection"). `kuicksilver-native` now depends on `kotlinx-io-core`, which every other module already used.
+  `PeerClosed` is the peer's FIN where more was expected, an HTTP/1.1 response cut short included (the cause of the
+  `EOFException` it always was); `PeerUnresponsive` is an HTTP/2 PING unanswered (keepalive or health check), or the
+  socket or WebSocket connect timeout while only the server's answer was awaited; `LocalClose` is this client closing
+  the connection or reading after its close. The sites that threw a plain `IOException` for these throw them now, the
+  TCP socket's own `Socket closed` and `The connection was aborted` included; the messages are unchanged and the types
+  are still `IOException`s. A reset stays the platform's exception (`SocketException` on the JVM and Android, the
+  receive error on Kotlin/Native). An HTTP/2 call sees one as the cause of `Http2Exception.ConnectionClosed`
+  (`docs/guide/ktor.md`, "Who ended the connection"). `kuicksilver-native` now depends on `kotlinx-io-core`, which every
+  other module already used.
 - Ktor client (experimental): `AltSvcStore.originOf(url)` gives the origin key the engine stores a URL's alternatives
   under, in the one canonical form the `AltSvcStore` KDoc now states: `scheme://host:port` with the host's ASCII letters
   in lowercase (a trailing dot kept, an internationalised name as given), an IPv6 address in brackets in RFC 5952 text

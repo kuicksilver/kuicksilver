@@ -325,6 +325,9 @@ internal class H1Pool(
     /** Test hook: gets how long each [closeOrderly] took, once the connection is closed (in order or past its bound). */
     internal var orderlyCloseTookForTest: ((Duration) -> Unit)? = null
 
+    /** Test hook: the cause a connection's input is cut with, by an orderly close or an expired timeout, as it is cut. */
+    internal var inputCutForTest: ((Throwable) -> Unit)? = null
+
     /**
      * Ends [tls] (none for h2c) in order and then the socket under it: what the application wrote, then close_notify (RFC 9846 section 6.1:
      * "Each party MUST send a 'close_notify' alert before closing its write side of the connection, unless it has already
@@ -351,7 +354,11 @@ internal class H1Pool(
                     .markNow()
             try {
                 val bound = orderlyCloseTimeoutForTest
-                if (dropInput) tls?.cancelInput(ConnectionEndedException.LocalClose("the connection is closing"))
+                if (dropInput) {
+                    val cut = ConnectionEndedException.LocalClose("the connection is closing")
+                    inputCutForTest?.invoke(cut)
+                    tls?.cancelInput(cut)
+                }
                 withTimeoutOrNull(bound) {
                     tls?.shutdown(drainTimeout = bound)
                     rawOut.flushAndClose()
@@ -1304,9 +1311,26 @@ internal class H1Pool(
                 if (whole && !tlsFailed) conn.closeOrderly() else conn.close()
             }
 
-            /** A timeout expired: the reader is cut first, so the call's timeout surfaces on time; then the close. */
-            fun closeAfterExpiry() {
-                conn.cancelInput(ConnectionEndedException.PeerUnresponsive("the socket timeout expired"))
+            /**
+             * A timeout expired ([what]: the socket timeout, or a WebSocket's connect timeout): the reader is cut first, so the
+             * call's timeout surfaces on time; then the close. The cut is the peer's silence
+             * ([ConnectionEndedException.PeerUnresponsive]) only when the whole request was out and only the peer's answer was
+             * awaited; while our own request was still going out (a request body the application produces slowly, or one
+             * the peer stopped taking) it is a plain IOException: nothing says whose side stalled.
+             */
+            fun closeAfterExpiry(what: String = "the socket timeout expired") {
+                val sender = bodyJob
+                val awaitingThePeer =
+                    !between &&
+                        if (sender == null) {
+                            requestOut.isCompleted
+                        } else {
+                            @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+                            sender.sent.isCompleted && sender.sent.getCompleted()
+                        }
+                val cut = if (awaitingThePeer) ConnectionEndedException.PeerUnresponsive(what) else kotlinx.io.IOException(what)
+                inputCutForTest?.invoke(cut)
+                conn.cancelInput(cut)
                 closeAfterFailure(null)
             }
 
@@ -1485,8 +1509,15 @@ internal class H1Pool(
                 val response =
                     try {
                         when (webSocketKeys) {
-                            null -> exchangeOnce()
-                            else -> connectingWithin(data, onExpiry = { closeAfterExpiry() }) { exchangeOnce() }
+                            null -> {
+                                exchangeOnce()
+                            }
+
+                            else -> {
+                                connectingWithin(data, onExpiry = {
+                                    closeAfterExpiry("the WebSocket handshake was not answered within the connect timeout")
+                                }) { exchangeOnce() }
+                            }
                         }
                     } finally {
                         held?.release()

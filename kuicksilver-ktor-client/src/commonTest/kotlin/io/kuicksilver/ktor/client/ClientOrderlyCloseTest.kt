@@ -29,6 +29,7 @@ import kotlinx.coroutines.IO
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.concurrent.atomics.update
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -527,6 +528,81 @@ class ClientOrderlyCloseTest {
                     assertEquals(0, pool.h2.connectionCount)
                     withTimeout(5.seconds) { pool.h2JobsForTest.toList().forEach { it.join() } }
                     assertEquals(emptyList(), pool.h2JobsForTest.toList())
+                }
+            }
+        }
+
+    /** The causes the input of the call's HTTP/1.1 connections was cut with, as [inputCutForTest][io.kuicksilver.ktor.client.h1.H1Pool.inputCutForTest] saw them. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private class Cuts {
+        val all = kotlin.concurrent.atomics.AtomicReference(emptyList<Throwable>())
+    }
+
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private fun watchCuts(c: io.ktor.client.HttpClient): Cuts {
+        val cuts = Cuts()
+        engine(c).h1.inputCutForTest = { t -> cuts.all.update { it + t } }
+        return cuts
+    }
+
+    /**
+     * The whole request went out and the server says nothing: the socket timeout cuts the input as the peer's silence
+     * (PeerUnresponsive), then the orderly close of the connection drops what is left as our own close (LocalClose).
+     */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    @Test
+    fun negative_aSilentServerIsPeerUnresponsiveAndTheCloseIsLocal() =
+        clientTest {
+            tlsWithSilentUdp(listOf("http/1.1"), silentUdp = false, handler = { _, _, input, _ ->
+                readRequest(input)
+                runCatching { input.readByteArray(1) } // nothing comes until the client closes
+            }) { port ->
+                testClient(block = { install(HttpTimeout) { socketTimeoutMillis = 300 } }).use { c ->
+                    val cuts = watchCuts(c)
+                    assertFailsWith<io.ktor.client.network.sockets.SocketTimeoutException> { c.get("https://127.0.0.1:$port/") }
+                    withTimeout(10.seconds) { while (cuts.all.load().size < 2) kotlinx.coroutines.yield() }
+                    val (timeout, close) = cuts.all.load()
+                    assertIs<ConnectionEndedException.PeerUnresponsive>(timeout)
+                    assertEquals("the socket timeout expired", timeout.message)
+                    assertIs<ConnectionEndedException.LocalClose>(close)
+                    assertEquals("the connection is closing", close.message)
+                }
+            }
+        }
+
+    /**
+     * The application's request body stalls (it never ends) while the server reads: the socket timeout is no peer's silence,
+     * so the input is cut with a plain IOException.
+     */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    @Test
+    fun negative_aStalledRequestBodyIsNotThePeersSilence() =
+        clientTest {
+            tlsWithSilentUdp(listOf("http/1.1"), silentUdp = false, handler = { _, _, input, _ ->
+                runCatching {
+                    val b = ByteArray(4096)
+                    while (input.readAvailable(b) >= 0) {
+                        // reads on, so only the client's own body is what stalls
+                    }
+                }
+            }) { port ->
+                testClient(block = { install(HttpTimeout) { socketTimeoutMillis = 300 } }).use { c ->
+                    val cuts = watchCuts(c)
+                    val body =
+                        object : io.ktor.http.content.OutgoingContent.WriteChannelContent() {
+                            override val contentLength: Long get() = 10
+
+                            override suspend fun writeTo(channel: ByteWriteChannel) {
+                                channel.writeFully(byteArrayOf(1))
+                                channel.flush()
+                                kotlinx.coroutines.awaitCancellation()
+                            }
+                        }
+                    assertTrue(runCatching { c.post("https://127.0.0.1:$port/") { setBody(body) } }.isFailure)
+                    withTimeout(10.seconds) { while (cuts.all.load().isEmpty()) kotlinx.coroutines.yield() }
+                    val cut = cuts.all.load().first()
+                    assertEquals("the socket timeout expired", cut.message)
+                    assertFalse(cut is ConnectionEndedException, "the request body stalled, not the peer: $cut")
                 }
             }
         }

@@ -13,6 +13,7 @@ import io.ktor.utils.io.InternalAPI
 import io.ktor.utils.io.close
 import io.ktor.utils.io.copyTo
 import io.ktor.utils.io.readByte
+import io.kuicksilver.io.ConnectionEndedException
 import kotlinx.io.EOFException
 import kotlinx.io.IOException
 
@@ -20,6 +21,20 @@ private const val MAX_CHUNK_SIZE_LENGTH = 128
 
 /** Bytes of the trailer section after the last chunk, field lines and line endings together. */
 internal const val MAX_TRAILER_SECTION = 16 * 1024
+
+/**
+ * The server's end of the input where more of the response was due (RFC 9112 section 8: an incomplete message): an
+ * [EOFException] as before, so what catches one still does, whose cause is a [ConnectionEndedException.PeerClosed] with
+ * the same message, so a caller tells the peer's end from this client's own close by type. Only a clean end of the input
+ * is one: a reset fails the read with the platform's exception (a `SocketException` on the JVM and Android, the receive
+ * error on Kotlin/Native), and this client's own close with a [ConnectionEndedException.LocalClose].
+ */
+internal class PeerTruncation(
+    message: String,
+) : EOFException(message) {
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    override val cause: Throwable = ConnectionEndedException.PeerClosed(message)
+}
 
 /** A chunked body that breaks the grammar of RFC 9112 section 7.1: a peer error, unlike an [EOFException] (a lost connection). */
 internal class MalformedChunkedBodyException(
@@ -50,7 +65,7 @@ internal suspend fun decodeChunkedBody(
                 break
             }
             val copied = input.copyTo(out, chunkSize)
-            if (copied < chunkSize) throw EOFException("The chunked body ended inside a chunk")
+            if (copied < chunkSize) throw PeerTruncation("The chunked body ended inside a chunk")
             skipCrLf(input)
             out.flush()
         }
@@ -197,7 +212,7 @@ private suspend fun parseChunkSize(input: ByteReadChannel): Long {
     var state = LineState.SIZE
     var i = 0
     while (i++ < MAX_CHUNK_SIZE_LENGTH) {
-        if (buffer.exhausted() && !input.awaitContent()) throw EOFException("The chunked body ended before its last chunk")
+        if (buffer.exhausted() && !input.awaitContent()) throw PeerTruncation("The chunked body ended before its last chunk")
         val b = buffer.readByte().toInt() and 0xff
         state =
             when (state) {

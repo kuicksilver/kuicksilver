@@ -2727,15 +2727,25 @@ none (the body's failure comes after the call's end), as does the `ConnectionLos
 <a id="who-ended-the-connection"></a>
 **Who ended the connection** (experimental, 0.3.0). When the TCP connection under an HTTP/1.1 or HTTP/2 call ended, a
 `ConnectionEndedException` (package `io.kuicksilver.io`) among the exception's causes says who ended it, so a test
-harness or an app need not match messages: `PeerClosed` (the peer's FIN or a closed socket where more was expected),
-`PeerUnresponsive` (an HTTP/2 PING unanswered, the `pingInterval` keepalive or a pooled connection's health check, or
-nothing within the socket timeout) or `LocalClose` (this client closed it, or read after closing it: `Socket closed`, `The
-connection was aborted`). An HTTP/2 call
-usually fails with `Http2Exception.ConnectionClosed` whose cause is one of these:
+harness or an app need not match messages:
+
+- `PeerClosed`: the peer's FIN where more was expected. Over HTTP/2 the connection's input ended; over HTTP/1.1 the
+  response was cut (no response, a head without its empty line, a body short of its `Content-Length` or chunked framing),
+  where the exception is the `EOFException` it always was, with `PeerClosed` as its cause.
+- `PeerUnresponsive`: an HTTP/2 PING unanswered (the `pingInterval` keepalive or a pooled connection's health check),
+  or the socket timeout, or a WebSocket's connect timeout, expired while the whole request was out and only the
+  server's answer was awaited. While the request was still going out (a request body the application produces slowly)
+  the cut is a plain `IOException`: nothing says whose side stalled.
+- `LocalClose`: this client closed the connection, or read after closing it (`Socket closed`, `The connection was
+  aborted`).
+
+A reset is not typed: it stays the platform's exception (a `SocketException` on the JVM and Android, the receive error
+on Kotlin/Native), as does any other failure of the socket. An HTTP/2 call usually fails with
+`Http2Exception.ConnectionClosed` whose cause is one of these:
 `generateSequence(e) { it.cause }.filterIsInstance<ConnectionEndedException>().firstOrNull()`. They are `IOException`s
 with the messages they always had, so existing `catch` blocks and log matches still work. A QUIC connection's end is a
-`QuicException.ConnectionLost` with its `initiator` instead, a TLS failure a `TlsException`, a timeout Ktor's
-`ConnectTimeoutException` or `SocketTimeoutException`.
+`QuicException.ConnectionLost` with its `initiator` instead, a TLS failure a `TlsException`, a timeout the call sees
+Ktor's `ConnectTimeoutException` or `SocketTimeoutException`.
 
 ### Graceful stop
 
