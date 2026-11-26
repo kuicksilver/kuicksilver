@@ -28,8 +28,10 @@ import kotlinx.coroutines.withTimeout
 import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
@@ -689,25 +691,21 @@ class PublicH3VerdictsTest {
         assertTrue("how-we-verify.md#public-http3-servers" in USER_AGENT, USER_AGENT)
     }
 
-    /** The repository root, found upwards from the test's working directory (the module's). */
-    private fun repoRoot(): java.io.File {
-        val start = java.io.File(System.getProperty("user.dir")).absoluteFile
-        return generateSequence(start) { it.parentFile }.firstOrNull {
-            java.io.File(it, "settings.gradle.kts").isFile &&
-                java.io.File(it, "tools/check").isDirectory
-        }
-            ?: throw AssertionError("the repository root is not above $start")
-    }
-
-    /** Whether the file of [site] (`path:line`; the line is only a hint) holds [built] somewhere. */
+    /**
+     * Whether the file of [site] (`path:line`; the line is only a hint) holds [built] somewhere. The file is read from the
+     * test's resources (`source-sites/<path>`), where the build copies every file cited so (the `sourceSites` task of this
+     * module): the check needs no checkout around the test classes.
+     */
     private fun builtIn(
         site: String,
         built: String,
-    ): Boolean =
-        java.io
-            .File(repoRoot(), site.substringBefore(':'))
-            .readText()
-            .contains(built)
+    ): Boolean {
+        val path = site.substringBefore(':')
+        val text =
+            javaClass.getResource("/source-sites/$path")?.readText()
+                ?: throw AssertionError("$path is not in the test's resources (source-sites/): the sourceSites task copies each cited file")
+        return text.contains(built)
+    }
 
     /**
      * Every transport message is still one the library gives a plain IOException in its file, and every typed close
@@ -727,6 +725,21 @@ class PublicH3VerdictsTest {
                 "${site.substringBefore(':')} no longer builds $text... (was near line ${site.substringAfter(':')})",
             )
         }
+    }
+
+    /**
+     * The sites are read from the test's resources, never from a checkout found above the working directory (a run that
+     * has the test classes and resources alone, as the Windows JVM step, has none: "the repository root is not above ..."):
+     * every cited file is there, and a file nobody cited is not, with the reason in the failure.
+     */
+    @Test fun negative_theSitesAreReadFromTheTestResourcesAlone() {
+        for (site in TRANSPORT_MESSAGES.map { it.site } + (peerEnds + ourCloses).map { it.second }) {
+            assertNotNull(javaClass.getResource("/source-sites/${site.substringBefore(':')}"), "$site is not among the resources")
+        }
+        // in two pieces: one literal "<path>:<line>" would be a citation, which the build requires to exist
+        val uncited = "kuicksilver-quic/src/commonMain/kotlin/" + "None.kt:1"
+        val missing = assertFailsWith<AssertionError> { builtIn(uncited, "x") }
+        assertTrue("sourceSites" in missing.message.orEmpty(), missing.message)
     }
 
     /** The typed ends by the peer or the path the library gives: a transport failure by type. */

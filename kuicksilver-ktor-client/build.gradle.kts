@@ -38,6 +38,25 @@ kotlin {
     }
 }
 tasks.named<Test>("jvmTest") { useJUnitPlatform() }
+// PublicH3VerdictsTest checks that the library still builds the messages it classifies, in the files of other modules it
+// cites as "<path>:<line>" (PublicH3Verdicts.kt, PublicH3VerdictsTest.kt): those files are copied into the test's resources
+// (source-sites/<path>) here, so the check runs wherever the test classes and resources are, not only in a whole checkout
+// (the Windows JVM step mirrors the classpath alone)
+val sourceSitePaths: List<String> =
+    listOf("PublicH3Verdicts.kt", "PublicH3VerdictsTest.kt").flatMap { name ->
+        val text = providers.fileContents(layout.projectDirectory.file("src/jvmTest/kotlin/io/kuicksilver/ktor/client/publich3/$name")).asText.get()
+        Regex("\"(kuicksilver-[a-z0-9-]+/src/[A-Za-z0-9_/.-]+\\.kt):[0-9]+\"").findAll(text).map { it.groupValues[1] }.toList()
+    }.distinct().sorted()
+val sourceSites = tasks.register<Sync>("sourceSites") {
+    description = "Copies the source files PublicH3VerdictsTest checks into its resources"
+    for (path in sourceSitePaths) {
+        val source = rootProject.file(path)
+        if (!source.isFile) throw GradleException("PublicH3Verdicts cites $path, which does not exist")
+        from(source) { into("source-sites/${path.substringBeforeLast('/')}") }
+    }
+    into(layout.buildDirectory.dir("generated/sourceSites"))
+}
+kotlin.sourceSets.getByName("jvmTest").resources.srcDir(sourceSites)
 // the first screen of docs/guide/ktor.md without any opt-in (src/jvmFirstScreenTest, ADR-0026): compiled before the JVM tests
 kotlin { jvm { val main = compilations.getByName("main"); compilations.create("firstScreenTest") { associateWith(main) } } }
 tasks.named("jvmTest") { dependsOn("compileFirstScreenTestKotlinJvm") }
