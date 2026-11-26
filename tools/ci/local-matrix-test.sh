@@ -25,7 +25,7 @@ t() { # <name> <expected exit> <expected listed steps, or a pattern of the refus
 }
 t onlyListAndRange          0 "25 50 51 55"                          -- --only 25,50-51,55
 t onlyLeadingZeros          0 "5 7"                                  -- --only=05,007
-t fromWithDependencies      0 "$(seq 50 77 | tr '\n' ' ' | sed 's/ $//')" -- --from 50
+t fromWithDependencies      0 "$(seq 50 79 | tr '\n' ' ' | sed 's/ $//')" -- --from 50
 t onlyWithItsProducer       0 "44 45"                                -- --only 44,45
 t oldPlatformSteps          0 "35 36 57"                             -- --only 35-36,57
 t negative_noValue          2 "needs a value"                        -- --only
@@ -40,15 +40,15 @@ t negative_negative         2 "not a step number"                    -- --only -
 t negative_halfRange        2 "not a step number"                    -- --only 3-
 t negative_backwards        2 "runs backwards"                       -- --only 5-3
 t negative_stepZero         2 "no step 0"                            -- --only 0-3
-t negative_pastLast         2 "past the last step"                   -- --only 3,78
+t negative_pastLast         2 "past the last step"                   -- --only 3,80
 t negative_hugeNumber       2 "past the last step"                   -- --only 3-123456789012345678901234
 t negative_fromLineBreak    2 "not a step number"                    -- --from $'44\n1'
-t negative_fromPastLast     2 "past the last step"                   -- --from 78
+t negative_fromPastLast     2 "past the last step"                   -- --from 80
 t negative_onlyTwice        2 "given twice"                          -- --only 3 --only 4
 t negative_onlyAndFrom      2 "together"                             -- --only 3 --from 4
 t negative_missingProducer  2 "select those steps too: --only 44,47" -- --only 47
 t negative_missingMarkers   2 "select those steps too: --only 67-69" -- --only 69
-t negative_fromMissesLink   2 "select those steps too: --only 62,70-77" -- --from 70
+t negative_fromMissesLink   2 "select those steps too: --only 62,70-79" -- --from 70
 KSL_MATRIX_ALL_MODULES=yes t negative_allModulesValue 2 "KSL_MATRIX_ALL_MODULES='yes'" -- --only 35
 KSL_MATRIX_ALL_MODULES=" 1" t negative_allModulesSpace 2 "KSL_MATRIX_ALL_MODULES=' 1'" -- --only 1
 # a release run tests every module on the old platforms, whatever KSL_MATRIX_ALL_MODULES says
@@ -90,7 +90,7 @@ sdk_case negative_noSdkComposeDevice "ndk.dir=/x" 2 "step 56 (android: compose d
 sdk_case negative_sdkDirNotADirectory "sdk.dir=/nonexistent/sdk" 2 "its sdk.dir '/nonexistent/sdk' is not a directory" --only 38
 out=$(ANDROID_HOME=/from/env KSL_MATRIX_LOCAL_PROPERTIES=/nonexistent bash "$script" --dry-run --only 38 2>&1); rc=$?
 if [ "$rc" = 0 ] && ! grep -q '^android sdk:' <<< "$out"; then echo "ok   androidHomeFromTheShellWins"; else echo "FAIL androidHomeFromTheShellWins: exit $rc"; fails=$((fails + 1)); fi
-# the counts in docs/process.md ("**77 steps**; ... which makes **82** (... a Chrome WebTransport run, 83)") against --dry-run
+# the counts in docs/process.md ("**79 steps**; ... which makes **84** (... a Chrome WebTransport run, 85)") against --dry-run
 doc="$here/../../docs/process.md"
 count() { bash "$script" --dry-run "$@" 2>&1 | grep -c '^\['; }
 documented=$(tr '\n' ' ' < "$doc" | sed -n 's/.*has \*\*\([0-9]*\) steps\*\*;.*makes \*\*\([0-9]*\)\*\* (and `--with-browser` *adds a Chrome WebTransport run, \([0-9]*\)).*/\1 \2 \3/p')

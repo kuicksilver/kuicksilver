@@ -26,6 +26,14 @@ grep -Eq '^distributionSha256Sum=[0-9a-f]{64}$' "$root/gradle/wrapper/gradle-wra
 while IFS= read -r line; do
   printf '%s' "$line" | grep -Eq 'summerwind/h2spec:[0-9.]+@sha256:[0-9a-f]{64}' || fail "h2spec image not pinned by digest: $line"
 done < <(grep -rnE 'summerwind/h2spec:[0-9]' "$root/.github" "$root/tools" 2>/dev/null)
+# the Autobahn|Testsuite image (tools/interop/autobahn.sh) by digest; h3spec's release binaries (tools/interop/h3spec.sh) by
+# their sha256, both of them
+while IFS= read -r line; do
+  printf '%s' "$line" | grep -Eq 'crossbario/autobahn-testsuite:[0-9.]+@sha256:[0-9a-f]{64}' || fail "autobahn-testsuite image not pinned by digest: $line"
+done < <(grep -rnE 'crossbario/autobahn-testsuite:[0-9]' "$root/.github" "$root/tools" 2>/dev/null)
+for v in mac_sha256 linux_sha256; do
+  grep -Eq "^$v=[0-9a-f]{64}\$" "$root/tools/interop/h3spec.sh" 2>/dev/null || fail "tools/interop/h3spec.sh: no $v= pin of h3spec's release binary"
+done
 left=$(grep -rIl 'OWNER-FILL-IN' "$root/.github" "$root/tools" "$root/gradle" 2>/dev/null | grep -v 'tools/check/pins.sh$')
 [ -z "$left" ] || fail "owner placeholders left in: $(echo "$left" | tr '\n' ' ')"
 [ $rc -eq 0 ] && echo "pins OK"

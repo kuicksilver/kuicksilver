@@ -41,8 +41,8 @@ col() { # <lane> <host> [collect args...]
 }
 col apple "macOS arm64" --junit 'jvm:*/build/test-results/jvmTest/*.xml' --cases kuicksilver-engine-interop 2> /dev/null \
   && col apple-native "macOS arm64" --junit 'macosArm64:*/build/test-results/macosArm64Test/*.xml' --compiled iosArm64:success 2> /dev/null \
-  && col linux-native "Linux x64" --gtest 'linuxX64:kexe/*.log' --h2spec-manifest h2spec/variants.txt --interop-runner 'jvm:interop/*.json' \
-       --size 'klib:*/build/classes/kotlin/*/main/klib/*' --skip-module kuicksilver-testing 2> /dev/null \
+  && col linux-native "Linux x64" --gtest 'linuxX64:kexe/*.log' --h2spec-manifest h2spec/variants.txt --h3spec-manifest h3spec/variants.txt \
+       --autobahn-manifest autobahn/variants.txt --interop-runner 'jvm:interop/*.json' --size 'klib:*/build/classes/kotlin/*/main/klib/*' --skip-module kuicksilver-testing 2> /dev/null \
   && col android "Android API 35 emulator" --junit 'android:*/build/outputs/androidTest-results/connected/**/*.xml' \
        --size 'aar:aar/*.aar' --size 'jni:jni/*/*.so' 2> /dev/null \
   && col empty "nowhere" --junit 'jvm:nothing/**/*.xml' --allow-empty 2> /dev/null \
@@ -62,6 +62,10 @@ assert (by["kuicksilver-quic"]["tests"], by["kuicksilver-quic"]["passed"], by["k
 assert by["kuicksilver-tls"]["status"] == "error", by["kuicksilver-tls"]          # no summary line: crashed
 assert by["kuicksilver-http3"]["status"] == "fail" and by["kuicksilver-http3"]["failed"] == 1, by["kuicksilver-http3"]
 assert n["conformance"][0]["status"] == "pass" and n["conformance"][0]["tests"] == 146
+cf = {(c["suite"], c["variant"]): c for c in n["conformance"]}
+assert (cf[("h3spec", "server")]["status"], cf[("h3spec", "server")]["recorded"]) == ("pass", 1), cf   # its failure is a recorded one
+assert cf[("Autobahn", "server")]["status"] == "pass" and cf[("Autobahn", "server")]["tests"] == 517, cf
+assert cf[("Autobahn", "client")]["status"] == "fail", cf   # one failure more than it records
 assert len(n["interop_runner"]) == 5 and len(n["sizes"]) == 1 and n["sizes"][0]["target"] == "linuxX64" and n["sizes"][0]["bytes"] == 3000, n["sizes"]
 an = json.load(open(f"{d}/verify-android/android.json"))
 assert {(s["kind"], s["target"]) for s in an["sizes"]} >= {("aar", ""), ("aar-so", "arm64-v8a"), ("aar-so", "x86_64"), ("jni", "linux_x86_64")}, an["sizes"]
@@ -164,7 +168,8 @@ assert d["benchmarks"]["goodput"][0]["median_kbps"] == 9200 and d["benchmarks"][
 html = {n: open(f"{v}/verify/{n}.html", encoding="utf-8").read() for n in ("interop", "fuzzing", "conformance", "benchmarks", "platforms", "index")}
 assert '<span class="fail">h2 ✗</span>' in html["interop"] and "OkHttpToServerH2Test.post1MiB()" in html["interop"]
 assert "on another commit" in html["fuzzing"] and "(" + "fedcba987654" + ")" in html["fuzzing"] and "It is not a result of this commit" in html["fuzzing"]
-assert "h2spec (h2c)" in html["conformance"] and "not run in hosted CI" in html["conformance"] and "h3spec" in html["conformance"]
+assert "h2spec (h2c)" in html["conformance"] and "not run in hosted CI" in html["conformance"] and "h3spec (server)" in html["conformance"]
+assert "Autobahn (client)" in html["conformance"] and "(1 recorded as the suite&#x27;s own error)" in html["conformance"], html["conformance"]
 assert "9 377" in html["benchmarks"] and "9 200" in html["benchmarks"]
 assert "0123456789abcdef0123456789abcdef01234567" in html["platforms"] and "2026-11-18 09:00 UTC" in html["platforms"]
 assert "actions/runs/1001" in html["platforms"]
