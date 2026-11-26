@@ -4,6 +4,7 @@
 
 package io.kuicksilver.ktor.client
 
+import io.ktor.client.HttpClient
 import io.ktor.client.engine.ProxyBuilder
 import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.client.request.HttpRequestData
@@ -117,6 +118,55 @@ class ClientDiagnosticsTest {
     }
 
     private fun okServer(): io.ktor.server.application.Application.() -> Unit = { routing { get("/") { call.respondText("ok") } } }
+
+    /**
+     * A server that advertises no HTTP/3 alternative: one line at the protocol-choice level (Info) for the origin's first
+     * call, none for its next ones (their own line is at Debug, which this logger leaves out), and one again for another
+     * origin.
+     */
+    @Test fun noAlternativeIsLoggedOncePerOrigin() =
+        h3Test {
+            val (one, portOne) = testServer(configure = { http3 { altSvc = false } }, module = okServer())
+            val (two, portTwo) = testServer(configure = { http3 { altSvc = false } }, module = okServer())
+            val log = DiagnosticLines(LogLevel.Info)
+            try {
+                testClient(Http3Discovery.Auto, engine = { observability { logger = log } }).use { c ->
+                    val first = c.get("https://127.0.0.1:$portOne/")
+                    assertEquals(FallbackReason.NoAlternative, first.kuicksilverDiagnostics?.fallback)
+                    assertEquals(
+                        listOf(
+                            LogLevel.Info to "kuicksilver: https://127.0.0.1:$portOne: no HTTP/3 alternative advertised, using HTTP/1.1",
+                        ),
+                        log.lines,
+                    )
+                    c.get("https://127.0.0.1:$portOne/").bodyAsText()
+                    assertEquals(1, log.lines.size, "the origin's second call logs nothing at Info: ${log.lines}")
+                    c.get("https://127.0.0.1:$portTwo/").bodyAsText()
+                    assertEquals(
+                        "kuicksilver: https://127.0.0.1:$portTwo: no HTTP/3 alternative advertised, using HTTP/1.1",
+                        log.lines
+                            .drop(1)
+                            .single()
+                            .second,
+                    )
+                }
+            } finally {
+                one.stopSuspend(100, 500)
+                two.stopSuspend(100, 500)
+            }
+        }
+
+    /** The memory of logged origins is bounded: full, it starts over instead of growing. */
+    @Test fun noAlternativeMemoryIsBounded() =
+        clientTest {
+            HttpClient(Kuicksilver).use { c ->
+                val engine = c.engine as KuicksilverEngine
+                repeat(NO_ALTERNATIVE_LOG_ORIGINS) { assertTrue(engine.firstNoAlternative("https://h$it.test")) }
+                assertEquals(false, engine.firstNoAlternative("https://h0.test"))
+                assertTrue(engine.firstNoAlternative("https://one-more.test"), "a full memory starts over")
+                assertTrue(engine.firstNoAlternative("https://h0.test"), "and forgot the earlier origins")
+            }
+        }
 
     @Test fun h3WinnerHasNoFallback() =
         h3Test {
@@ -472,9 +522,10 @@ class ClientDiagnosticsTest {
             try {
                 testClient(Http3Discovery.Auto, engine = { observability { logger = log } }).use { c ->
                     c.get("https://127.0.0.1:$port/?token=secret")
-                    val line = log.lines.single().second
+                    val line = log.lines.single { "no HTTP/3 alternative advertised" !in it.second }.second
                     assertEquals("kuicksilver: GET https://127.0.0.1:$port/ -> HTTP/1.1 (fallback=NoAlternative)", line)
                     assertFalse("secret" in line, line)
+                    assertFalse(log.lines.any { "secret" in it.second }, "no line carries the query: ${log.lines}")
                 }
             } finally {
                 server.stop(100, 500)

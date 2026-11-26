@@ -1697,6 +1697,8 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDiagnost
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDiagnosticsTest.misdirectedRequestFromTheAlternative
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDiagnosticsTest.negative_diagnosticsLogHasNoQueryThroughTheEngine
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDiagnosticsTest.noAltSvcIsNoAlternative
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDiagnosticsTest.noAlternativeIsLoggedOncePerOrigin
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDiagnosticsTest.noAlternativeMemoryIsBounded
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDiagnosticsTest.noDontFragmentFallsBackToTcpAtOnce
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDiagnosticsTest.notReadyWhenTcpWins
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDiagnosticsTest.proxyIsProxy

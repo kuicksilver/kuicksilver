@@ -730,10 +730,9 @@ is blocked, `NoAlternative` without `Alt-Svc`, `BrokenAlternative`, `TlsFailure`
 the `FallbackReason` table below; with
 `engine { observability { logger = KuicksilverLogger.platform(LogLevel.Info) } }` the engine logs one line per call that
 HTTP/3 could have served and did not (at `observability { protocolChoiceLogLevel }`, `Info` by default, which the
-default logger at `Warn` leaves out). A call to an origin that never announced HTTP/3 (`NoAlternative`, the most common
-case) is logged at `Debug` only: no line at `Info` and `NoAlternative` on every response means the server sends no
-`Alt-Svc`, while a line with `HandshakeTimeout` or `marked broken` means it announces HTTP/3 and the client cannot reach
-it. The
+default logger at `Warn` leaves out). An origin that advertised no HTTP/3 alternative gets one line of its own, on its
+first call: "<origin>: no HTTP/3 alternative advertised, using <protocol>" means the server sends no `Alt-Svc`, while
+a line with `HandshakeTimeout` or `marked broken` means it announces HTTP/3 and the client cannot reach it. The
 first time an alternative is marked broken on a network the engine also logs one warning that the default logger shows:
 "HTTP/3 to <origin> failed (<reason>); using TCP for <duration>. See response.kuicksilverDiagnostics"; after it the
 alternative is skipped for that long, and the next warning comes only after a network change. The event
@@ -885,7 +884,7 @@ or its cancellation.
 
 The client offers TLS 1.2 and 1.3 by default, so a TLS 1.2 server works, unless:
 
-- the client is set to TLS 1.3 only (`Tls13Only` in `tls { versions }`, which Encrypted Client Hello needs): the server
+- the client is set to TLS 1.3 only (`tls { versions = TlsVersions.Tls13 }`, which Encrypted Client Hello needs): the server
   answers `protocol_version`. Allow TLS 1.2 again for a client that must reach it, or give that server a client of its
   own;
 - the server offers only suites outside the client's TLS 1.2 profile (CBC suites, static RSA key exchange, finite-field
