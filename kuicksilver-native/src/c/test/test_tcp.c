@@ -3127,43 +3127,92 @@ static int explicit_nonces(const capture *k, uint64_t *out, int max) {
     }
     return n;
 }
+/* One TLS 1.2 connection with [suite]: the explicit nonces of records 0, 1, 2 (the Finished and two application records) of
+   the client (v[0]) and the server (v[1]); 0 when the handshake or a record failed. */
+static int tls12_gcm_nonces(const char *suite, uint64_t v[2][3]) {
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server");
+    ksl_ctx_set_option(cc, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
+    ksl_ctx_set_option(cc, KSL_OPT_MAX_VERSION, KSL_TLS1_2);
+    ksl_ctx_set_option(sc, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
+    int ok = ksl_ctx_set_ciphers(cc, NULL, suite) == KSL_OK;
+    ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
+    capture k[2] = {{0}, {0}};
+    ok = ok && tcp_pump_captured(c, s, k, NULL) == KSL_OK;
+    for (int i = 0; ok && i < 2; i++) {
+        size_t n;
+        uint8_t b[3] = {1, 2, 3};
+        ok = ksl_tcp_write(c, b, sizeof b, &n) == KSL_OK && ksl_tcp_write(s, b, sizeof b, &n) == KSL_OK;
+        shuttle_captured(c, s, &k[0], NULL);
+        shuttle_captured(s, c, &k[1], NULL);
+    }
+    for (int side = 0; ok && side < 2; side++)
+        ok = explicit_nonces(&k[side], v[side], 3) == 3;
+    free(k[0].buf);
+    free(k[1].buf);
+    ksl_ssl_free(c);
+    ksl_ssl_free(s);
+    ksl_ctx_free(cc);
+    ksl_ctx_free(sc);
+    return ok;
+}
+static int nonces_are_the_sequence(uint64_t v[2][3]) {
+    return v[0][0] == 0 && v[0][1] == 1 && v[0][2] == 2 && v[1][0] == 0 && v[1][1] == 1 && v[1][2] == 2;
+}
+/* Whether the nonce test holds a build to the sequence number (1) or, a system OpenSSL without the patch outside strict mode
+   ([strict] "1": KSL_TEST_STRICT_GCM_NONCE), to nonces that count up by one per record (0). A bundled build is always held to
+   the sequence: an unpatched one fails. */
+static int gcm_nonce_held_to_the_sequence(int system_openssl, int sequence, const char *strict) {
+    return !system_openssl || sequence || (strict && strcmp(strict, "1") == 0);
+}
+static void test_tls12_gcm_nonce_policy(void) {
+    SECTION("tcp_tls12_gcm_nonce_policy");
+    /* the decision of tcp_tls12_gcm_nonce_is_the_sequence_number for every kind of build, as the system-OpenSSL mode is
+       built and run in Docker only (tools/ci/system-openssl.sh) */
+    CHECK(gcm_nonce_held_to_the_sequence(0, 0, NULL) && gcm_nonce_held_to_the_sequence(0, 0, "0"),
+          "negative: a bundled OpenSSL without the patch is held to the sequence number, so it fails");
+    CHECK(gcm_nonce_held_to_the_sequence(0, 1, NULL), "a bundled OpenSSL with the patch: held to the sequence number");
+    CHECK(gcm_nonce_held_to_the_sequence(1, 1, NULL), "a system OpenSSL that has the fix: held to the sequence number");
+    CHECK(!gcm_nonce_held_to_the_sequence(1, 0, NULL) && !gcm_nonce_held_to_the_sequence(1, 0, "0"),
+          "a system OpenSSL without the patch: held to the documented behaviour (counting up by one), reported");
+    CHECK(gcm_nonce_held_to_the_sequence(1, 0, "1"),
+          "negative: KSL_TEST_STRICT_GCM_NONCE=1 fails it like a bundled build");
+    END();
+}
 static void test_tls12_gcm_nonce_is_the_sequence_number(void) {
     SECTION("tcp_tls12_gcm_nonce_is_the_sequence_number");
     /* RFC 9325 section 7.2.1 (RECOMMENDED): "TLS 1.2 implementations use the 64-bit sequence number to populate the
-       nonce_explicit part of the GCM nonce". OpenSSL 4.1.0 started the invocation field at random (carried patch 12,
-       openssl-4.1.0-tls12-gcm-nonce-sequence.patch). Records 0 (Finished), 1 and 2 (application data) of each side carry the
-       nonces 0, 1, 2, for both AES-GCM suites; a second connection starts at 0 again (a new key). */
+       nonce_explicit part of the GCM nonce". OpenSSL 4.1.0 starts the invocation field at random; the bundled OpenSSL
+       carries patch 12 (openssl-4.1.0-tls12-gcm-nonce-sequence.patch), so records 0 (Finished), 1 and 2 (application data)
+       of each side carry the nonces 0, 1, 2, for both AES-GCM suites, and a second connection starts at 0 again (a new
+       key). A bundled build without the patch fails here. A system OpenSSL (KSL_SYSTEM_OPENSSL) has no patch: a probe
+       connection tells which library this is, and an unpatched one is reported and held to what RFC 5288 section 3 and
+       the documentation (docs/spec/rfc/9325.md, docs/stability.md) promise for it, nonces unique per key that count up
+       by one per record; KSL_TEST_STRICT_GCM_NONCE=1 makes it fail as a bundled build does. */
     const char *suites[] = {"ECDHE-ECDSA-AES128-GCM-SHA256", "ECDHE-ECDSA-AES256-GCM-SHA384"};
+    uint64_t probe[2][3] = {{9, 9, 9}, {9, 9, 9}};
+    CHECK(tls12_gcm_nonces(suites[0], probe), "probe: a TLS 1.2 AES-GCM connection with three records each way");
+    int sequence = nonces_are_the_sequence(probe), system_openssl = 0;
+#ifdef KSL_SYSTEM_OPENSSL
+    system_openssl = 1;
+#endif
+    int lenient = !gcm_nonce_held_to_the_sequence(system_openssl, sequence, getenv("KSL_TEST_STRICT_GCM_NONCE"));
+    if (system_openssl && !sequence)
+        printf(
+            "  NOTE: system OpenSSL %s starts the TLS 1.2 AES-GCM nonce at random: RFC 9325 section 7.2.1 is met only "
+            "with the bundled OpenSSL (patch 12)%s\n",
+            OpenSSL_version(OPENSSL_VERSION), lenient ? "" : "; KSL_TEST_STRICT_GCM_NONCE=1: failing");
     for (int round = 0; round < 4; round++) {
-        ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server");
-        ksl_ctx_set_option(cc, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
-        ksl_ctx_set_option(cc, KSL_OPT_MAX_VERSION, KSL_TLS1_2);
-        ksl_ctx_set_option(sc, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
-        CHECK(ksl_ctx_set_ciphers(cc, NULL, suites[round % 2]) == KSL_OK, "a TLS 1.2 AES-GCM suite");
-        ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
-        capture k[2] = {{0}, {0}};
-        CHECK(tcp_pump_captured(c, s, k, NULL) == KSL_OK, "TLS 1.2 handshake");
-        for (int i = 0; i < 2; i++) {
-            size_t n;
-            uint8_t b[3] = {1, 2, 3};
-            CHECK(ksl_tcp_write(c, b, sizeof b, &n) == KSL_OK && ksl_tcp_write(s, b, sizeof b, &n) == KSL_OK,
-                  "a record each way");
-            shuttle_captured(c, s, &k[0], NULL);
-            shuttle_captured(s, c, &k[1], NULL);
+        uint64_t v[2][3] = {{9, 9, 9}, {9, 9, 9}};
+        CHECK(tls12_gcm_nonces(suites[round % 2], v), "a TLS 1.2 AES-GCM connection with three records each way");
+        if (!lenient) {
+            CHECK(v[0][0] == 0 && v[0][1] == 1 && v[0][2] == 2,
+                  "the client's records 0, 1, 2 carry the nonces 0, 1, 2");
+            CHECK(v[1][0] == 0 && v[1][1] == 1 && v[1][2] == 2,
+                  "the server's records 0, 1, 2 carry the nonces 0, 1, 2");
+        } else {
+            CHECK(v[0][1] == v[0][0] + 1 && v[0][2] == v[0][1] + 1 && v[1][1] == v[1][0] + 1 && v[1][2] == v[1][1] + 1,
+                  "system OpenSSL without the patch: the nonces count up by one per record (unique per key, RFC 5288)");
         }
-        for (int side = 0; side < 2; side++) {
-            uint64_t v[3] = {9, 9, 9};
-            int got = explicit_nonces(&k[side], v, 3);
-            CHECK(got == 3 && v[0] == 0 && v[1] == 1 && v[2] == 2,
-                  side == 0 ? "the client's records 0, 1, 2 carry the nonces 0, 1, 2"
-                            : "the server's records 0, 1, 2 carry the nonces 0, 1, 2");
-        }
-        free(k[0].buf);
-        free(k[1].buf);
-        ksl_ssl_free(c);
-        ksl_ssl_free(s);
-        ksl_ctx_free(cc);
-        ksl_ctx_free(sc);
     }
     END();
 }
@@ -3285,6 +3334,7 @@ void run_tcp(void) {
     test_client_keeps_every_ticket();
     test_default_versions_and_tls12_profile();
     test_tls12_server_suite_choice();
+    test_tls12_gcm_nonce_policy();
     test_tls12_gcm_nonce_is_the_sequence_number();
     test_tls12_client_requires_renegotiation_info();
 }
