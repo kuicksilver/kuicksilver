@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.client
 
-import io.ktor.client.plugins.ConnectTimeoutException
 import io.ktor.client.plugins.HttpTimeoutCapability
 import io.ktor.client.plugins.HttpTimeoutConfig
 import io.ktor.client.plugins.SocketTimeoutException
@@ -25,13 +24,20 @@ internal fun HttpRequestData.connectTimeoutMillis(config: KuicksilverEngineConfi
 /**
  * Ktor's `ConnectTimeoutException` for [this] request, naming [millis], the connect timeout the engine applied
  * ([connectTimeoutMillis]). Ktor's own `ConnectTimeoutException(request, cause)` reads `HttpTimeout`'s alone, so with only
- * the engine's `connectTimeout` set its message said `connect_timeout=unknown ms`. The message is otherwise Ktor's:
- * `Connect timeout has expired [url=..., connect_timeout=... ms]`.
+ * the engine's `connectTimeout` set its message said `connect_timeout=unknown ms`. The message is Ktor's form, [what]
+ * then the request's URL and the timeout: `Connect timeout has expired [url=..., connect_timeout=... ms]`; a WebSocket
+ * whose handshake was not answered in time says so in [what].
  */
 internal fun HttpRequestData.connectTimeoutException(
     millis: Long?,
     cause: Throwable?,
-): io.ktor.client.network.sockets.ConnectTimeoutException = ConnectTimeoutException(url.toString(), millis, cause)
+    what: String = "Connect timeout has expired",
+): io.ktor.client.network.sockets.ConnectTimeoutException =
+    io.ktor.client.network.sockets
+        .ConnectTimeoutException("$what [url=$url, connect_timeout=${millis ?: "unknown"} ms]", cause)
+
+/** [HttpRequestData.connectTimeoutException]'s [what] for a WebSocket not connected within the connect timeout. */
+internal const val WEBSOCKET_NOT_CONNECTED = "The WebSocket was not connected within the connect timeout"
 
 /** Request timeout of a request (`HttpTimeout`'s, which the plugin enforces itself), null for none. */
 internal fun HttpRequestData.requestTimeoutMillis(): Long? =

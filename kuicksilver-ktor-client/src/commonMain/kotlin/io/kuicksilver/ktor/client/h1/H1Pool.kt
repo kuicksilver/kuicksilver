@@ -35,6 +35,7 @@ import io.kuicksilver.ktor.client.KuicksilverEngineConfig
 import io.kuicksilver.ktor.client.PriorityUpdaterKey
 import io.kuicksilver.ktor.client.RequestDns
 import io.kuicksilver.ktor.client.ResolvedProxy
+import io.kuicksilver.ktor.client.WEBSOCKET_NOT_CONNECTED
 import io.kuicksilver.ktor.client.cleartextNotPermitted
 import io.kuicksilver.ktor.client.cleartextPolicyHost
 import io.kuicksilver.ktor.client.connectTimeoutException
@@ -1598,12 +1599,7 @@ internal class H1Pool(
         // an Activity nobody ticks: a plain deadline
         return Activity().within(
             millis,
-            timeout = {
-                io.ktor.client.network.sockets.ConnectTimeoutException(
-                    "The WebSocket was not connected within the connect timeout [url=${data.url}, connect_timeout=$millis ms]",
-                    it,
-                )
-            },
+            timeout = { data.connectTimeoutException(millis, it, WEBSOCKET_NOT_CONNECTED) },
             onExpiry = onExpiry,
             block = block,
         )

@@ -2177,6 +2177,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientWebTrans
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ConnectTimeoutMessageTest.aNameLookupTimeoutNamesTheEnginesConnectTimeout
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ConnectTimeoutMessageTest.aQuicSetupTimeoutNamesTheEnginesConnectTimeout
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ConnectTimeoutMessageTest.aWebSocketsLookupTimeoutNamesTheEnginesConnectTimeout
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ConnectTimeoutMessageTest.aWebTransportConnectTimeoutNamesTheUrl
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ConnectTimeoutMessageTest.httpTimeoutsConnectTimeoutIsTheOneNamed
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ConnectionPoolTest.aFullRouteDoesNotHoldUpOthers
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ConnectionPoolTest.cancellationRacingReleaseNeverCountsTwice

@@ -49,6 +49,7 @@ import io.kuicksilver.ktor.client.Http3DiscoveryMode
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
 import io.kuicksilver.ktor.client.PriorityUpdaterKey
 import io.kuicksilver.ktor.client.RequestDns
+import io.kuicksilver.ktor.client.WEBSOCKET_NOT_CONNECTED
 import io.kuicksilver.ktor.client.WebSocketLifetime
 import io.kuicksilver.ktor.client.WebSocketLifetimeKey
 import io.kuicksilver.ktor.client.connectTimeoutException
@@ -836,7 +837,7 @@ internal class H3Pool(
             }
         if (made) {
             try {
-                val c = connectWebTransport(t.originHost, t.port, dns, connectTimeoutMillis, deadline)
+                val c = connectWebTransport(t.originHost, t.port, data, dns, connectTimeoutMillis, deadline)
                 c.closed.invokeOnCompletion { launchUnderLock { wtExtras[t.key]?.remove(e) } }
                 e.deferred.complete(c)
             } catch (x: Throwable) {
@@ -926,12 +927,13 @@ internal class H3Pool(
     private suspend fun connectWebTransport(
         originHost: String,
         port: Int,
+        data: HttpRequestData,
         dns: RequestDns,
         connectTimeoutMillis: Long,
         deadline: kotlin.time.TimeMark,
     ): Http3Connection {
         val left = -deadline.elapsedNow().inWholeMilliseconds
-        if (left <= 0) throw ConnectTimeoutException("https://$originHost:$port", connectTimeoutMillis, null)
+        if (left <= 0) throw data.connectTimeoutException(connectTimeoutMillis, null)
         ensureOpen()
         val route = dns.echRoute(originHost) { config.ech.listFor(it) }
         val q = quicWithin(connectTimeoutMillis)
@@ -952,13 +954,13 @@ internal class H3Pool(
             }
         } catch (e: TimeoutCancellationException) {
             if (made == null) {
-                throw ConnectTimeoutException("https://$originHost:$port", connectTimeoutMillis, e).withAttempts(failures)
+                throw data.connectTimeoutException(connectTimeoutMillis, e).withAttempts(failures)
             }
         } catch (e: Throwable) {
             made?.let { withContext(NonCancellable) { runCatching { it.close(io.kuicksilver.http3.Http3ErrorCode.NO_ERROR, "") } } }
             throw e
         }
-        return made ?: throw ConnectTimeoutException("https://$originHost:$port", connectTimeoutMillis, null)
+        return made ?: throw data.connectTimeoutException(connectTimeoutMillis, null)
     }
 
     /**
@@ -2600,10 +2602,7 @@ internal class H3Pool(
                         webSocketConnectedForTest?.invoke()
                     }
                 }
-                kept ?: throw io.ktor.client.network.sockets.ConnectTimeoutException(
-                    "The WebSocket was not connected within the connect timeout [url=${data.url}, connect_timeout=$millis ms]",
-                    null,
-                )
+                kept ?: throw data.connectTimeoutException(millis, null, WEBSOCKET_NOT_CONNECTED)
             } catch (e: CancellationException) {
                 // the call itself was cancelled: a stream kept meanwhile is ended here, as connect would have
                 kept?.let {

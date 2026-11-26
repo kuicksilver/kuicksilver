@@ -64,6 +64,27 @@ class ConnectTimeoutMessageTest {
             }
         }
 
+    /** A WebTransport session's connect timeout names the session's URL, as every other call's does. */
+    @Test fun aWebTransportConnectTimeoutNamesTheUrl() =
+        clientTest {
+            val selector = SelectorManager(Dispatchers.IO)
+            val (udp, port) = udpOn(selector, 0)
+            try {
+                testClient(Http3DiscoveryMode.H3Only, engine = {
+                    connectTimeout = 400.milliseconds
+                    quic = quicConfig { handshakeTimeout = 30.seconds }
+                }).use { c ->
+                    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                    val e = assertFailsWith<ConnectTimeoutException> { c.webTransport("https://127.0.0.1:$port/wt?x=1") }
+                    assertNames(400, e)
+                    assertTrue("url=https://127.0.0.1:$port/wt?x=1" in e.message.orEmpty(), "${e.message}")
+                }
+            } finally {
+                udp.close()
+                selector.close()
+            }
+        }
+
     @Test fun aQuicSetupTimeoutNamesTheEnginesConnectTimeout() =
         clientTest {
             val selector = SelectorManager(Dispatchers.IO)

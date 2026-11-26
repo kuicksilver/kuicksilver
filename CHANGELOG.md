@@ -1820,7 +1820,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `connectTimeout` is set and `HttpTimeout` is not installed. Before, the name lookup and pool wait of HTTP/1.1 and
   HTTP/2, a WebSocket's name lookup, the wait for an HTTP/2 server's preface and an HTTP/3 setup said
   `connect_timeout=unknown ms`: they used Ktor's `ConnectTimeoutException(request, cause)`, which reads the plugin's
-  value alone.
+  value alone. A WebTransport session's connect timeout names the session's URL now, not only its host and port.
 - The portable JVM and Android socket (`IoPreference.Portable`) no longer leaks its channel and selectors when opening it
   fails after the channel is bound (registering it with its selector, or setting up the socket), a failure not seen in
   practice.
