@@ -271,7 +271,7 @@ private class KuicksilverClient(
                 pool { maxConnectionsPerRoute = H1_CONNECTIONS }
                 http2 { enabled = protocol == "h2" }
                 http3 {
-                    enabled = false
+                    if (expected == HttpProtocolVersion.HTTP_3_0) discovery = Http3Discovery.H3Only else enabled = false
                     earlyData { enabled = protocol == "h3-0rtt" }
                 }
                 observability { protocolChoiceLogLevel = null }

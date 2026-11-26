@@ -68,7 +68,7 @@ internal fun ktorClient(
             HttpClient(Kuicksilver) {
                 engine {
                     tls { trust = if (otherCa) Pki.otherTrust else Pki.trust }
-                    http3 { enabled = false }
+                    http3 { if (h3Only) discovery = Http3Discovery.H3Only else enabled = false }
                     http2 { enabled = http2 }
                     quicIdleTimeout?.let { t ->
                         http3 {

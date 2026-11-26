@@ -228,8 +228,11 @@ def _c_endpoint(value, report, where):
 
 def _c_discovery(value, report, where):
     v = value.strip()
-    if v.endswith("H1Only"):
+    if re.fullmatch(r"(?:[\w.]*\.)?H1Only", v):
         return "replace", "enabled = false"
+    if "H1Only" in v:
+        report.append(f"{where}: discovery = {v}: H1Only is http3 {{ enabled = false }} now: rewrite the condition by hand")
+        return "keep", None
     return "replace", "discovery = " + re.sub(r"\bHttp3DiscoveryMode\b", "Http3Discovery", v)
 
 
