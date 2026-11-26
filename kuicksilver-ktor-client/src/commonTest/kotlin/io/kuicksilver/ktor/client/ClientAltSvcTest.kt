@@ -90,7 +90,7 @@ class ClientAltSvcTest {
     /**
      * On a network change the engine forgets the alternatives without `persist=1` by default (RFC 7838 section 2.2:
      * "clients SHOULD remove from cache all alternative services that lack the persist flag"); before, it did so only
-     * with `clearOnNetworkChange = true`. A persistent one stays, and `clearOnNetworkChange = false` still keeps both.
+     * with `expert { clearAltSvcOnNetworkChange = true }`. A persistent one stays, and `false` still keeps both.
      */
     @Test fun networkChangeForgetsNonPersistentAlternativesByDefault() =
         clientTest {
@@ -401,7 +401,7 @@ class ClientAltSvcTest {
         }
 
     /**
-     * With `connectionMigration` the engine has information about network state (RFC 7838 section 2.2): when `networkId` is
+     * With `http3 { migration }` the engine has information about network state (RFC 7838 section 2.2): when `networkId` is
      * not set, the hook's own source of networks is the network, and a change forgets the non-persistent alternatives (and
      * broken marks) as a `networkId` change does. Before, a migration reached nothing but the connections.
      */

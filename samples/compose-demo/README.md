@@ -99,7 +99,7 @@ download that cannot use HTTP/3 fails and is counted as failed, never as an HTTP
 
 - Both sides download the same bytes from the same server process at the same time, with the same certificate checks.
   The Kuicksilver lane is never resumed: what it shows is the connection surviving, not a retry. It runs with
-  `Http3DiscoveryMode.H3Only`, so it cannot fall back to HTTP/1.1 and pass a TCP result off as HTTP/3's.
+  `Http3Discovery.H3Only`, so it cannot fall back to HTTP/1.1 and pass a TCP result off as HTTP/3's.
 - The TCP side is HTTP/1.1. The demo server does not offer HTTP/2; HTTP/2 runs over TCP too and would not move either.
 - **CIO on iOS uses plain `http://`** (port 8080): Ktor's CIO engine has no TLS on Kotlin/Native. That makes its
   connection setup cheaper than a real HTTPS client's, which flatters it in the time to the response head.

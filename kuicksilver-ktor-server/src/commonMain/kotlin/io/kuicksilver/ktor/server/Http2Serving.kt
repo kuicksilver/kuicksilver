@@ -368,7 +368,7 @@ private suspend fun KuicksilverApplicationEngine.handleH2(
     var cancelled: CancellationException? = null
     try {
         // RFC 8441 section 5: `:protocol = websocket` (an upgrade token, matched in any case, RFC 9110 section 7.8); the
-        // connection only takes `:protocol` when it advertised SETTINGS_ENABLE_CONNECT_PROTOCOL (webSocketsOverHttp2)
+        // connection only takes `:protocol` when it advertised SETTINGS_ENABLE_CONNECT_PROTOCOL (webSockets { overHttp2 })
         val webSocket = r.method == "CONNECT" && r.protocol.equals(WebSocketOverH2.PROTOCOL, ignoreCase = true)
         if (r.method == "CONNECT" && !webSocket) {
             // a classic CONNECT (no tunnels here), or another protocol: RFC 9220 section 3's answer to an Extended CONNECT

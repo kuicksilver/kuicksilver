@@ -306,7 +306,7 @@ class ServerWebSocketH3Test {
         }
 
     /**
-     * `webSocketsOverHttp3 = false` turns WebSockets over HTTP/3 off even when WebTransport advertises Extended CONNECT:
+     * `webSockets { overHttp3 = false }` turns WebSockets over HTTP/3 off even when WebTransport advertises Extended CONNECT:
      * the WebSocket CONNECT is a protocol the server does not support (RFC 9220 section 3: 501). Before, it reached the
      * `webSocket {}` route.
      */

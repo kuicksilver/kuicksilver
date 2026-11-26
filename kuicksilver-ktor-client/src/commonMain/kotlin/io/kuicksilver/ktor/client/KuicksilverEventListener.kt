@@ -101,7 +101,7 @@ public abstract class KuicksilverEventListener {
 
     /**
      * [request] connects to [alternative] (`host:port`), an endpoint of the origin's HTTPS resource record (RFC 9460,
-     * [Http3ClientConfig.httpsRecords]), over the transports the record allows; once per endpoint tried. A QUIC failure
+     * [ClientNetworkConfig.httpsRecords]), over the transports the record allows; once per endpoint tried. A QUIC failure
      * there marks it broken as for an `Alt-Svc` alternative ([altSvcMarkedBroken]).
      */
     public open fun httpsRecordUsed(
@@ -195,7 +195,7 @@ public abstract class KuicksilverEventListener {
     ) {}
 
     /**
-     * An HTTP/3 connection to [origin] (`https://host:port`) followed the network ([Http3ClientConfig.connectionMigration]):
+     * An HTTP/3 connection to [origin] (`https://host:port`) followed the network ([Http3ClientConfig.migration]):
      * [event] is what its [io.kuicksilver.quic.NetworkMigrator] did, a move to another network
      * ([MigrationEvent.Migrated]), a move that failed and left the connection where it was ([MigrationEvent.Failed]), a
      * lost network or a failed network source. Runs on the migrator's coroutine, not a call's.

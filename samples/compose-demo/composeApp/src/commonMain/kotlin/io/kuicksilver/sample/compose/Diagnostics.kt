@@ -36,8 +36,8 @@ fun fallbackHint(reason: FallbackReason): String =
     when (reason) {
         FallbackReason.NotSecure -> "HTTP/3 needs https://"
         FallbackReason.Proxy -> "a proxy applies to the request; QUIC does not go through it"
-        FallbackReason.Configuration -> "the discovery mode is H1Only"
-        FallbackReason.Http3Disabled -> "the kill switch: http3Allowed returned false (the toggle above)"
+        FallbackReason.Configuration -> "HTTP/3 is off in the configuration (http3 { enabled = false })"
+        FallbackReason.Http3Disabled -> "the kill switch: http3 { allowed } returned false (the toggle above)"
         FallbackReason.NoAlternative -> "the origin announced no Alt-Svc yet: run the request again, it learned it from this response"
         FallbackReason.MisdirectedRequest -> "the alternative answered 421: its certificate and virtual hosts"
         FallbackReason.BrokenAlternative -> "HTTP/3 failed here lately on this network; it is tried again after a while or on another network"

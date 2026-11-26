@@ -16,7 +16,7 @@ import kotlinx.coroutines.flow.update
 
 /**
  * One HTTP/2 connection in the TCP pool: it holds one slot of its route in the HTTP/1.1 [io.kuicksilver.ktor.client.h1.ConnectionPool]
- * (`maxConnectionsPerRoute` and `maxConnectionsCount` count TCP connections, whatever they carry) from adoption until it
+ * (`pool { maxConnectionsPerRoute }` and `pool { maxConnections }` count TCP connections, whatever they carry) from adoption until it
  * closes, and is never put on the idle list: [H2Pool] hands out its streams instead.
  */
 internal class H2Conn(
@@ -84,7 +84,7 @@ internal class H2Conn(
 /**
  * The HTTP/2 connections of the engine by route (the HTTP/1.1 route key: scheme, host, port and proxy). One connection per
  * route while it has a free stream under the server's SETTINGS_MAX_CONCURRENT_STREAMS; a full one makes room for a second,
- * within `maxConnectionsPerRoute` (the TCP pool's slots). Requests that wait for a stream or a slot watch their route's
+ * within `pool { maxConnectionsPerRoute }` (the TCP pool's slots). Requests that wait for a stream or a slot watch their route's
  * `signal`, which every change bumps: a released stream, new SETTINGS, a GOAWAY, a connection that came or went. Routes
  * without connections and watchers are dropped at once, so the map is bounded by the live connections and the waiters.
  * With `pool { coalescing }` a request may also take a stream on a connection of another route ([coalescingCandidates],

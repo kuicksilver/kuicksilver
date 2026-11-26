@@ -62,7 +62,7 @@ import kotlin.time.Duration.Companion.seconds
 
 /**
  * The client's HTTP/3 kill switch (`http3 { http3Allowed }`) and `HttpClient.closeHttp3Connections()` (docs/guide/ktor.md,
- * "Turning HTTP/3 off remotely"). Calls that must go over HTTP/3 use `hardDelay = Duration.INFINITE`, so HTTP/1.1 never
+ * "Turning HTTP/3 off remotely"). Calls that must go over HTTP/3 use `raceHeadStart = RaceHeadStart.NoRace`, so HTTP/1.1 never
  * wins a race on a fast loopback.
  */
 class ClientKillSwitchTest {

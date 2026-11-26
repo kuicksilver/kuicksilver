@@ -781,7 +781,11 @@ internal suspend fun startTunnel(
                 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                 throw io.kuicksilver.ktor.client.ProxyException(
                     "the proxy refused the CONNECT to $hostWithPort: ${rawResponse.status}" +
-                        if (rawResponse.status == 407) " (it wants credentials: proxyCredentials or a Proxy-Authorization header)" else "",
+                        if (rawResponse.status == 407) {
+                            " (it wants credentials: proxies { credentials } or a Proxy-Authorization header)"
+                        } else {
+                            ""
+                        },
                     rawResponse.status,
                 )
             }

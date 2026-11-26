@@ -396,7 +396,7 @@ class ClientHttpsRecordTest {
 
     /**
      * RFC 9460 section 12: "Clients MUST ensure that their DNS cache is partitioned for each local network, or flushed on
-     * network changes". The networks `connectionMigration` follows are a source of network changes (when `networkId` is not
+     * network changes". The networks `http3 { migration }` follows are a source of network changes (when `networkId` is not
      * set): answers are cached and flushed when the network changes. Before, such an engine kept no answers.
      */
     @Test fun negative_connectionMigrationNetworksFlushTheCache() =

@@ -68,7 +68,7 @@ public object ProxyResolvers {
      * its answer is dropped). The script gets a `ws://` URI whole, with its resource name (RFC 6455 section 4.1); `wss`
      * and `https` as their origin only (`wss://host[:port]/`), as browsers give them, since a script from WPAD could
      * send a path's tokens out; `http` as its origin too, because the engine keeps answers per scheme, host and port
-     * (browsers keep an `http` path). `KuicksilverEngineConfig.pacFullWebSocketUrl` gives the settings' own script
+     * (browsers keep an `http` path). `proxies { pacFullWebSocketUrl }` gives the settings' own script
      * (inline, or from an `https` or local `file` URL; never WPAD's) a `wss://` URI whole. A script that cannot be fetched or run
      * in that time means the next setting (on Windows the fixed proxy, if any) or a direct connection, and the engine
      * logs one warning. On Windows a WPAD detection that found no script is remembered for 5 minutes (detection is not
@@ -88,7 +88,7 @@ internal interface WarningProxyResolver : ProxyResolver {
 
     /**
      * [proxyFor] where a PAC script the settings name (a PAC URL or the script, never one WPAD found) gets a `wss` URL
-     * whole when [pacFullWebSocketUrl] (`KuicksilverEngineConfig.pacFullWebSocketUrl`); see [pacTarget].
+     * whole when [pacFullWebSocketUrl] (`proxies { pacFullWebSocketUrl }`); see [pacTarget].
      */
     suspend fun proxyFor(
         url: Url,
@@ -704,7 +704,7 @@ internal fun pacUrlIsPrivate(pacUrl: String?): Boolean {
  *   Chromium and Android keep the path of plain URLs too; whoever can serve the script can read them on the wire anyway.
  * - `wss` with [fullWebSocketUrl]: the whole URI too. Callers pass it only for a script the settings name (the script
  *   itself, or a PAC URL that is `https` or local `file`, [pacUrlIsPrivate]), never for one WPAD found or one fetched over
- *   plain `http` (`KuicksilverEngineConfig.pacFullWebSocketUrl`).
+ *   plain `http` (`proxies { pacFullWebSocketUrl }`).
  * - `http`: the origin only, `http://host[:port]/`. Chromium and Android keep an `http` URL's path (Firefox strips it);
  *   the engine gives the origin because it keeps answers per scheme, host and port, so a path could not change them.
  */
@@ -814,7 +814,7 @@ internal class ProxyRouting(
         }
     }
 
-    /** The engine's `proxy` with `proxyCredentials`, converted once (one credentials instance, so one pool route). */
+    /** The engine's `proxy` with `proxies { credentials }`, converted once (one credentials instance, so one pool route). */
     private val explicitProxy: Result<ResolvedProxy?> by lazy {
         runCatching { config.proxy?.toResolvedProxy(config.proxies.credentials) }
     }

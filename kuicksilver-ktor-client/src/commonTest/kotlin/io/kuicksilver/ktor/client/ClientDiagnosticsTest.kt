@@ -63,7 +63,7 @@ import kotlin.time.Duration.Companion.seconds
 /**
  * Per-call protocol diagnostics through the engine (docs/guide/ktor.md, "Why did this request not use HTTP/3?"): the
  * response attribute, the log line, and their agreement with the event listener. Races whose order matters use
- * `hardDelay = Duration.INFINITE` (HTTP/1.1 only once HTTP/3 failed) or hold the HTTP/3 setup, so no outcome depends on
+ * `raceHeadStart = RaceHeadStart.NoRace` (TCP only once HTTP/3 failed) or hold the HTTP/3 setup, so no outcome depends on
  * which loopback connection is faster.
  */
 class ClientDiagnosticsTest {
@@ -481,7 +481,7 @@ class ClientDiagnosticsTest {
             }
         }
 
-    /** `diagnosticsLogLevel = null` writes no line at all; an HTTP/3 call writes its line at Debug. */
+    /** `observability { protocolChoiceLogLevel = null }` writes no line at all; an HTTP/3 call writes its line at Debug. */
     @Test fun logLevels() =
         h3Test {
             val (server, port) = testServer(module = okServer())

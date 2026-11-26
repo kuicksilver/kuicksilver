@@ -111,7 +111,7 @@ class ServerH1FramingTest {
             }
         }
 
-    /** The same with `h1AllowBareLf`: an empty Connection field ended by a bare LF is an empty list too. */
+    /** The same with `http1 { allowBareLf }`: an empty Connection field ended by a bare LF is an empty list too. */
     @Test fun negative_anEmptyConnectionFieldIsAcceptedWithBareLf() =
         serverTest {
             plainServer(allowBareLf = true) { port ->
@@ -132,7 +132,7 @@ class ServerH1FramingTest {
 
     /**
      * RFC 9112 section 2.2: "a recipient MAY recognize a single LF as a line terminator and ignore any preceding CR". The
-     * server does so only with `h1AllowBareLf` (strict by default, as llhttp; Go's net/http and nginx are lenient): a
+     * server does so only with `http1 { allowBareLf }` (strict by default, as llhttp; Go's net/http and nginx are lenient): a
      * server sits behind proxies, and one that reads a bare LF as part of a line frames the head otherwise (RFC 9112
      * section 11.2). By default a bare LF in the head or a trailer section gets 400 and the connection closes.
      */

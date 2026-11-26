@@ -22,13 +22,13 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
-/** How `quic` and `quicMaxIdleTimeout` combine into the HTTP/3 listeners' QUIC settings. */
+/** How `http3 { quic { } }` makes the HTTP/3 listeners' QUIC settings. */
 class ServerQuicConfigTest {
     @kotlin.test.BeforeTest fun load() = KslLoader.ensureLoaded()
 
     /**
      * 0-RTT and client certificates do not go together (`QuicServerConfig` refuses `earlyData` with a `clientAuth` other than
-     * None; docs/guide/ktor.md, "Mutual TLS"): `quicEarlyData` on an engine whose TLS connector asks for client certificates
+     * None; docs/guide/ktor.md, "Mutual TLS"): `http3 { earlyData { enabled } }` on an engine whose TLS connector asks for client certificates
      * fails the start with that message, instead of serving HTTP/3 without 0-RTT or HTTP/1.1 alone.
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)

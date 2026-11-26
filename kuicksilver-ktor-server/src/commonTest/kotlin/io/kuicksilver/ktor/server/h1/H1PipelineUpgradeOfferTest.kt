@@ -224,7 +224,7 @@ class H1PipelineUpgradeOfferTest {
             assertFalse(fromServer.isClosedForRead)
         }
 
-    /** The same with `h1AllowBareLf`: an empty Connection field ended by a bare LF is an empty list too. */
+    /** The same with `http1 { allowBareLf }`: an empty Connection field ended by a bare LF is an empty list too. */
     @Test fun negative_anEmptyConnectionFieldIsAcceptedWithBareLf() =
         runTest {
             var served = 0

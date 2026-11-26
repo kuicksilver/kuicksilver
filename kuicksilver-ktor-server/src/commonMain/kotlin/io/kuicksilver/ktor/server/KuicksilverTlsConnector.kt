@@ -51,7 +51,7 @@ public class KuicksilverTlsConnector internal constructor(
     internal val sniSelector: (suspend (ClientHelloInfo) -> ServerTlsOverride?)? get() = tls.sniSelector
     internal val versions: TlsVersions get() = tls.versions
 
-    /** This connector with its TLS resolved over [base], the engine's ([where] names the block in messages). */
+    /** This connector with its TLS resolved over [base], the engine's. */
     internal fun resolved(base: ResolvedServerTls): KuicksilverTlsConnector {
         val r =
             if (tlsBlocks.isEmpty()) {

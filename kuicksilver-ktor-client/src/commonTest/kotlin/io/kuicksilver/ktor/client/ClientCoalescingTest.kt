@@ -52,7 +52,7 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * Connection coalescing (`connectionCoalescing`, ADR-0018; RFC 9113 section 9.1.1, RFC 9114 section 3.3, RFC 9110 sections
+ * Connection coalescing (`pool { coalescing }`, ADR-0018; RFC 9113 section 9.1.1, RFC 9114 section 3.3, RFC 9110 sections
  * 4.3.3 and 15.5.20). The test server's certificate names `server.test`, `*.wild.test`, 127.0.0.1 and ::1; the resolver maps
  * the names to 127.0.0.1 unless a test says otherwise. Over HTTP/2 the server answers with the client's TCP port, which
  * tells connections apart; over HTTP/3 the engine's pool says how many connections there are.

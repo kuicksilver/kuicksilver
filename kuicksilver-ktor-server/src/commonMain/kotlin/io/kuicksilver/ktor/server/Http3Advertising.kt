@@ -6,7 +6,7 @@ package io.kuicksilver.ktor.server
  * Whether a running server advertises HTTP/3 and accepts new HTTP/3 connections: the value of
  * [KuicksilverApplicationEngine.http3Advertising], changed at runtime without a restart (docs/guide/ktor.md, "Turning
  * HTTP/3 off on the server"). It decides the engine's own `Alt-Svc` only while
- * [altSvc][KuicksilverApplicationEngine.Configuration.altSvc] is on, and only on ports that serve HTTP/3; an `Alt-Svc` the
+ * [altSvc][Http3ServerConfig.altSvc] is on, and only on ports that serve HTTP/3; an `Alt-Svc` the
  * application sets, and a 421 response, are left as they are in every mode. New values may be added (docs/stability.md).
  */
 @io.kuicksilver.annotations.ExperimentalKuicksilverApi
@@ -30,10 +30,10 @@ public enum class Http3Advertising {
      * [Clear], plus: every live HTTP/3 connection gets GOAWAY (RFC 9114 section 5.2; its requests in flight complete, then
      * it closes), and every new QUIC connection is refused at its first Initial (RFC 9000 section 5.2.2: "If a server
      * refuses to accept a new connection, it SHOULD send an Initial packet containing a CONNECTION_CLOSE frame with error
-     * code CONNECTION_REFUSED"; sections 10.2.3 and 20.1), statelessly and before `quicAdmission`, unless a hard limit
-     * (`maxConnections`, `maxConnectionsPerIp`) drops the Initial first. A client that still holds the alternative falls
-     * back to TCP at once instead of waiting for a handshake timeout. The UDP socket stays bound, so going back to [On]
-     * needs no new bind.
+     * code CONNECTION_REFUSED"; sections 10.2.3 and 20.1), statelessly and before `http3 { endpoint { admission } }`,
+     * unless a hard limit (`http3 { endpoint { maxConnections; maxConnectionsPerIp } }`) drops the Initial first. A client
+     * that still holds the alternative falls back to TCP at once instead of waiting for a handshake timeout. The UDP socket
+     * stays bound, so going back to [On] needs no new bind.
      */
     Drain,
 }

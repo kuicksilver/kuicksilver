@@ -50,8 +50,9 @@ fun chatServer(
     }) { chatModule(room) }
 
 /**
- * The chat server as a Ktor module: `webTransport(ChatProtocol.PATH)` on an engine with `webTransport = true`. Every
- * session is a member of [room]; see [ChatProtocol] for what goes over the streams and the datagrams.
+ * The chat server as a Ktor module: `webTransport(ChatProtocol.PATH)` on an engine with
+ * `http3 { webTransport { enabled = true } }`. Every session is a member of [room]; see [ChatProtocol] for what goes over
+ * the streams and the datagrams.
  */
 fun Application.chatModule(room: ChatRoom = ChatRoom()) {
     routing {

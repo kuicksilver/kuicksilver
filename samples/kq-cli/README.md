@@ -24,7 +24,7 @@ hello over HTTP/3
 
 What it shows:
 
-- the **discovery modes**: no flag is `Http3DiscoveryMode.Auto` (HTTP/2 or HTTP/1.1 first, HTTP/3 once the server sends
+- the **discovery modes**: no flag is `Http3Discovery.Auto` (HTTP/2 or HTTP/1.1 first, HTTP/3 once the server sends
   `Alt-Svc`), `--http3` is `Preferred` (HTTP/3 raced against TCP), `--http3-only` is `H3Only`, `--http2` and `--http1.1`
   stay on TCP;
 - **why a request took the protocol it did** (`-v`): `ProtocolDiagnostics` of each response (`kuicksilverDiagnostics`):

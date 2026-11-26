@@ -100,7 +100,7 @@ public interface QuicConnection : AutoCloseable {
     /**
      * Queues a datagram (RFC 9221). Under [DatagramPolicy.Reject] it suspends while the send queue is full; under
      * DropOldest / LatestWins it never suspends, and what is buffered for the loop is bounded too (at most twice
-     * `QuicConfig.datagramSendQueue`): a burst that outruns the loop loses its oldest datagrams even on an idle network, so
+     * `quicConfig { datagrams { sendQueue } }`): a burst that outruns the loop loses its oldest datagrams even on an idle network, so
      * send a burst you cannot lose under Reject. Throws [QuicException.DatagramTooLarge] above [maxDatagramSize] and
      * [QuicException.DatagramUnsupported] when either side has datagrams off.
      */

@@ -14,7 +14,7 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
  * @property port the alternative's UDP port, 1..65535.
  * @property expiresAtEpochMillis the end of freshness in epoch milliseconds: the time the response was generated plus `ma`
  *   (86400 s by default), where the generation time is the receipt time minus the response's age (RFC 7838 section 3.1).
- * @property persist `persist=1`: the entry survives a network change even with [Http3ClientConfig.clearOnNetworkChange].
+ * @property persist `persist=1`: the entry survives a network change even with `http3 { expert { clearAltSvcOnNetworkChange } }`.
  *
  * Two entries are equal when they name the same alternative ([protocol], [host], [port], [persist]); the expiry is left
  * out, so a repeated `Alt-Svc` header compares equal to the stored one.
@@ -81,13 +81,13 @@ public interface AltSvcStore {
     public fun clear(): Unit = throw UnsupportedOperationException("this AltSvcStore does not implement clear()")
 
     /**
-     * The network ([Http3ClientConfig.networkId]) the stored entries were learned on, as the engine last set it; null when
+     * The network ([ClientNetworkConfig.networkId]) the stored entries were learned on, as the engine last set it; null when
      * not known. A store kept across restarts keeps it with the entries: at its first request the engine compares it with
      * the current network and, when they differ, drops the entries without `persist=1` (RFC 7838 section 2.2: "clients
      * SHOULD remove from cache all alternative services that lack the "persist" flag with the value "1" when they detect
      * such a change"). The default keeps nothing and answers null, which never matches a network the engine knows: an
      * application's store that does not implement it loses its non-persistent entries at each start where the engine knows
-     * the network. Used with [Http3ClientConfig.networkId] only: the networks `connectionMigration` follows have no identity
+     * the network. Used with [ClientNetworkConfig.networkId] only: the networks `http3 { migration }` follows have no identity
      * that survives a restart ([Http3ConnectionMigration.networks]) and are never stored.
      */
     @ExperimentalKuicksilverApi

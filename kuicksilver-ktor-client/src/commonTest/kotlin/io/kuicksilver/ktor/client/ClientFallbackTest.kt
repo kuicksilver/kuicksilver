@@ -296,7 +296,7 @@ class ClientFallbackTest {
      * 10.2.3 and 20.1): each refused call falls back to HTTP/1.1 once with `fallback = Refused`, the alternative stays
      * cached and is never marked broken (RFC 7838 sections 2.2 and 3) however often the refusal repeats, and the first call
      * after the server takes clients again goes over HTTP/3. Before 0.3.0 the first refusal marked the alternative broken
-     * for 5 minutes, doubling up to 2 days. `hardDelay = INFINITE`: HTTP/1.1 starts only once HTTP/3 failed, so the
+     * for 5 minutes, doubling up to 2 days. `RaceHeadStart.NoRace`: HTTP/1.1 starts only once HTTP/3 failed, so the
      * winner of each race does not depend on timing.
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)

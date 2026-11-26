@@ -191,7 +191,7 @@ public class QuicConfig private constructor(
      */
     @property:InternalKuicksilverApi
     public val pmtud: Boolean,
-    /** Let validated ICMP Packet Too Big messages and EMSGSIZE speed up DPLPMTUD as hints; see [Builder.pmtudIcmpHints]. */
+    /** Let validated ICMP Packet Too Big messages and EMSGSIZE speed up DPLPMTUD as hints; see [Builder.PathMtu.icmpHints]. */
     @property:InternalKuicksilverApi
     public val pmtudIcmpHints: Boolean,
     /** Client: move to the server's preferred address after the handshake; see [Builder.followPreferredAddress]. */

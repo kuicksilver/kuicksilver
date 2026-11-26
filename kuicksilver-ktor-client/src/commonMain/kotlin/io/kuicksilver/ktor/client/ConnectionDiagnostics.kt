@@ -129,7 +129,7 @@ public enum class ConnectStage {
     /** The name lookup of the host (or of the proxy) had not given an address to try yet. */
     NameLookup,
 
-    /** A connection slot of the route (`maxConnectionsPerRoute`): every one was in use, and none came free in time. */
+    /** A connection slot of the route (`pool { maxConnectionsPerRoute }`): every one was in use, and none came free in time. */
     PoolWait,
 
     /**

@@ -377,7 +377,7 @@ class ServerH2FloodTest {
     }
 
     /**
-     * With `http2RepeatOffenderPenalty`, an address whose HTTP/2 connections end in ENHANCE_YOUR_CALM three times within a
+     * With `http2 { repeatOffenderPenalty }`, an address whose HTTP/2 connections end in ENHANCE_YOUR_CALM three times within a
      * minute is refused at accept (before TLS) for the penalty; then it is served again.
      */
     @Test fun negative_repeatOffenderBackoff() =
@@ -474,7 +474,7 @@ class ServerH2FloodTest {
     /**
      * A field block slower than its deadline ends its connection (ENHANCE_YOUR_CALM) but is no flood strike.
      *
-     * The deadline is the core's `maxHeaderBlockTime`, not a 1 s `requestHeaderTimeoutSeconds`: that also bounds the TLS
+     * The deadline is the core's `maxHeaderBlockTime`, not a 1 s `requestHeaderTimeout`: that also bounds the TLS
      * handshake and the connection preface from the accepted connection on, and on a loaded host (a Windows VM) the two took
      * longer than 1 s, so the server answered the late preface with GOAWAY NO_ERROR ("expected: <11> but was: <0>"), as
      * negative_prefaceSlowerThanTimeoutCloses asserts, before any field block began.

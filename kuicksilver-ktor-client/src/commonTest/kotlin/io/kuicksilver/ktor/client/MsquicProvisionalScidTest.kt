@@ -74,7 +74,7 @@ class MsquicProvisionalScidTest {
     }
 
     /**
-     * HTTP/1.1 starts only once HTTP/3 failed here (`hardDelay` infinite): the client ends the QUIC attempt when the switched
+     * HTTP/1.1 starts only once HTTP/3 failed here (`RaceHeadStart.NoRace`): the client ends the QUIC attempt when the switched
      * ServerHello arrives, not at the 10 s handshake or connect timeout, and the diagnostics name the reason.
      */
     @Test fun negative_msquicProvisionalScidFallsBackToTcp() =
@@ -320,7 +320,7 @@ class MsquicProvisionalScidTest {
                             engine.h3.noResumption.avoids("127.0.0.1"),
                             "marked as the connection ended: ${r.kuicksilverDiagnostics}",
                         )
-                        // the next connection to the host, over HTTP/3 (TCP waits for HTTP/3 to fail: hardDelay)
+                        // the next connection to the host, over HTTP/3 (TCP waits for HTTP/3 to fail: NoRace)
                         engine.h3.setupMadeForTest = null
                         val next = c.get(url)
                         assertEquals("h3", next.bodyAsText(), "a new HTTP/3 connection: ${next.kuicksilverDiagnostics}")

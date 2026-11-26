@@ -71,7 +71,7 @@ fun demoTrust(): TrustConfig = TrustConfig.ExpectedName(DEMO_SERVER_NAME, TrustC
 /**
  * Kuicksilver's Ktor engine for the demo: [discovery] (H3Only for the comparisons, Auto for the Diagnostics screen),
  * the demo CA or the platform's trust store, connection migration when [migration] is set, and the kill switch
- * [http3Allowed]. [listener] hears the engine's events (connectionMigrated among them).
+ * [http3Allowed] (`http3 { allowed }`). [listener] hears the engine's events (connectionMigrated among them).
  */
 fun kuicksilverClient(
     trust: TrustConfig,

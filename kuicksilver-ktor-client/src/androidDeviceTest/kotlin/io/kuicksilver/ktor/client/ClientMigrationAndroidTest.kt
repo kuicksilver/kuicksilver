@@ -186,7 +186,7 @@ class ClientMigrationAndroidTest {
         }
 
     /**
-     * Without `connectionMigration` (0.2's behaviour), on the same switch: logs what happens to the download, for the guide's
+     * Without `http3 { migration }` (0.2's behaviour), on the same switch: logs what happens to the download, for the guide's
      * claim about connections that do not migrate, and checks that nothing migrates. The engine's endpoint socket is bound
      * to no network, so the system may route it over the new default network and the server follow that as a NAT
      * rebinding: on the API 32 emulator (2026-11-06) the download completed that way, which is why the guide says such a

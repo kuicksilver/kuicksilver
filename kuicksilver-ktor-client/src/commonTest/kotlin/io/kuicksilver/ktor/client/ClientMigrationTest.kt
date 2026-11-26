@@ -74,7 +74,7 @@ import io.ktor.server.websocket.WebSockets as ServerWebSockets
 import io.ktor.server.websocket.webSocketRaw as serverWebSocketRaw
 
 /**
- * `http3 { connectionMigration }` (U.4a, RFC 9000 section 9): pooled HTTP/3 connections follow a network source. The
+ * `http3 { migration }` (U.4a, RFC 9000 section 9): pooled HTTP/3 connections follow a network source. The
  * "networks" are a test flow of numbers; a new network is a new loopback socket, and the network the connection leaves
  * goes deaf ([CuttableIo] under the engine's endpoint), as a Wi-Fi interface does when the device walks away from it.
  */
@@ -354,7 +354,7 @@ class ClientMigrationTest {
         }
     }
 
-    /** Without `connectionMigration` (0.2's behaviour) the connection dies with its network; a GET in flight falls back to HTTP/1.1. */
+    /** Without `http3 { migration }` (0.2's behaviour) the connection dies with its network; a GET in flight falls back to HTTP/1.1. */
     @Test fun negative_noMigrationWithoutConfig() =
         h3Test {
             val g = Gates()
@@ -874,7 +874,7 @@ class ClientMigrationTest {
         }
 
     /**
-     * Without `connectionMigration` a WebSocket over HTTP/3 ends with its network: once the old path hears nothing, the
+     * Without `http3 { migration }` a WebSocket over HTTP/3 ends with its network: once the old path hears nothing, the
      * idle timeout (RFC 9000 section 10.1) ends the connection, and the session's `incoming` fails and its `closeReason` is
      * 1006 (RFC 6455 section 7.1.5: the connection closed without a Close frame) instead of waiting for ever. (Ktor's JVM
      * reader takes a failed input for its end, so `incoming` does not carry the transport's cause on every platform; the
@@ -883,7 +883,7 @@ class ClientMigrationTest {
     @Test fun negative_webSocketEndsWithItsNetworkWithoutMigration() = webSocketEndsWithItsNetwork(migration = false, allowMigration = true)
 
     /**
-     * With `connectionMigration` but a server that sent `disable_active_migration` (RFC 9000 section 9: the client "MUST
+     * With `http3 { migration }` but a server that sent `disable_active_migration` (RFC 9000 section 9: the client "MUST
      * NOT send packets ... from a different local address"), the switch is refused and the WebSocket ends with the old
      * network as without the option.
      */

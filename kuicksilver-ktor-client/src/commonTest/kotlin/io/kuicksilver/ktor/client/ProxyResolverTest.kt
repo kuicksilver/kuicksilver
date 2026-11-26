@@ -624,7 +624,7 @@ class ProxyResolverTest {
         assertEquals("2001:db8::a", pacHost(Url("wss://[2001:DB8::A]/x")))
     }
 
-    /** The engine's `pacFullWebSocketUrl` reaches the system resolver; off by default. */
+    /** The engine's `proxies { pacFullWebSocketUrl }` reaches the system resolver; off by default. */
     @Test fun pacFullWebSocketUrlReachesTheSystemResolver() =
         runBlocking {
             val seen = ArrayList<Boolean>()

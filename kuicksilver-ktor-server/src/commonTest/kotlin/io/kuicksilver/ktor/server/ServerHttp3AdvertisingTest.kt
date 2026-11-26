@@ -385,7 +385,7 @@ class ServerHttp3AdvertisingTest {
         }
 
     /**
-     * A configured `quicAdmission` decides under `On`; under `Drain` it is not asked, and the client gets CONNECTION_REFUSED.
+     * A configured `http3 { endpoint { admission } }` decides under `On`; under `Drain` it is not asked, and the client gets CONNECTION_REFUSED.
      * The policy records the client ports it saw, so a late retransmission from the first client cannot pass for the second.
      */
     @Test fun configuredAdmissionAppliesUnderOnAndIsBypassedUnderDrain() =

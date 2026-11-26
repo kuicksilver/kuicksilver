@@ -60,7 +60,7 @@ class ClientSocksProxyTest {
 
     /**
      * RFC 1929 section 2 gives PASSWD 1 to 255 octets (PLEN 1..255), so a SOCKS5 proxy with an empty password is refused
-     * when it is configured: the engine's `proxy` with such `proxyCredentials` fails the engine's creation, and
+     * when it is configured: the engine's `proxy` with such `proxies { credentials }` fails the engine's creation, and
      * `ResolvedProxy.socks5` fails at once. An empty password stays allowed for an HTTP proxy (`Basic`, RFC 7617).
      */
     @Test fun negative_socks5ProxyWithAnEmptyPasswordIsAConfigurationError() {
@@ -191,7 +191,7 @@ class ClientSocksProxyTest {
         }
 
     /**
-     * The application resolver ([KuicksilverEngineConfig.dns]) through SOCKS5: asked for the proxy's name in both forms; for
+     * The application resolver ([ClientNetworkConfig.dns]) through SOCKS5: asked for the proxy's name in both forms; for
      * the origin's only through `socks5` (names resolved here, the proxy gets the address), never through `socks5h`, whose
      * proxy gets the name (ATYP 3, RFC 1928 section 5).
      */
@@ -414,7 +414,7 @@ class ClientSocksProxyTest {
             }
         }
 
-    /** `proxyCredentials` go on the CONNECT at once as `Basic` (no 407 round trip), and never into the tunnel. */
+    /** `proxies { credentials }` go on the CONNECT at once as `Basic` (no 407 round trip), and never into the tunnel. */
     @Test fun proxyCredentialsSentPreemptivelyOnConnect() =
         clientTest {
             val (server, port) = testServer { routing { get("/") { call.respondText("${call.request.headers["Proxy-Authorization"]}") } } }

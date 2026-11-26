@@ -290,7 +290,7 @@ class ServerMisdirectedRequestTest {
             }
         }
 
-    /** `plainConnector { trustedGateway = true }`: the clients are trusted gateways, so absolute-form https targets are served. */
+    /** `plainConnector { allowMisdirectedHosts = true }`: the clients are trusted gateways, so absolute-form https targets are served. */
     @Test fun trustedGatewayPlainConnectorServesAbsoluteFormHttps() =
         serverTest {
             val (server, port, seen) =

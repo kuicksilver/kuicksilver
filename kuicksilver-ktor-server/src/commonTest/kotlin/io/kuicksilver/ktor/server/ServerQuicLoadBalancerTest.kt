@@ -20,7 +20,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.time.Duration.Companion.seconds
 
-/** `quicLoadBalancer` and `engine.updateLoadBalancer` (QUIC-LB, draft-ietf-quic-load-balancers-21) reach the HTTP/3 listeners. */
+/** `http3 { endpoint { loadBalancer } }` and `engine.updateLoadBalancer` (QUIC-LB, draft-ietf-quic-load-balancers-21) reach the HTTP/3 listeners. */
 @OptIn(ExperimentalKuicksilverApi::class)
 class ServerQuicLoadBalancerTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()

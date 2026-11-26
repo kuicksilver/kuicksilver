@@ -213,7 +213,7 @@ public class ProtocolDiagnostics internal constructor() {
 
                 Long.MAX_VALUE -> Duration.INFINITE
 
-                // `hardDelay = Duration.INFINITE`: HTTP/1.1 only once HTTP/3 failed
+                // `raceHeadStart = RaceHeadStart.NoRace`: TCP only once HTTP/3 failed
                 else -> headStartNanos.nanoseconds
             }
 
@@ -368,7 +368,7 @@ private fun Char.isLogSafe(): Boolean = this in 'a'..'z' || this in 'A'..'Z' || 
  * | [GoAway] | the server kept refusing the request with GOAWAY | the server is shutting down |
  * | [StreamFailed] | one request stream failed and the request was repeated over HTTP/1.1 | `h3Failure` |
  * | [Other] | any other HTTP/3 failure | `h3Failure` |
- * | [QuicStalled] | the HTTP/3 connection stopped carrying packets under the request (stall detection); the request went over TCP and the alternative is marked broken | a network that cuts UDP flows: a firewall, NAT or VPN; `http3 { stallDetection }` |
+ * | [QuicStalled] | the HTTP/3 connection stopped carrying packets under the request (stall detection); the request went over TCP and the alternative is marked broken | a network that cuts UDP flows: a firewall, NAT or VPN; `http3 { stall { enabled } }` |
  * | [H2Refused] | over HTTP/1.1: the server answered HTTP/2 with HTTP_1_1_REQUIRED (now or lately) | the server's HTTP/2 configuration; `http2 { enabled = false }` |
  * | [ServerConnectionIdChanged] | the server switched its Source Connection ID during the QUIC handshake (msquic with a ClientHello of 3+ datagrams, a resumption's) | nothing on the client: the server's QUIC stack (msquic#4905); this call went over TCP, the next ones use HTTP/3 without resumption for a while |
  *
@@ -452,7 +452,7 @@ public enum class FallbackReason {
     Other,
 
     /**
-     * The HTTP/3 connection stalled under the request (`http3 { stallDetection }`): probe timeouts in a row went unanswered
+     * The HTTP/3 connection stalled under the request (`http3 { stall { enabled } }`): probe timeouts in a row went unanswered
      * and nothing came back from the server (or, on a 0-RTT connection, nothing at all), as on a network that cuts UDP
      * flows. The connection was drained, the alternative marked broken (RFC 7838 section 2.4), and the request, which could
      * be repeated (RFC 9110 section 9.2.2), went over TCP; one that could not failed with `QuicStalledException`. Since 0.3.0.
@@ -485,7 +485,7 @@ public enum class AlternativeSource {
     /** An `Alt-Svc` header of the origin (RFC 7838), in `Http3Discovery.Auto`. */
     AltSvc,
 
-    /** The origin is in `Http3ClientConfig.quicHints`. */
+    /** The origin is in `http3 { hints }`. */
     QuicHint,
 
     /** `Http3Discovery.Preferred`: the origin itself, by prior knowledge. */

@@ -8,7 +8,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertSame
 import kotlin.time.Duration.Companion.seconds
 
-/** The engine bounds HTTP/3's `maxHeaderBlockTime` by `requestHeaderTimeoutSeconds`, as it does HTTP/2's. */
+/** The engine bounds HTTP/3's `maxHeaderBlockTime` by `requestHeaderTimeout`, as it does HTTP/2's. */
 class Http3HeaderDeadlineTest {
     @Test fun negative_aLongerFieldSectionDeadlineIsCutToTheRequestHeadDeadline() {
         val s =

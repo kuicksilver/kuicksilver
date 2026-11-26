@@ -298,7 +298,7 @@ private suspend fun KuicksilverApplicationEngine.handleHttp3(
     peer: List<Certificate>,
     authorityCheck: AuthorityCheck,
 ) {
-    // Extended CONNECT (RFC 9220): WebSockets (when webSocketsOverHttp3 is on, also with Extended CONNECT advertised for
+    // Extended CONNECT (RFC 9220): WebSockets (when webSockets { overHttp3 } is on, also with Extended CONNECT advertised for
     // WebTransport), WebTransport and, with connectUdp, CONNECT-UDP (RFC 9298) go through Ktor's pipeline; other protocols
     // are not served here and get 501 (section 3).
     // Upgrade tokens match in any case (RFC 9110 section 7.8)

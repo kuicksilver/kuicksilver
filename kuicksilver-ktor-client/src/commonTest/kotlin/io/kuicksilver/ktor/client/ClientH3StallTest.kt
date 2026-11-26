@@ -59,7 +59,7 @@ import io.ktor.server.websocket.WebSockets as ServerWebSockets
 import io.ktor.server.websocket.webSocket as serverWebSocket
 
 /**
- * Stall detection (`http3 { stallDetection }`; docs/guide/ktor.md, "Stalled HTTP/3 connections"): a network that cuts UDP
+ * Stall detection (`http3 { stall { enabled } }`; docs/guide/ktor.md, "Stalled HTTP/3 connections"): a network that cuts UDP
  * flows. The engine's endpoint socket is a [FaultyIo] that drops everything, in both directions, after a number of
  * datagrams once armed. The QUIC idle timeout is 15 s here: without the detection every stalled call takes that long.
  */
@@ -165,7 +165,7 @@ class ClientH3StallTest {
         }
     }
 
-    /** Auto mode, HTTP/3 first once its alternative is known (`hardDelay = INFINITE`): every test starts on a warm HTTP/3 connection. */
+    /** Auto mode, HTTP/3 first once its alternative is known (`RaceHeadStart.NoRace`): every test starts on a warm HTTP/3 connection. */
     private fun client(
         ios: FaultyIos,
         heard: Heard,
@@ -296,7 +296,7 @@ class ClientH3StallTest {
         }
 
     /**
-     * RFC 9110 section 9.2.2: a POST is not repeated. The path stays cut past `stallAbandonAfter` (2 s here): the POST
+     * RFC 9110 section 9.2.2: a POST is not repeated. The path stays cut past `stall { abandonAfter }` (2 s here): the POST
      * fails with the stall, not at the 15 s idle timeout.
      */
     @Test fun nonIdempotentRequestFailsFastWithoutRetry() =
@@ -455,7 +455,7 @@ class ClientH3StallTest {
             }
         }
 
-    /** Negative control: with `stallDetection = false` the stalled call waits for the QUIC idle timeout (3 s here), as before 0.3.0. */
+    /** Negative control: with `stall { enabled = false }` the stalled call waits for the QUIC idle timeout (3 s here), as before 0.3.0. */
     @Test fun negative_offWaitsForTheIdleTimeout() =
         h3Test {
             val s = server()
@@ -513,7 +513,7 @@ class ClientH3StallTest {
                         assertEquals(polls, engine.h3.stallPollsForTest.load(), "the whole response arrived: nothing to watch")
                         ios.cut()
                         assertNotEquals(HttpProtocolVersion.HTTP_3_0, c.get(url).version, "the other request stalls and goes over TCP")
-                        // abandoned at once (stallAbandonAfter is 2 s): nothing on it needs the network any more
+                        // abandoned at once (stall { abandonAfter } is 2 s): nothing on it needs the network any more
                         withTimeout(1.seconds) { conn.quic.closed.await() }
                         assertEquals("rest", ch.readBuffer().readByteArray().decodeToString())
                     }
@@ -525,7 +525,7 @@ class ClientH3StallTest {
 
     /**
      * Review finding 2: a stall drains the connection. A POST (not repeatable) waits on it, and a 3 s outage (a handover
-     * between radio networks) ends before `stallAbandonAfter` (8 s here): the POST completes over HTTP/3.
+     * between radio networks) ends before `stall { abandonAfter }` (8 s here): the POST completes over HTTP/3.
      */
     @Test fun nonRepeatableRequestSurvivesAShortOutage() =
         h3Test {

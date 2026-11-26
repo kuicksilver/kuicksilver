@@ -782,7 +782,7 @@ class ServerH2Test {
 
     /**
      * HTTP/2 connections count against the TCP connection limits like HTTP/1.1 ones (one socket each, from accept until it
-     * is released): with `maxTcpConnectionsPerIp = 1` and an HTTP/2 connection open and served, a second client from the
+     * is released): with `tcp { maxConnectionsPerIp = 1 }` and an HTTP/2 connection open and served, a second client from the
      * same address is closed at accept, before its TLS handshake; once the first is closed the address is served again.
      */
     @Test fun negative_connectionLimitCountsH2() =

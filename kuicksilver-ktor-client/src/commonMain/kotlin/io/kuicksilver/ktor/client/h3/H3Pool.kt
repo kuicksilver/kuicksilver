@@ -406,7 +406,7 @@ internal class H3Pool(
     private val clock: () -> Long =
         io.kuicksilver.ktor.client.h1
             .monotonicMillis(),
-    /** Where the migrators of `http3.connectionMigration` run ([followNetwork]); null: connections never migrate. */
+    /** Where the migrators of `http3 { migration }` run ([followNetwork]); null: connections never migrate. */
     private val migrationScope: CoroutineScope? = null,
     /** The engine's one-WebSocket-CONNECTING-per-host lock (RFC 6455 section 4.1 step 2), shared with HTTP/1.1. */
     private val webSocketConnecting: WebSocketConnecting = WebSocketConnecting(),
@@ -1074,7 +1074,7 @@ internal class H3Pool(
 
     /**
      * Happy Eyeballs over QUIC (RFC 8305, [raceAddresses]): the handshakes to [host]'s addresses, as [dns] resolves them
-     * one family at a time, sorted by RFC 6724 with the families alternating, one `connectionAttemptDelay` apart or as soon
+     * one family at a time, sorted by RFC 6724 with the families alternating, one `network { happyEyeballsDelay }` apart or as soon
      * as one failed; the first handshake to complete wins, the others are cancelled (a cancelled QUIC connect closes the
      * connection it started) or, when they completed too, closed. With `earlyData` an attempt returns as soon as it can
      * send 0-RTT (a resumed session): the first address of the order then wins at once and the other addresses are not
@@ -2133,7 +2133,7 @@ internal class H3Pool(
      * [e], a failed handshake with the CONNECT-UDP proxy [p], as [io.kuicksilver.ktor.client.ProxyTlsException] around the
      * TLS layer's error when the TLS layer failed it (a certificate that does not verify, an alert), as for an `https://`
      * proxy: the failure is the proxy's, not the origin's. Null for any other failure (a refusal, a timeout), which the
-     * address race judges as it is, and for the `proxyTls` block's own [io.kuicksilver.tls.TlsException.Config].
+     * address race judges as it is, and for the `proxies { tls { } }` block's own [io.kuicksilver.tls.TlsException.Config].
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private fun proxyTlsFailure(
@@ -2270,7 +2270,7 @@ internal class H3Pool(
     private val retryOffered = kotlin.concurrent.atomics.AtomicReference(emptySet<Http3Connection>())
 
     /**
-     * Lets [c] follow the network with `http3.connectionMigration`, if set (docs/guide/ktor.md, "Connection migration"): once
+     * Lets [c] follow the network with `http3 { migration }`, if set (docs/guide/ktor.md, "Connection migration"): once
      * its handshake has completed (RFC 9000 section 9: no migration before; a 0-RTT connection is handed out earlier), the
      * hook's migrator is started with its events going to the listener, and it is closed when [c] ends or the client
      * closes. The transport enforces the rest of section 9 (confirmation, `disable_active_migration`, zero-length IDs,
@@ -2508,7 +2508,7 @@ internal class H3Pool(
         extraHeaders: List<Pair<String, String>> = emptyList(),
         dns: RequestDns = config.newRequestDns(events.dnsObserver(data)),
         prefer: Http3Connection? = null,
-        // stall detection (`http3 { stallDetection }`): where TCP is the way out, never for a WebSocket
+        // stall detection (`http3 { stall { enabled } }`): where TCP is the way out, never for a WebSocket
         watchStall: Boolean = false,
     ): HttpResponseData {
         var attempts = 0 // repeats of a request the server did not process (at most 2)

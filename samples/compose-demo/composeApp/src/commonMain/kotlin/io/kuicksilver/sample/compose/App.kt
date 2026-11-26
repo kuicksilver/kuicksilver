@@ -212,7 +212,7 @@ private fun DiagnosticsScreen(app: DemoApp) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Switch(checked = s.http3Allowed, onCheckedChange = { app.diagnostics.setHttp3Allowed(it) })
             Spacer(Modifier.width(8.dp))
-            Text("http3Allowed")
+            Text("http3 { allowed }")
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Switch(checked = demoCa, onCheckedChange = { demoCa = it })

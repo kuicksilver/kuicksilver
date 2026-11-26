@@ -376,7 +376,7 @@ internal class RequestDns private constructor(
 
 /**
  * A fresh [RequestDns] with this configuration's resolver: the system's ([Dns.System], the default: the path of 0.2, as it
- * was), the application's ([KuicksilverEngineConfig.dns], through [familyResolver]), or a test's. A test resolver of both
+ * was), the application's ([ClientNetworkConfig.dns], through [familyResolver]), or a test's. A test resolver of both
  * families ([KuicksilverEngineConfig.resolverForTest]) is asked once per name, and its answer split by family.
  */
 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)

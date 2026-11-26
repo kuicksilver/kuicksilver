@@ -23,7 +23,7 @@ enum class Mode(
     /** TCP only: HTTP/2 when the server offers `h2` in ALPN, else HTTP/1.1 (`null`). */
     Http2("--http2"),
 
-    /** TCP only, HTTP/1.1 only (`H1Only` with `http2 { enabled = false }`). */
+    /** TCP only, HTTP/1.1 only (`http3 { enabled = false }` with `http2 { enabled = false }`). */
     Http11("--http1.1"),
 }
 

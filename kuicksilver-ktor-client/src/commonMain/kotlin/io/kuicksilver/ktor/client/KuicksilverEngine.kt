@@ -152,7 +152,7 @@ internal class KuicksilverEngine(
     private val engineScope = CoroutineScope(coroutineContext + engineJob)
 
     /**
-     * The networks `connectionMigration` follows ([Http3ConnectionMigration.networks]), the engine's network while `networkId`
+     * The networks `http3 { migration }` follows ([Http3ConnectionMigration.networks]), the engine's network while `networkId`
      * is not set; null when there is no such source.
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -194,7 +194,7 @@ internal class KuicksilverEngine(
             config.network.httpsRecords
                 .lookup(timeout)
                 // RFC 9460 section 12: answers are cached only where a network change can be seen (networkId, or the
-                // networks connectionMigration follows). TTLs run on an ExpiryClock: neither a wall clock stepped back nor a
+                // networks http3 { migration } follows). TTLs run on an ExpiryClock: neither a wall clock stepped back nor a
                 // device that slept keeps a record past its TTL
                 ?.let {
                     HttpsRecords(
@@ -214,7 +214,7 @@ internal class KuicksilverEngine(
     private val events = EngineEvents(config.observability.eventListener, config.observability.logger)
 
     /**
-     * The jobs that let HTTP/3 connections follow the network (`http3.connectionMigration`): outside the requests' job, so
+     * The jobs that let HTTP/3 connections follow the network (`http3 { migration }`): outside the requests' job, so
      * a closed client's calls still migrate while they finish, and cancelled by the cleanup before the connections close.
      * Internal for tests.
      */
@@ -339,7 +339,7 @@ internal class KuicksilverEngine(
                     if (events.logger.isEnabled(LogLevel.Info)) {
                         events.logger.log(
                             LogLevel.Info,
-                            "the network source of connectionMigration ${if (failure != null) "failed" else "ended"}; " +
+                            "the network source of http3 { migration } ${if (failure != null) "failed" else "ended"}; " +
                                 "network changes are no longer seen",
                             failure,
                         )
@@ -736,7 +736,7 @@ internal class KuicksilverEngine(
     }
 
     /**
-     * A new network (`networkId`, else the networks `connectionMigration` follows) forgets broken marks, QUIC confirmation,
+     * A new network (`networkId`, else the networks `http3 { migration }` follows) forgets broken marks, QUIC confirmation,
      * the HTTPS records, the NAT64 prefixes ([Nat64]), the kept name lookups and, if asked, non-persistent alternatives (RFC
      * 7838 section 2.2). The first network the engine sees
      * is compared with the one the store's entries were learned on ([AltSvcStore.networkId], kept across restarts by
@@ -1648,7 +1648,7 @@ internal class KuicksilverEngine(
     /**
      * SVCB resolution of [url]'s origin and of [altAuthority], waited for while its addresses resolve (into [dns], for the TCP side: section 3,
      * "SVCB-optional clients SHOULD issue in parallel any other DNS queries that might be needed") and at most
-     * `httpsRecordExtraWait` longer (section 5.1: an address answer first lets the client connect as if the HTTPS query
+     * `network { httpsRecordWait }` longer (section 5.1: an address answer first lets the client connect as if the HTTPS query
      * returned NODATA), all within the connect timeout. A resolution still running goes on, and its records are cached
      * for the next request; this one counts it as [HttpsResolution.None].
      */
@@ -1918,26 +1918,26 @@ internal class EndpointUnreachable(
     cause: Throwable,
 ) : Exception(cause.message, cause)
 
-/** The shortest `httpsRecordExtraWait` allowed (RFC 9460 section 5.1). */
+/** The shortest `network { httpsRecordWait }` allowed (RFC 9460 section 5.1). */
 internal val MIN_HTTPS_RECORD_EXTRA_WAIT = kotlin.time.Duration.parse("50ms")
 
-/** The longest `httpsRecordExtraWait` allowed. */
+/** The longest `network { httpsRecordWait }` allowed. */
 internal val MAX_HTTPS_RECORD_EXTRA_WAIT = 1.seconds
 
-/** The shortest `stallMinSilence` allowed. */
+/** The shortest `http3 { stall { minSilence } }` allowed. */
 internal val MIN_STALL_SILENCE = kotlin.time.Duration.parse("100ms")
 
-/** The longest `stallMinSilence` allowed. */
+/** The longest `http3 { stall { minSilence } }` allowed. */
 internal val MAX_STALL_SILENCE = 60.seconds
 
-/** The longest `stallAbandonAfter` allowed. */
+/** The longest `http3 { stall { abandonAfter } }` allowed. */
 internal val MAX_STALL_ABANDON = 10.minutes
 
 /** The longest an HTTPS record lookup runs, whatever the connect timeout. */
 internal val MAX_HTTPS_RECORD_QUERY = 30.seconds
 
 /**
- * How long after the engine's creation requests wait for the first value of the networks `connectionMigration` follows
+ * How long after the engine's creation requests wait for the first value of the networks `http3 { migration }` follows
  * (the system answers at once: Android's default-network callback when a network is up, Apple's path monitor); past it
  * they go on without a known network and without waiting.
  */

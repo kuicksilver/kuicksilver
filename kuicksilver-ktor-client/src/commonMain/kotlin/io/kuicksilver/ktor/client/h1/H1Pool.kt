@@ -302,9 +302,9 @@ private val DONE: Job = Job().also { it.complete() }
  * An HTTP/2 connection takes one slot of the limits below and serves its route's requests as streams ([H2Pool]): one
  * connection per route while it has a free stream, a second only when it is full. HTTP/1.1 keeps keep-alive and the
  * connection limits ([ConnectionPool]): at most
- * `maxConnectionsCount` connections and `maxConnectionsPerRoute` per route, requests beyond that wait in FIFO order
- * within the connect timeout; a connection whose response body ended by its framing goes back to an idle list of at most
- * `maxIdleConnectionsPerRoute` per route, kept for `idleTimeout`. A stale idle connection is replaced once, transparently,
+ * `pool { maxConnections }` connections and `maxConnectionsPerRoute` per route, requests beyond that wait in FIFO
+ * order within the connect timeout; a connection whose response body ended by its framing goes back to an idle list of at
+ * most `maxIdleConnectionsPerRoute` per route, kept for `idleTimeout`. A stale idle connection is replaced once, transparently,
  * for idempotent requests only (RFC 9110 section 9.2.2, RFC 9112 section 9.3.1): a request the server may have processed
  * is never sent twice.
  */
@@ -447,8 +447,8 @@ internal class H1Pool(
     internal val http11Routes = Http11Routes()
 
     /**
-     * The user's configuration says the server [data] goes to handles HTTP/1.1 (RFC 9112 section 6.1): `assumeHttp11`, or
-     * that server in `http11Hints` (the origin, or the proxy for plain `http` in the absolute form).
+     * The user's configuration says the server [data] goes to handles HTTP/1.1 (RFC 9112 section 6.1): `http1 { knownServers }`
+     * is `KnownServers.All`, or `Listed` with that server (the origin, or the proxy for plain `http` in the absolute form).
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private fun configuredHttp11(
@@ -2245,7 +2245,7 @@ internal class H1Pool(
         } catch (e: CancellationException) {
             throw e
         } catch (e: TlsException.Config) {
-            throw e // the proxyTls block's own error, not the proxy's
+            throw e // the proxies { tls { } } block's own error, not the proxy's
         } catch (e: Throwable) {
             if (e !is TlsException && e !is kotlinx.io.IOException) throw e
             throw io.kuicksilver.ktor.client.ProxyTlsException(

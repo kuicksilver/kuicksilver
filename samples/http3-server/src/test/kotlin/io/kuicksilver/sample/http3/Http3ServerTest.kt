@@ -1,6 +1,6 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class) // the client's http2 {} and hardDelay
+@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class) // the client's http2 {} and raceHeadStart
 
 package io.kuicksilver.sample.http3
 

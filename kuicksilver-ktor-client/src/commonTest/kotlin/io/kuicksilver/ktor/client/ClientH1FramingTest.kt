@@ -609,8 +609,8 @@ class ClientH1FramingTest {
         }
 
     /**
-     * RFC 9112 section 6.1, "specific user configuration": a server in `http11Hints`, or any server with `assumeHttp11`,
-     * gets a body of unknown length chunked at once, without the first-contact OPTIONS.
+     * RFC 9112 section 6.1, "specific user configuration": a server in `http1 { knownServers = KnownServers.Listed(...) }`,
+     * or any server with `KnownServers.All`, gets a body of unknown length chunked at once, without the first-contact OPTIONS.
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     @Test

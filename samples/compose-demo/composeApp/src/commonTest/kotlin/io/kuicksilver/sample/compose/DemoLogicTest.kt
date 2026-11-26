@@ -197,7 +197,7 @@ class DemoLogicTest {
 
     @Test fun diagnosticsRenderedForTheKillSwitch() {
         val lines = renderDiagnostics(DiagnosticsView("HTTP/1.1", "Http3Disabled", FallbackReason.Http3Disabled, null, null, false, 1, null))
-        assertTrue(lines.any { it.startsWith("What to check:") && "http3Allowed" in it }, lines.joinToString("\n"))
+        assertTrue(lines.any { it.startsWith("What to check:") && "http3 { allowed }" in it }, lines.joinToString("\n"))
     }
 
     @Test fun diagnosticsRenderedForHttp3() {

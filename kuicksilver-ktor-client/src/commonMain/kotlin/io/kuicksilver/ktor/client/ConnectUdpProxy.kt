@@ -8,7 +8,7 @@ import io.kuicksilver.http3.UdpProxyTemplate
 import kotlin.io.encoding.Base64
 
 /**
- * A CONNECT-UDP proxy (RFC 9298, MASQUE) for the engine's HTTP/3: `engine { connectUdpProxy = ConnectUdpProxy(template) }`.
+ * A CONNECT-UDP proxy (RFC 9298, MASQUE) for the engine's HTTP/3: `engine { proxies { connectUdp = ConnectUdpProxy(template) } }`.
  * Each HTTP/3 connection to an origin it [applies][ConnectUdpProxy.applies] to runs inside a UDP tunnel through the proxy
  * (`Http3Connection.connectUdp` on a connection to the proxy, the tunnel as the inner connection's socket), with TLS end to
  * end to the origin: the proxy sees the origin's name and port and UDP, never the requests.

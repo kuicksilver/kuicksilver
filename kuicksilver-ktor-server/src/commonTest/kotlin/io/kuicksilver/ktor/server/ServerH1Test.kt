@@ -481,7 +481,7 @@ class ServerH1Test {
     }
 
     /**
-     * With `maxTcpConnections = 2` and two connections held (accepted, no TLS handshake yet), the connector stops accepting:
+     * With `tcp { maxConnections = 2 }` and two connections held (accepted, no TLS handshake yet), the connector stops accepting:
      * a third client's connect completes in the OS backlog, and it is answered only once the first connection is closed.
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, io.kuicksilver.annotations.InternalKuicksilverApi::class)
@@ -528,7 +528,7 @@ class ServerH1Test {
         }
 
     /**
-     * With `maxTcpConnectionsPerIp = 1`, a second connection from 127.0.0.1 while one is held is closed at accept, before
+     * With `tcp { maxConnectionsPerIp = 1 }`, a second connection from 127.0.0.1 while one is held is closed at accept, before
      * any TLS work (no handshake failure is reported for it, and its client sees the close at once, not after its own
      * handshake timeout), and reported as refused for the per-IP limit; once the first is gone the address is served again.
      * The held connection never sends a ClientHello: on a slow runner its own handshake may time out (the server's TLS

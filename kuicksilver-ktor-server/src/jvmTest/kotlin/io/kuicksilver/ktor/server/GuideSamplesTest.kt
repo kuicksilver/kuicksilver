@@ -356,7 +356,7 @@ class GuideSamplesTest {
                 routing { get("/") { call.respondText("ok") } }
             }
         server.start(wait = false)
-        // for a metrics gauge: clients dropped by quicMaxConnections or quicMaxConnectionsPerIp since the start
+        // for a metrics gauge: clients dropped by maxConnections or maxConnectionsPerIp since the start
         val refusedByLimits = server.engine.http3Stats.sumOf { it.connectionsRefusedLimits }
 
         try {

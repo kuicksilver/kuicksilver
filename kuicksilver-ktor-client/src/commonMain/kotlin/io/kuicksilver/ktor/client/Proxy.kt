@@ -267,7 +267,7 @@ internal expect fun ProxyConfig.platformProxyIsDirect(): Boolean
 internal expect fun ProxyConfig.platformProxyUsesTls(): Boolean?
 
 /**
- * The proxy for a request to [url]: the engine's explicit `proxy` (with `proxyCredentials`), else what its
+ * The proxy for a request to [url]: the engine's explicit `proxy` (with `proxies { credentials }`), else what its
  * `proxies { resolver }` says (cached per route), null for a direct connection. Fails with UnsupportedOperationException for a
  * proxy the engine cannot use, so a request never bypasses it.
  */

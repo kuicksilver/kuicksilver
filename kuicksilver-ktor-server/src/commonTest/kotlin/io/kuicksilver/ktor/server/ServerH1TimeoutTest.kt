@@ -92,7 +92,7 @@ class ServerH1TimeoutTest {
 
     /**
      * A client that sends its ClientHello and then neither reads nor answers fails the handshake at the request-head
-     * deadline, and its socket is released, so its `maxTcpConnections` slot comes back: with the limit at 1, the next
+     * deadline, and its socket is released, so its `tcp { maxConnections }` slot comes back: with the limit at 1, the next
      * client is served. (On loopback the handshake's output fits the send buffer, so this does not tell the bounded close
      * from a plain one; `CloseWithinTest` covers the bound.)
      */

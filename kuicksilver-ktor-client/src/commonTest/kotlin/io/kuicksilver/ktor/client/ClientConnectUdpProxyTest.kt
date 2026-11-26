@@ -202,7 +202,10 @@ class ClientConnectUdpProxyTest {
             }
         }
 
-    /** HTTP/3 off (H1Only) cannot carry a request that must go through the CONNECT-UDP proxy: refused, never sent over TCP. */
+    /**
+     * HTTP/3 off (`http3 { enabled = false }`) cannot carry a request that must go through the CONNECT-UDP proxy: refused,
+     * never sent over TCP.
+     */
     @Test fun negative_h1OnlyWithAConnectUdpProxyIsRefused() =
         h3Test {
             val proxy = loopbackProxy()

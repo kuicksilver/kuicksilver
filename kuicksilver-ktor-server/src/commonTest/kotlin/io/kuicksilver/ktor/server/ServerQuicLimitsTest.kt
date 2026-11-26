@@ -93,7 +93,7 @@ class ServerQuicLimitsTest {
     }
 
     /**
-     * With `quicMaxConnectionsPerIp = 2` a third connection from the same address is dropped at its first Initial (the client
+     * With `http3 { endpoint { maxConnectionsPerIp = 2 } }` a third connection from the same address is dropped at its first Initial (the client
      * times out), and the engine's statistics count it as refused by the limits; the two before it are served.
      */
     @Test fun negative_perIpLimitOfTwoRefusesTheThirdConnection() =
@@ -110,7 +110,7 @@ class ServerQuicLimitsTest {
                 val second = client.connect(remote, tls)
                 for (c in listOf(first, second)) assertEquals(200, c.request(http3Request("GET", "server.test", "/")).status)
                 val third = runCatching { client.connect(remote, tls, quicConfig { handshakeTimeout = 2.seconds }) }
-                assertTrue(third.isFailure, "a third connection from one address was served with quicMaxConnectionsPerIp = 2")
+                assertTrue(third.isFailure, "a third connection from one address was served with maxConnectionsPerIp = 2")
                 val stats = server.engine.http3Stats.single()
                 assertTrue(stats.connectionsRefusedLimits >= 1, "the refusal is not counted: $stats")
                 assertEquals(2L, stats.connectionsAccepted, "$stats")

@@ -72,7 +72,7 @@ import io.ktor.client.request.get as clientGet
 
 /**
  * WebSockets over HTTP/2 (RFC 8441) through Ktor's own `webSocket {}` routes: the server engine with `http2` advertises
- * SETTINGS_ENABLE_CONNECT_PROTOCOL (`webSocketsOverHttp2`, on by default), takes an Extended CONNECT with `:protocol =
+ * SETTINGS_ENABLE_CONNECT_PROTOCOL (`webSockets { overHttp2 }`, on by default), takes an Extended CONNECT with `:protocol =
  * websocket` as Ktor's upgrade request and answers it with `:status 200`; the stream then carries the frames. The client
  * here is the HTTP/2 runtime driven by hand, so every field and status is the server's own.
  */
@@ -502,7 +502,7 @@ class ServerWebSocketH2Test {
             }
         }
 
-    /** With `webSocketsOverHttp2 = false` no SETTINGS_ENABLE_CONNECT_PROTOCOL is sent, so `:protocol` makes the request malformed. */
+    /** With `webSockets { overHttp2 = false }` no SETTINGS_ENABLE_CONNECT_PROTOCOL is sent, so `:protocol` makes the request malformed. */
     @Test fun negative_extendedConnectRefusedWhenDisabled() =
         serverTest {
             val (server, port) = h2TlsServer(configure = { webSockets { overHttp2 = false } }) { echo() }
@@ -781,7 +781,7 @@ class ServerWebSocketH2Test {
 
     /**
      * A connection that carries only a WebSocket is in use: the stream counts as an open request, which the idle close
-     * (`connectionIdleTimeoutSeconds`) waits to be 0, and the WebSocket keeps it until the session ends.
+     * (`http1 { idleTimeout }`) waits to be 0, and the WebSocket keeps it until the session ends.
      */
     @Test fun aConnectionCarryingAWebSocketIsNotIdle() =
         serverTest {

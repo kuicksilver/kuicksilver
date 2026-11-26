@@ -315,7 +315,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                 }
                                 return@acceptLoop
                             }
-                            // with http2RepeatOffenderPenalty, a client whose HTTP/2 connections keep earning ENHANCE_YOUR_CALM
+                            // with http2 { repeatOffenderPenalty }, a client whose HTTP/2 connections keep earning ENHANCE_YOUR_CALM
                             // waits out its penalty: closed here, before the TLS handshake costs anything (threat model 3.23)
                             val refused =
                                 try {
@@ -400,7 +400,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                                 ?: throw IOException("No TLS handshake within the request header timeout ($headerTimeout)")
                                         } catch (e: Throwable) {
                                             // never a close without a bound (the socket has none of its own): it would keep
-                                            // the connection's maxTcpConnections slot while the client takes nothing. A FIN
+                                            // the connection's tcp { maxConnections } slot while the client takes nothing. A FIN
                                             // (and an alert, if one is pending) for as long as the close moves, then an abort;
                                             // a stop aborts at once
                                             if (e is CancellationException) {

@@ -249,7 +249,7 @@ internal class HttpsRecords(
 
     /**
      * Drops the answers kept and keeps none from now on: the engine no longer sees network changes (the network source of
-     * `connectionMigration` failed or ended), so RFC 9460 section 12 allows no cache.
+     * `http3 { migration }` failed or ended), so RFC 9460 section 12 allows no cache.
      */
     suspend fun stopCaching() =
         lock.withLock {

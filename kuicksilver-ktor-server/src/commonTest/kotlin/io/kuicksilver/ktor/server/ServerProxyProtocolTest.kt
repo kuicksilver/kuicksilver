@@ -336,7 +336,7 @@ class ServerProxyProtocolTest {
             }
         }
 
-    /** `http2RepeatOffenderPenalty` counts the client the header names, not the proxy all clients share. */
+    /** `http2 { repeatOffenderPenalty }` counts the client the header names, not the proxy all clients share. */
     @Test fun repeatOffendersAreTheClientsBehindTheProxy() =
         serverTest {
             val events = Refusals()

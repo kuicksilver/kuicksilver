@@ -73,7 +73,7 @@ class ConnectionHandOverTest {
 
     /**
      * A stop between `accept()` and the connection's launch: the scope is cancelled, and a plain `launch` never ran its
-     * body (nor its `finally`), so the accepted socket and its `maxTcpConnections` slot stayed taken.
+     * body (nor its `finally`), so the accepted socket and its `tcp { maxConnections }` slot stayed taken.
      */
     @Test fun aLaunchOnACancelledScopeStillReleases(): Unit =
         runBlocking {

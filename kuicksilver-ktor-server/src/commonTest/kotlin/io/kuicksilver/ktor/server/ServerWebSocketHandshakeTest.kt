@@ -257,7 +257,7 @@ class ServerWebSocketHandshakeTest {
             byteArrayOf(0x82.toByte(), 0xff.toByte(), 0, 0, 0, 0, 0x7f, 0xff.toByte(), 0xff.toByte(), 0xf0.toByte(), 1, 2, 3, 4),
         )
 
-    /** The limit is the engine's `webSocketMaxMessageSize`. */
+    /** The limit is the engine's `webSockets { maxMessageSize }`. */
     @Test fun negative_messageOverTheConfiguredLimitClosesWith1009() =
         frameFails(1009, maskedText("eleven char"), configure = { webSockets { maxMessageSize = 10 } })
 
