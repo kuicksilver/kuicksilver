@@ -83,7 +83,9 @@ val internal = HttpClient(Kuicksilver) {
   not read the Network Security Config's anchors or pins. Keep HTTP/3 alive across a switch between Wi-Fi and the mobile
   network with `http3 { migration = Http3ConnectionMigration.followDefaultNetwork(connectivity) }`
   ([Connection migration](client-http3.md#connection-migration)), and remember alternatives across app restarts with a
-  `FileAltSvcStore`. A runnable Android and iOS app: [compose-demo](../../samples/compose-demo/README.md).
+  `FileAltSvcStore`. A runnable Android and iOS app that uses the client engine is
+  [compose-demo](../../samples/compose-demo/README.md): a Compose Multiplatform app (its `androidApp` and iOS targets)
+  with a small server; its README says how to start the server and install the app on an emulator or a phone.
 - **iOS.** Through Kotlin Multiplatform (a static framework) or, without Kotlin, the Swift package: [iOS](ios.md). App
   Transport Security does not apply to Kuicksilver's own sockets ([App Store](app-store.md)); `followDefaultNetwork()`
   follows the default path as on Android.

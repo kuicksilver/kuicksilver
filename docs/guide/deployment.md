@@ -88,6 +88,7 @@ load balancer exposes another number, clients would try the wrong port. Two fixe
 
 ```kotlin
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// identity: your certificate, io.kuicksilver.tls.TlsIdentity.fromPem(chainPem, keyPem.toCharArray())
 // guide:deployment:public-alt-svc
 val publicPort = 443   // the UDP port clients reach (the load balancer's or the NAT's), not the one bound here
 lateinit var engine: KuicksilverApplicationEngine
@@ -305,6 +306,7 @@ them speaks UDP, so the probes check the TCP side and the HTTP/3 side is watched
 
 ```kotlin
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// identity: your certificate, io.kuicksilver.tls.TlsIdentity.fromPem(chainPem, keyPem.toCharArray())
 // guide:deployment:health
 lateinit var engine: KuicksilverApplicationEngine
 val server = embeddedServer(Kuicksilver, configure = {
@@ -613,6 +615,7 @@ answer limit (8 per second per address) still applies to everyone behind a share
 
 ```kotlin
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// identity: your certificate, io.kuicksilver.tls.TlsIdentity.fromPem(chainPem, keyPem.toCharArray())
 // guide:deployment:quic-limits
 val server = embeddedServer(Kuicksilver, configure = {
     tlsConnector {

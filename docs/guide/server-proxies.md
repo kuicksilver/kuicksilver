@@ -67,6 +67,9 @@ plainConnector {
 ```
 
 ```kotlin
+import io.ktor.server.plugins.origin
+import io.kuicksilver.ktor.server.proxyHeader
+
 // guide:ktor:proxy-protocol-origin
 get("/") {
     val client = call.request.origin.remoteAddress // the client the header names

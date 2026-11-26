@@ -639,8 +639,8 @@ discovery = H3Only } needs http3 { enabled }: with HTTP/3 off no request could b
 
 ### The engine refuses its configuration
 
-Every option is checked when the client engine is created or the server starts, and the first value out of range fails
-it with an `IllegalArgumentException` that names the option by its block path and says what it takes:
+A value out of range fails as soon as it is assigned in the DSL (or, from `application.conf`, when the server starts), and
+a combination of options when the client engine is created or the server starts, with an `IllegalArgumentException` that names the option by its block path and says what it takes:
 "tcp { maxConnectionsPerIp } must be at least 1, or null (off)", "tls { reloadInterval } must be at least 1 second, or
 null". The ranges are in the [configuration reference](configuration.md). Two refusals are about combinations:
 

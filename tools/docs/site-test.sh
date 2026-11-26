@@ -36,6 +36,14 @@ See [TLS](tls.md#trust-on-first-use), [the readme](../../README.md), [the sample
 
 - [ ] not done
 - [x] done
+
+```kotlin
+// guide:quic:sample-marker
+val shownToo = 1
+    // guide:quic:nested-marker (a note)
+```
+
+Prose that mentions // guide:quic:prose-marker stays.
 EOF
 cat > "$repo/docs/guide/tls.md" <<'EOF'
 # TLS
@@ -58,6 +66,9 @@ grep -q 'href="https://github.com/kuicksilver/kuicksilver/blob/v0.3.0/README.md"
 grep -q 'href="https://github.com/kuicksilver/kuicksilver/tree/v0.3.0/samples/demo"' "$q" && pass "repository directory link uses tree" || fail "repository directory link"
 grep -q '<h2 id="limits-and-pipes">' "$q" && pass "GitHub heading anchors" || fail "heading anchors"
 grep -q '<code>a | b</code>' "$q" && pass "escaped pipe in a table cell" || fail "table pipe"
+grep -q 'guide:quic:sample-marker\|guide:quic:nested-marker' "$q" && fail "guide-sync marker lines left in a code block" || pass "guide-sync marker lines are not rendered"
+grep -q 'val shownToo = 1' "$q" && pass "the code around a marker stays" || fail "code around a marker"
+grep -q 'guide:quic:prose-marker' "$q" && pass "negative control: a marker-like text in prose stays" || fail "prose marker text dropped"
 grep -q '<input type="checkbox" disabled checked> done' "$q" && grep -q '<input type="checkbox" disabled> not done' "$q" \
   && pass "task list items" || fail "task list"
 grep -q 'Copyright 2026' "$q" && fail "licence comment is dropped" || pass "licence comment is dropped"

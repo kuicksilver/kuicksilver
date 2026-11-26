@@ -674,7 +674,9 @@ val internal = HttpClient(Kuicksilver) {
   not read the Network Security Config's anchors or pins. Keep HTTP/3 alive across a switch between Wi-Fi and the mobile
   network with `http3 { migration = Http3ConnectionMigration.followDefaultNetwork(connectivity) }`
   ([Connection migration](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-http3.md#connection-migration)), and remember alternatives across app restarts with a
-  `FileAltSvcStore`. A runnable Android and iOS app: [compose-demo](https://github.com/kuicksilver/kuicksilver/blob/main/samples/compose-demo/README.md).
+  `FileAltSvcStore`. A runnable Android and iOS app that uses the client engine is
+  [compose-demo](https://github.com/kuicksilver/kuicksilver/blob/main/samples/compose-demo/README.md): a Compose Multiplatform app (its `androidApp` and iOS targets)
+  with a small server; its README says how to start the server and install the app on an emulator or a phone.
 - **iOS.** Through Kotlin Multiplatform (a static framework) or, without Kotlin, the Swift package: [iOS](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ios.md). App
   Transport Security does not apply to Kuicksilver's own sockets ([App Store](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/app-store.md)); `followDefaultNetwork()`
   follows the default path as on Android.
@@ -1771,7 +1773,8 @@ limits, HTTP/3 and HTTP/2 on the server, h2c, turning HTTP/3 off, the CONNECT-UD
   server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/deployment.md); WebSockets and WebTransport in [WebSockets, WebTransport and priorities](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/realtime.md).
 
 The server's first screen is the [Minimal example](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#minimal-example): `tls { pemFiles(…) }` and one
-`tlsConnector { port = 443 }`. Its second line, the recipes for common deployments, is stable too:
+`tlsConnector { port = 443 }`. The recipes for common deployments, all stable: pick the lines that fit yours, not all
+of them (the two per-IP limits answer opposite situations):
 
 ```kotlin
 // guide:ktor:first-screen-server-recipes
@@ -2303,6 +2306,9 @@ plainConnector {
 ```
 
 ```kotlin
+import io.ktor.server.plugins.origin
+import io.kuicksilver.ktor.server.proxyHeader
+
 // guide:ktor:proxy-protocol-origin
 get("/") {
     val client = call.request.origin.remoteAddress // the client the header names
@@ -2492,7 +2498,7 @@ echo "sha256/$(openssl x509 -in cert.pem -noout -pubkey | openssl pkey -pubin -o
 - The pins hold for every protocol: HTTP/3 over QUIC and the TCP fallback (HTTP/2, HTTP/1.1) use the one `tls { }`, so a
   blocked UDP path never leads to a connection with weaker checks. A pin never replaces the name check.
 - Pin a backup key you hold offline as well, or a key change locks the app out until it is updated.
-  `scope = PinScope.AnyInValidatedChain` matches any certificate of the validated chain (an intermediate CA's key, say)
+  `scope = PinScope.AnyInValidatedChain` (`io.kuicksilver.tls.PinScope`) matches any certificate of the validated chain (an intermediate CA's key, say)
   instead of the leaf.
 - A `Pinned` trust names the origin's keys, so the TLS to a proxy (`proxies { tls { } }`, [Proxies](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-proxies.md#proxies)) starts
   from its `base` instead. The variants and their rules: [TLS: Trust](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#trust).
@@ -3914,6 +3920,7 @@ load balancer exposes another number, clients would try the wrong port. Two fixe
 
 ```kotlin
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// identity: your certificate, io.kuicksilver.tls.TlsIdentity.fromPem(chainPem, keyPem.toCharArray())
 // guide:deployment:public-alt-svc
 val publicPort = 443   // the UDP port clients reach (the load balancer's or the NAT's), not the one bound here
 lateinit var engine: KuicksilverApplicationEngine
@@ -4131,6 +4138,7 @@ them speaks UDP, so the probes check the TCP side and the HTTP/3 side is watched
 
 ```kotlin
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// identity: your certificate, io.kuicksilver.tls.TlsIdentity.fromPem(chainPem, keyPem.toCharArray())
 // guide:deployment:health
 lateinit var engine: KuicksilverApplicationEngine
 val server = embeddedServer(Kuicksilver, configure = {
@@ -4439,6 +4447,7 @@ answer limit (8 per second per address) still applies to everyone behind a share
 
 ```kotlin
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// identity: your certificate, io.kuicksilver.tls.TlsIdentity.fromPem(chainPem, keyPem.toCharArray())
 // guide:deployment:quic-limits
 val server = embeddedServer(Kuicksilver, configure = {
     tlsConnector {
@@ -6674,8 +6683,8 @@ discovery = H3Only } needs http3 { enabled }: with HTTP/3 off no request could b
 
 #### The engine refuses its configuration
 
-Every option is checked when the client engine is created or the server starts, and the first value out of range fails
-it with an `IllegalArgumentException` that names the option by its block path and says what it takes:
+A value out of range fails as soon as it is assigned in the DSL (or, from `application.conf`, when the server starts), and
+a combination of options when the client engine is created or the server starts, with an `IllegalArgumentException` that names the option by its block path and says what it takes:
 "tcp { maxConnectionsPerIp } must be at least 1, or null (off)", "tls { reloadInterval } must be at least 1 second, or
 null". The ranges are in the [configuration reference](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/configuration.md). Two refusals are about combinations:
 

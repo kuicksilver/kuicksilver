@@ -20,7 +20,8 @@ limits, HTTP/3 and HTTP/2 on the server, h2c, turning HTTP/3 off, the CONNECT-UD
   server](deployment.md); WebSockets and WebTransport in [WebSockets, WebTransport and priorities](realtime.md).
 
 The server's first screen is the [Minimal example](ktor.md#minimal-example): `tls { pemFiles(…) }` and one
-`tlsConnector { port = 443 }`. Its second line, the recipes for common deployments, is stable too:
+`tlsConnector { port = 443 }`. The recipes for common deployments, all stable: pick the lines that fit yours, not all
+of them (the two per-IP limits answer opposite situations):
 
 ```kotlin
 // guide:ktor:first-screen-server-recipes

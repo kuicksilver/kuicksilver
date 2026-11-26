@@ -50,7 +50,7 @@ echo "sha256/$(openssl x509 -in cert.pem -noout -pubkey | openssl pkey -pubin -o
 - The pins hold for every protocol: HTTP/3 over QUIC and the TCP fallback (HTTP/2, HTTP/1.1) use the one `tls { }`, so a
   blocked UDP path never leads to a connection with weaker checks. A pin never replaces the name check.
 - Pin a backup key you hold offline as well, or a key change locks the app out until it is updated.
-  `scope = PinScope.AnyInValidatedChain` matches any certificate of the validated chain (an intermediate CA's key, say)
+  `scope = PinScope.AnyInValidatedChain` (`io.kuicksilver.tls.PinScope`) matches any certificate of the validated chain (an intermediate CA's key, say)
   instead of the leaf.
 - A `Pinned` trust names the origin's keys, so the TLS to a proxy (`proxies { tls { } }`, [Proxies](client-proxies.md#proxies)) starts
   from its `base` instead. The variants and their rules: [TLS: Trust](tls.md#trust).
