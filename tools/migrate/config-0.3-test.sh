@@ -313,7 +313,7 @@ embeddedServer(Kuicksilver, configure = {
         altSvc = true
         enabled = false
     }
-    http1 { idleTimeout = 30.seconds }
+    tcp { idleTimeout = 30.seconds }
 })
 ```
 

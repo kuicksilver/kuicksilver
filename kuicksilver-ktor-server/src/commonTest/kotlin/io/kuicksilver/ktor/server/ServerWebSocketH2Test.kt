@@ -781,7 +781,7 @@ class ServerWebSocketH2Test {
 
     /**
      * A connection that carries only a WebSocket is in use: the stream counts as an open request, which the idle close
-     * (`http1 { idleTimeout }`) waits to be 0, and the WebSocket keeps it until the session ends.
+     * (`tcp { idleTimeout }`) waits to be 0, and the WebSocket keeps it until the session ends.
      */
     @Test fun aConnectionCarryingAWebSocketIsNotIdle() =
         serverTest {

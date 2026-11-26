@@ -140,7 +140,7 @@ class ServerEveryInterfaceTest {
     @Test fun ipv4ClientOfAHostlessConnectorIsSeenAsIpv4() =
         h3ServerTest {
             startEverywhere({
-                tlsConnector {
+                tlsConnector /* wildcard on purpose: the default bind is the subject */ {
                     tls { identity = ServerFixtures.identity() }
                     port = 0
                 }
@@ -200,7 +200,7 @@ class ServerEveryInterfaceTest {
             val log = CapturedLog()
             val server =
                 kuicksilverServer(log, configure = {
-                    tlsConnector {
+                    tlsConnector /* wildcard on purpose: the default bind is the subject */ {
                         tls { identity = ServerFixtures.identity() }
                         port = 0
                     }
@@ -220,7 +220,7 @@ class ServerEveryInterfaceTest {
                 server.stopSuspend(0, 500)
             }
             startEverywhere({
-                tlsConnector {
+                tlsConnector /* wildcard on purpose: the default bind is the subject */ {
                     tls { identity = ServerFixtures.identity() }
                     port = 0
                 }
