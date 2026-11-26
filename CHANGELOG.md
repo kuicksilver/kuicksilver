@@ -14,6 +14,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- Documentation for newcomers: a one-screen [quickstart](docs/guide/quickstart.md) (the dependencies, a client that
+  names its engine, a server from PEM files with a local test certificate and the PKCS#8 key it needs, the defaults);
+  [migrating from OkHttp and Retrofit](docs/guide/migrating-from-okhttp.md) and [from another Ktor
+  engine](docs/guide/migrating-ktor-engines.md); one page on [0-RTT](docs/guide/zero-rtt.md). The Ktor engine guide is
+  split into task pages (the client, HTTP/3 in the client, proxies, the server, behind a load balancer, the
+  configuration file, TLS, WebSockets and WebTransport, observability); `docs/guide/ktor.md` keeps the first screens,
+  the imports and a map, and its old anchors lead to the new places. Troubleshooting covers `HttpClient()` picking
+  another engine, a private key that is not PKCS#8 and configuration refusals at start. Every Kotlin block of the new
+  pages is compiled; the quickstart and migration ones with no opt-in.
 - WebTransport (experimental): `WebTransportSession.maxStreamErrorCode`, the highest application code of the session's
   stream resets and STOP_SENDING: 255 on a draft-02 session (draft-02 section 4.3), which browsers negotiate, 2^32-1 on
   later drafts.

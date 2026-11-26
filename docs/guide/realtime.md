@@ -80,8 +80,8 @@ Install it in the client plugin, the server plugin, or both; it works on any Kto
 over HTTP/1.1 and HTTP/3 (RFC 9220) alike.
 
 ```kotlin
-// guide:ktor:websocket-deflate-client
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:ktor:websocket-deflate-client
 val client =
     HttpClient(Kuicksilver) {
         install(WebSockets) { extensions { install(PerMessageDeflate) } }
@@ -89,8 +89,8 @@ val client =
 ```
 
 ```kotlin
-// guide:ktor:websocket-deflate-server
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:ktor:websocket-deflate-server
 install(WebSockets) {
     extensions { install(PerMessageDeflate) { maxInflatedMessageSize = 1024 * 1024 } }
 }
@@ -169,8 +169,8 @@ worst case of unread stream data is that times `http3 { endpoint { maxConnection
 through the application's log.
 
 ```kotlin
-// guide:ktor:webtransport-server
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:ktor:webtransport-server
 val server = embeddedServer(Kuicksilver, configure = {
     tlsConnector {
         tls { this.identity = identity }
@@ -259,10 +259,10 @@ the sessions still open with their connections, without a close capsule, and a c
 `IllegalStateException`. Only the Kuicksilver engine supports it.
 
 ```kotlin
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val client = HttpClient(Kuicksilver)
 val url = "https://example.com/echo"
 // guide:ktor:webtransport-client
-@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val session = client.webTransport(url, protocols = listOf("echo-v1"))
 val stream = session.openBidi()
 stream.output.writeFully("ping".encodeToByteArray())
@@ -289,8 +289,8 @@ merges them into the client's signal (a parameter left out keeps the client's va
 the response with the result, and later updates from the client no longer change it.
 
 ```kotlin
-// guide:ktor:priority-server
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:ktor:priority-server
 get("/report") {
     if (call.request.priority.urgency < 4) call.response.priority(urgency = 4) // bulk: never ahead of the pages
     call.respondText(buildReport())
@@ -310,8 +310,8 @@ HTTP/1.1), once the call is over or the body was read to the end, and when the c
 the rest of the response unless it set a priority of its own.
 
 ```kotlin
-// guide:ktor:priority-client
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:ktor:priority-client
 val page = client.get("$origin/index.html") { priority(urgency = 1) }
 client.prepareGet("$origin/video.mp4") { priority(urgency = 5, incremental = true) }.execute { response ->
     response.updatePriority(urgency = 2, incremental = true) // now in view: more urgent

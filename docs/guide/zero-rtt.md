@@ -39,8 +39,8 @@ and only requests that are safe to run twice may.
 ## The client
 
 ```kotlin
-// guide:zero-rtt:client
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:zero-rtt:client
 val client = HttpClient(Kuicksilver) {
     engine { http3 { earlyData { enabled = true } } }
 }
@@ -60,8 +60,8 @@ val client = HttpClient(Kuicksilver) {
 ## The server
 
 ```kotlin
-// guide:zero-rtt:server
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:zero-rtt:server
 val server = embeddedServer(Kuicksilver, configure = {
     tlsConnector {
         tls { this.identity = identity }
@@ -102,8 +102,8 @@ authentication does not make a state-changing request safe. Reads are fine. When
 policy instead of turning 0-RTT off, and check `receivedEarly` in handlers that cannot be moved:
 
 ```kotlin
-// guide:zero-rtt:replayable
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:zero-rtt:replayable
 val policy = Http3EarlyDataPolicy.WaitForHandshake(replayable = { request ->
     request.method == "GET" && request.path.orEmpty().startsWith("/static/")   // only these may run early
 })
@@ -167,8 +167,8 @@ deployment ([threat model 3.8](../spec/threat-model.md#38-0-rtt-and-replay)).
 On the client, a connection listener hears the outcome of every connection that tried 0-RTT:
 
 ```kotlin
-// guide:zero-rtt:client-check
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:zero-rtt:client-check
 observability {
     connectionListener = object : ConnectionListener {
         override fun onZeroRtt(connection: ConnectionInfo, outcome: ZeroRttOutcome) {

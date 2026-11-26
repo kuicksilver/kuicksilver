@@ -70,6 +70,9 @@ Samples: [`kq`](samples/kq-cli/README.md), a curl-like command line on the clien
 
 ## Add it
 
+New here? The [Quickstart](docs/guide/quickstart.md) is one screen: the dependencies, a first client call, a first
+HTTP/3 server with a local test certificate, and what you get by default.
+
 ```kotlin
 implementation(platform("io.kuicksilver:kuicksilver-bom:0.3.0"))
 implementation(platform("io.ktor:ktor-bom:3.6.1"))
@@ -82,8 +85,8 @@ Kotlin/Native programs use glibc's libresolv and zlib. Android, iOS, Swift-only 
 ## Swap the Ktor engine
 
 ```kotlin
-// client: was HttpClient(OkHttp) or HttpClient(CIO)
-val client = HttpClient(Kuicksilver)   // io.kuicksilver.ktor.client.Kuicksilver: HTTP/1.1 or HTTP/2 first, HTTP/3 once the server announces it
+// client: was HttpClient(OkHttp) or HttpClient(CIO); name the engine, HttpClient() alone may pick another one
+val client = HttpClient(Kuicksilver)   // io.kuicksilver.ktor.client.Kuicksilver: HTTP/2 or HTTP/1.1 first, HTTP/3 once the server announces it
 
 // server: was embeddedServer(Netty, port = 8443, module = Application::module)
 embeddedServer(Kuicksilver, configure = {   // io.kuicksilver.ktor.server.Kuicksilver
@@ -92,8 +95,10 @@ embeddedServer(Kuicksilver, configure = {   // io.kuicksilver.ktor.server.Kuicks
 }, module = Application::module).start(wait = true)
 ```
 
-Your routes, plugins and client calls stay as they are. Discovery modes, trust and pins, HTTP/2, WebSockets and
-WebTransport: [Ktor engines](docs/guide/ktor.md). Open both `8443/tcp` and `8443/udp`: [deploying the HTTP/3
+Your routes, plugins and client calls stay as they are ([Migrating from another Ktor
+engine](docs/guide/migrating-ktor-engines.md)); an app on OkHttp or Retrofit without Ktor: [Migrating from OkHttp and
+Retrofit](docs/guide/migrating-from-okhttp.md). Discovery modes, trust and pins, HTTP/2, WebSockets and WebTransport: the
+[Ktor engine pages](docs/guide/ktor.md#the-engine-pages). Open both `8443/tcp` and `8443/udp`: [deploying the HTTP/3
 server](docs/guide/deployment.md).
 
 ## Platforms
@@ -134,8 +139,10 @@ byte for byte with the published ones. What is and is not reproducible yet: [doc
 
 - [kuicksilver.github.io/kuicksilver](https://kuicksilver.github.io/kuicksilver/): the guide and the API reference
   (Dokka) of every release, from 0.3.0 on.
-- Guides: [install](docs/install.md), [TLS](docs/guide/tls.md), [QUIC](docs/guide/quic.md),
-  [HTTP/3](docs/guide/http3.md), [Ktor engines](docs/guide/ktor.md), [deploying the HTTP/3 server](docs/guide/deployment.md),
+- Guides: [quickstart](docs/guide/quickstart.md), [install](docs/install.md), the [Ktor engines](docs/guide/ktor.md) and
+  their task pages, [0-RTT](docs/guide/zero-rtt.md), [migrating from OkHttp and
+  Retrofit](docs/guide/migrating-from-okhttp.md), [TLS](docs/guide/tls.md), [QUIC](docs/guide/quic.md),
+  [HTTP/3](docs/guide/http3.md), [deploying the HTTP/3 server](docs/guide/deployment.md),
   [iOS](docs/guide/ios.md), [publishing on the App Store](docs/guide/app-store.md), [building from
   source](docs/guide/building.md), the [configuration reference](docs/guide/configuration.md) (every option with its
   default) and [troubleshooting](docs/guide/troubleshooting.md).

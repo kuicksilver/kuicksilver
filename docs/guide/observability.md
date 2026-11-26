@@ -14,7 +14,6 @@ request did not use HTTP/3, which connection served it, and why a call failed.
   application log on the server.
 - The imports of the code blocks: [Ktor engines: Imports](ktor.md#imports).
 
-
 Both engines report what they do without a logging dependency, in their `observability { }` block: `logger` and `qlog`
 are stable, the listeners (`eventListener`, `connectionListener`) experimental. The QUIC side
 is the one described in [QUIC: Observability](quic.md#observability): counters, a `KuicksilverLogger`, a
@@ -41,8 +40,8 @@ listener, one per connector serving HTTP/3: datagrams, drops, refusals by the ad
 and the accept queue, handshakes ([Deploying: Observability](deployment.md#observability)).
 
 ```kotlin
-// guide:ktor:server-observability
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:ktor:server-observability
 embeddedServer(Kuicksilver, configure = {
     tlsConnector {
         tls { this.identity = identity }
@@ -81,8 +80,8 @@ diagnostics and the listener's own failures, and `observability { qlog; connecti
 endpoints.
 
 ```kotlin
-// guide:ktor:client-observability
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:ktor:client-observability
 HttpClient(Kuicksilver) {
     engine {
         observability {
@@ -124,45 +123,26 @@ the HTTP/3 `alternative` (`host:port`) and its `alternativeSource` (`AltSvc`, `Q
 whether the setups `raced` and HTTP/3's `headStart`, the HTTP/3 failure itself (`h3Failure`) when there was one, and
 the number of `attempts`: the first, plus one per repeat by the engine (a request the server did not process after
 GOAWAY or `H3_REQUEST_REJECTED`, or that `closeHttp3Connections()` stopped before it went out; a stale pooled HTTP/1.1
-connection; a 417 to `Expect: 100-continue`; a 421 from the alternative), plus one for the fallback to HTTP/1.1 when
+connection; a 417 to `Expect: 100-continue`; a 421 from the alternative), plus one for the fallback to TCP when
 HTTP/3 had tried the request. The HTTP/3 layer's own repeats of a 0-RTT request on the same connection (early data
 rejected, 425 Too Early) are not counted.
 
 ```kotlin
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val url = "https://example.com/"
 // guide:ktor:client-diagnostics
-@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val response = client.get(url)
 val d = response.kuicksilverDiagnostics
-if (d != null && d.protocol != HttpProtocolVersion.HTTP_3_0) {
+if (d == null) {
+    println("not served by Kuicksilver: create the client with HttpClient(Kuicksilver)")
+} else if (d.protocol != HttpProtocolVersion.HTTP_3_0) {
     println("HTTP/3 not used: ${d.fallback} (alternative ${d.alternative} via ${d.alternativeSource})")
 }
 ```
 
-| `fallback` | Meaning | What to check |
-|---|---|---|
-| `NotSecure` | an `http://` or `ws://` URL | HTTP/3 needs `https` |
-| `Proxy` | a proxy applies to the URL | `proxy` and `proxies { resolver }` ([Proxies](client-proxies.md#proxies)) |
-| `Configuration` | `http3 { enabled = false }` | the `http3` block |
-| `Http3Disabled` | `http3 { allowed }` returned false | your remote configuration ([Turning HTTP/3 off remotely](client-http3.md#turning-http3-off-remotely)) |
-| `NoAlternative` | `Auto` and no `Alt-Svc` from the origin yet: the first call always goes over TCP | the server's `Alt-Svc`; `http3 { hints }`, `FileAltSvcStore` |
-| `MisdirectedRequest` | the alternative answered 421; it was dropped and the origin answered over HTTP/1.1 | the alternative's certificate and virtual hosts |
-| `BrokenAlternative` | HTTP/3 to this alternative failed recently on this network | the log line's `broken since:` names why |
-| `WebSocket` | a WebSocket without an HTTP/3 connection that allows Extended CONNECT | expected for the first WebSocket |
-| `HandshakeTimeout` | no QUIC answer within the handshake or connect timeout | UDP to the port: a firewall, a VPN, a cloud security group open for TCP only |
-| `UdpUnreachable` | ICMP unreachable for the UDP port | not reported yet: such calls show `HandshakeTimeout` |
-| `QuicUnavailable` | this host's UDP socket cannot set Don't Fragment (`QuicException.DontFragmentUnavailable`), so QUIC is not used and the call goes over TCP at once | the JVM without the `ksl` native library below JDK 19, or Kotlin/Native (iOS, macOS, Linux) when the accelerated `ksl` socket cannot open: its portable socket has no DF ([QUIC is not used without Don't Fragment](troubleshooting.md#quic-is-not-used-dontfragmentunavailable)) |
-| `H3NotReady` | HTTP/1.1 was ready before HTTP/3 answered (HTTP/3 had not failed) | nothing; the QUIC setup goes on and serves later calls |
-| `Refused` | the server closed the QUIC connection without a TLS alert (`CONNECTION_REFUSED`), or no common QUIC version | `CONNECTION_REFUSED`: nothing, the server is draining, stopping or full, and the next call tries HTTP/3 again (the alternative is not marked broken); otherwise the server's QUIC listener and its limits |
-| `TlsFailure` | a TLS alert in the QUIC handshake, or a local certificate failure | the UDP side's certificate and its `h3` ALPN |
-| `Http3Error` | the HTTP/3 connection failed as a whole (an HTTP/3 or QPACK error, a stateless reset, an idle timeout) | `h3Failure`, a qlog trace |
-| `ZeroRttRejected` | the server rejected 0-RTT | nothing |
-| `GoAway` | the server refused the request with GOAWAY on every attempt | the server is stopping |
-| `StreamFailed` | one HTTP/3 stream failed and the idempotent request went again over HTTP/1.1 | `h3Failure` |
-| `Other` | any other HTTP/3 failure | `h3Failure` |
-| `QuicStalled` | the HTTP/3 connection stopped carrying packets under the request ([stall detection](client-http3.md#stalled-http3-connections)); the request went over TCP and the alternative is marked broken | a network that cuts UDP flows (a firewall, NAT or VPN); `http3 { stall { } }` |
-| `H2Refused` | the server answered HTTP/2 with HTTP_1_1_REQUIRED (RFC 9113 section 7), on this call or lately (the route offers only `http/1.1` for 5 minutes, doubling up to 2 days), so the call went over HTTP/1.1; why HTTP/3 was not used is in the log line as `h3Fallback=` | the server's HTTP/2 support for that route ([HTTP/2 on the client](client.md#http2-on-the-client)) |
-| `ServerConnectionIdChanged` | the server switched its Source Connection ID during the QUIC handshake, which RFC 9000 sections 7.2 and 7.3 forbid: an msquic server (IIS, .NET Kestrel on Windows) given a ClientHello of 3 or more datagrams, as a resumption's is; the call went over TCP at once; after a resumed handshake the next ones use HTTP/3 without resumption (no 0-RTT) for 5 minutes, doubling up to 2 days, after a full one the alternative is marked broken | nothing on the client (msquic#4905); [msquic servers](troubleshooting.md#msquic-servers-and-a-large-clienthello) |
+What each `fallback` means and what to check for it is in one table, in troubleshooting: [every
+`FallbackReason`](troubleshooting.md#the-ktor-client-never-uses-http3-or-stops-using-it), after a short list of what to
+check first.
 
 The engine's `observability { logger }` gets one line per call that HTTP/3 could have served but did not (a lost race, a
 fallback, a broken alternative, a proxy) at `observability { protocolChoiceLogLevel }`, `Info` by default — which the
@@ -173,7 +153,7 @@ at `Debug`; `null` turns
 the lines off. The line is built only when the logger wants its level, and its format stays the same within 0.3.x:
 
 ```text
-kuicksilver: GET https://example.com/path -> HTTP/1.1 (fallback=HandshakeTimeout, alt=example.com:443 via AltSvc, raced, headStart=10ms, h3Failure=Timeout, marked broken)
+kuicksilver: GET https://example.com/path -> HTTP/2.0 (fallback=HandshakeTimeout, alt=example.com:443 via AltSvc, raced, headStart=10ms, h3Failure=Timeout, marked broken)
 ```
 
 It names the method, scheme, host, port (when not the default) and path — never the query or the user info, which
@@ -188,9 +168,9 @@ and the engine's own line through a `KuicksilverLogger` (an interface of two met
 on Android `android.util.Log` is the usual target):
 
 ```kotlin
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 fun logLine(line: String) = println(line)   // your logging library
 // guide:ktor:protocol-log
-@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val client = HttpClient(Kuicksilver) {
     engine {
         // the engine's own line per call that HTTP/3 could have served, into your logging
@@ -213,12 +193,12 @@ val client = HttpClient(Kuicksilver) {
 }
 ```
 
-The first call to a new origin in `Auto` mode logs `https://example.com/ -> HTTP/1.1 (NoAlternative, fallback=NoAlternative,
-h3Failure=null)`; a later one over HTTP/3 `-> HTTP/3 (...)` with `fallback=null`. `response.call.request.url` carries
+The first call to a new origin in `Auto` mode logs `https://example.com/ -> HTTP/2.0 (NoAlternative, fallback=NoAlternative,
+h3Failure=null)`; a later one over HTTP/3 `-> HTTP/3.0 (...)` with `fallback=null`. `response.call.request.url` carries
 the query: log `encodedPath` instead when queries hold tokens.
 
 A call that fails has no response: its exception carries the diagnostics instead ([Why did this call
-fail?](#why-did-this-call-fail)). When both the HTTP/3 and the HTTP/1.1 setups failed, the HTTP/1.1 failure is thrown
+fail?](#why-did-this-call-fail)). When both the HTTP/3 and the TCP setups failed, the TCP failure is thrown
 with the HTTP/3 one in `suppressed`. The diagnostics live as long as the response (they are one of its call's
 attributes); the engine keeps no copy of the HTTP/3 failure, and a broken mark remembers only its `FallbackReason`. Read
 them from the response: the engine puts a new object into the request's attributes when the call reaches it and fills it
@@ -249,8 +229,8 @@ before it. `transport` on the diagnostics themselves says `Quic` or `Tcp`.
 - `TcpConnectionSnapshot` has the `alpn` the server chose, whether the connection is `secure` and goes `viaProxy`.
 
 ```kotlin
-// guide:ktor:client-connection
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:ktor:client-connection
 val d =
     client.prepareGet(url).execute { response ->
         response.bodyAsChannel().discard()
@@ -295,8 +275,8 @@ exception or one of its causes) is the call's `ProtocolDiagnostics`, which the r
   went out in 0-RTT is reported when it fails, which may be after the call ended.
 
 ```kotlin
-// guide:ktor:client-failure
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:ktor:client-failure
 try {
     client.get(url)
 } catch (e: Exception) {

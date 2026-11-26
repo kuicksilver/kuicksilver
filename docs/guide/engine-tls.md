@@ -28,8 +28,8 @@ val pinned = HttpClient(Kuicksilver) {
         tls {
             trust = TrustConfig.Pinned(
                 setOf(
-                    SpkiSha256.parse("sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),   // the current key
-                    SpkiSha256.parse("sha256/u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7s="),   // the backup key
+                    SpkiSha256.parse(currentPin),   // your server's key: "sha256/<base64>", made as below
+                    SpkiSha256.parse(backupPin),    // a backup key you hold offline
                 ),
                 base = TrustConfig.Platform,   // the chain is still verified; the pin comes on top
             )
@@ -38,6 +38,14 @@ val pinned = HttpClient(Kuicksilver) {
 }
 ```
 
+A pin is `sha256/` and the base64 SHA-256 of the key's SubjectPublicKeyInfo, the text OkHttp's `CertificatePinner`
+uses. From the server's certificate:
+
+```sh
+openssl x509 -in cert.pem -noout -pubkey | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | openssl base64
+```
+
+- The pins hold for every host the client talks to: give a pinned API a client of its own.
 - The pins hold for every protocol: HTTP/3 over QUIC and the TCP fallback (HTTP/2, HTTP/1.1) use the one `tls { }`, so a
   blocked UDP path never leads to a connection with weaker checks. A pin never replaces the name check.
 - Pin a backup key you hold offline as well, or a key change locks the app out until it is updated.
@@ -131,8 +139,8 @@ A renewed certificate can be put in place without a restart (experimental). Give
 `TlsIdentity.Reloadable` and call `reload` when the new files are there (from a deploy hook, an admin route, a timer):
 
 ```kotlin
-// guide:ktor:certificate-rotation
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:ktor:certificate-rotation
 val identity = TlsIdentity.reloadable(TlsIdentity.fromPem(chainPem, keyChars)) // the key array is zeroed after import
 val server = embeddedServer(Kuicksilver, configure = {
     tlsConnector {
@@ -161,10 +169,10 @@ application decides when to reload; a check of the files once an hour, from the 
 ends when the server stops):
 
 ```kotlin
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val chainFile = File("/etc/letsencrypt/live/example.com/fullchain.pem")
 val keyFile = File("/etc/letsencrypt/live/example.com/privkey.pem")
 // guide:ktor:reload-from-files
-@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 /** A PEM key file as a CharArray without a String of it (PEM is ASCII); the bytes are wiped. */
 fun readKeyChars(file: File): CharArray {
     val bytes = file.readBytes()
@@ -242,8 +250,8 @@ it, and a session ticket from before the reload is not resumed. Open connections
 valid now ([Rotating the client CA](tls.md#rotating-the-client-ca)).
 
 ```kotlin
-// guide:ktor:client-ca-rotation
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:ktor:client-ca-rotation
 val clientCa = TrustConfig.reloadable(TrustConfig.AnchoredCa(Certificate.parsePem(caBundlePem)))
 val server = embeddedServer(Kuicksilver, configure = {
     tls {

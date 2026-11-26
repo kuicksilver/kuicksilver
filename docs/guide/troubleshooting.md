@@ -339,7 +339,7 @@ it with the stack trace of its `cause`.
   certificates", and the Ktor server's start fails the same way); a ticket is single-use and lives in the endpoint (or Ktor engine) that received
   it, and a server whose configuration changed (ALPN, transport limits, HTTP/3 SETTINGS) refuses old tickets. The
   counters `zeroRttOffered`, `zeroRttAccepted` and `zeroRttRejected`, and `ConnectionListener.onZeroRtt`, show the
-  outcome. Background: [ADR-0015](../adr/0015-0rtt-implementation.md).
+  outcome. When 0-RTT can help at all, and how to check it with the Ktor client: [0-RTT](zero-rtt.md).
 
 ## Migration and network changes
 

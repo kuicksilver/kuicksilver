@@ -354,15 +354,13 @@ admission policy act before any TLS session exists, so they are the same with or
 0-RTT lets a returning client send data with its first flight instead of one round trip later (RFC 9001 section 4.6;
 design in [ADR-0015](../adr/0015-0rtt-implementation.md)). It is off on both sides by default.
 
-> **Replay warning.** An attacker who sees the client's first flight can send it to the server again (RFC 9846
-> section 8). Write early only what is safe to execute twice, and act on anything else only after
-> `awaitHandshake()`. The server limits replays (OpenSSL's ticket-age check, a window 10 s wide, one use per ticket in a replay
-> register shared by the endpoint's loops, tickets bound to the configuration that issued them), but a replay into
-> another server process with shared ticket keys passes the age check alone.
+> **Replay warning.** An attacker who sees the client's first flight can send it to the server again. Write early only
+> what is safe to execute twice, and act on anything else only after `awaitHandshake()`. When 0-RTT helps, what must
+> not run early and how the server limits replays: [0-RTT](zero-rtt.md), the one page about it.
 
 ```kotlin
-// guide:quic:zero-rtt
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:quic:zero-rtt
 val server = QuicEndpoint.bind(addr, quicEndpointConfig {
     this.server = quicServerConfig(tlsServerConfig) { acceptEarlyData = true }   // tickets that allow 0-RTT
 })
@@ -406,8 +404,8 @@ the server's first flight is not held to three times what the client sent. Clien
 client configuration a `tokenStore` (experimental).
 
 ```kotlin
-// guide:quic:token-store
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:quic:token-store
 val tokens = MemoryTokenStore(maxServers = 256, tokensPerServer = 4)   // share it between connections
 val config = quicClientConfig(tlsClientConfig) { tokenStore = tokens }
 val first = client.connect(addr, config)    // the server's NEW_TOKEN lands in `tokens` after the handshake
@@ -603,8 +601,8 @@ with `discovery = false` the start is also the ceiling, and after a fall back pr
 address (a migration) starts at 1200, since its MTU is unknown; a NAT rebinding keeps the size and its black-hole detection.
 
 ```kotlin
-// guide:quic:wireguard
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:quic:wireguard
 val tunnel = quicConfig {
     pathMtu { initial = 1350 }   // the handshake at 1350 bytes: fits WireGuard over IPv4 and IPv6
     pathMtu { maxSend = 1372 }   // never more than WireGuard carries over IPv6; DPLPMTUD searches up to it
@@ -653,8 +651,8 @@ after the first packet of the new phase arrived. A caller driving `ConnectionCor
 handshake is confirmed and, for a later update, three PTOs after the peer acknowledged the current phase (section 6.5):
 
 ```kotlin
-// guide:quic:key-update
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:quic:key-update
 if (core.initiateKeyUpdate(now)) println("key phase ${core.stats.keyUpdates}")   // false while RFC 9001 section 6.1 forbids it
 ```
 
@@ -770,8 +768,8 @@ A phone moves between Wi-Fi and cellular; the connection can follow it instead o
 whenever the network changes:
 
 ```kotlin
-// guide:quic:network-migrator
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:quic:network-migrator
 val migrator = NetworkMigrator(connection, networks, { DatagramIo.open(InetSocketAddress("0.0.0.0", 0)) }, scope)
 val log = scope.launch { migrator.events.collect { println("network: $it") } }
 migrator.start()
@@ -798,8 +796,8 @@ server connection is refused with `IllegalArgumentException`.
 On Android, `followDefaultNetwork` does the wiring (API 24+):
 
 ```kotlin
-// guide:quic:android-follow
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:quic:android-follow
 val cm = context.getSystemService(ConnectivityManager::class.java)
 val migrator = connection.followDefaultNetwork(cm, lifecycleScope)   // started; migrator.close() stops it
 lifecycleScope.launch { migrator.events.collect { Log.i("quic", "$it") } }
@@ -822,8 +820,8 @@ the connection: if no network returns within the idle timeout, the connection cl
 On iOS and macOS, `followDefaultNetwork(scope)` does the same with the Network framework:
 
 ```kotlin
-// guide:quic:apple-follow
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:quic:apple-follow
 val migrator = connection.followDefaultNetwork(scope)   // started; migrator.close() stops it
 scope.launch { migrator.events.collect { println("quic: $it") } }
 ```
@@ -848,8 +846,8 @@ retrying it in a loop, and every connection reports `PathEvent.SocketLost(path, 
 connection is not closed. Recovery is a move to a fresh socket:
 
 ```kotlin
-// guide:quic:socket-lost
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:quic:socket-lost
 connection.pathEvents.collect { e ->
     if (e is PathEvent.SocketLost && e.path.id == connection.activePath?.id) connection.rebind()
 }
@@ -942,8 +940,8 @@ issues, and the balancer reads it back. Give the endpoint the configuration your
 assigned this server:
 
 ```kotlin
-// guide:quic:load-balancer
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:quic:load-balancer
 val lbKey = KslQuicCrypto.newLoadBalancerKey(keyBytes) // wipes keyBytes; the endpoint takes its own copy
 val lb = QuicLbConfig(configId = 1, serverId = byteArrayOf(0x31, 0x44, 0x1a), nonceLength = 4, key = lbKey)
 val behindLb =
@@ -1089,8 +1087,8 @@ Initial is treated as one without a token, and `newTokensRejected` counts it. A 
 with a Retry. Clients keep tokens only with a `tokenStore` ([Address tokens](#address-tokens-new_token)).
 
 ```kotlin
-// guide:quic:new-token
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:quic:new-token
 val config = quicEndpointConfig {
     server = quicServerConfig(tlsServerConfig) { newTokenLifetime = 6.hours }   // null: issue none
     admission = ConnectionAdmission.AlwaysRetry   // returning clients with a token skip the Retry
@@ -1252,8 +1250,8 @@ few seconds from any thread (fields are read without a lock and may lag the loop
 | Internal failures | `uncaughtFailures`, `sendFailures`, `listenerFailures`, `admissionContractViolations` |
 
 ```kotlin
-// guide:quic:stats
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:quic:stats
 val stats = server.stats
 println("${stats.connectionsActive} live, ${stats.handshakesCompleted} handshakes, ${stats.connectionsRefusedAcceptQueue} refused")
 ```
@@ -1299,8 +1297,8 @@ sending them anywhere else (analytics, crash reports, a server) links the user's
 never logs these IDs, and `PathInfo.toString()` leaves them out.
 
 ```kotlin
-// guide:quic:observability
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:quic:observability
 val observed = quicEndpointConfig {
     this.server = quicServerConfig(tlsServerConfig)
     observability { logger = KuicksilverLogger.stderr(LogLevel.Info) }
@@ -1325,8 +1323,8 @@ default) and the endpoint closes; `shutdown` returns when the socket is released
 or `close()`, ends the grace period at once.
 
 ```kotlin
-// guide:quic:shutdown
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:quic:shutdown
 server.shutdown(grace = 30.seconds)
 ```
 
@@ -1369,8 +1367,8 @@ connection's resources are released, at the latest by `QuicEndpoint.closeAndJoin
 client](observability.md#closing-the-client)).
 
 ```kotlin
-// guide:quic:qlog-async
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:quic:qlog-async
 val endpointWithAsyncQlog = quicEndpointConfig { observability { qlog = AsyncQlogSink(DirectoryQlogSink(qlogDir), sampleEvery = 10) } }
 ```
 
@@ -1382,8 +1380,8 @@ drains application-visible events. A caller with its own loop (for example a rea
 scheduler) can drive it directly instead of going through `QuicEndpoint`.
 
 ```kotlin
-// guide:quic:core-loop
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:quic:core-loop
 val core = ConnectionCore.client(quic, tlsClientConfig, KslQuicCrypto, remote, Random, now)
 val out = PacketBatch(capacity = 4)
 try {

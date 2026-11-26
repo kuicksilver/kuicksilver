@@ -42,6 +42,8 @@ GUIDE_ORDER = ["quickstart", "ktor", "client", "client-http3", "client-proxies",
                "engine-tls", "realtime", "observability", "zero-rtt", "deployment", "migrating-from-okhttp",
                "migrating-ktor-engines", "configuration", "troubleshooting", "quic", "http3", "tls", "ios", "app-store"]
 SCHEME = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")
+# a marker line of tools/check/guide-sync.sh inside a code block: for the check, noise for a reader of the site
+GUIDE_MARKER = re.compile(r"^[ \t]*//[ \t]*guide:[a-z0-9-]+:[A-Za-z0-9_-]+(?:[ \t]*\([^)\n]*\))?[ \t]*\n", re.M)
 
 STYLE = """
 :root { --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0; --code: #f6f8fa; --link: #0969da; }
@@ -138,6 +140,7 @@ def render_guide(src, dst, version, ref, banner=""):
     for name in names:
         text = open(os.path.join(src, name + ".md"), encoding="utf-8").read()
         text = re.sub(r"\A<!--.*?-->\s*", "", text, flags=re.S)   # the licence header comment
+        text = GUIDE_MARKER.sub("", text)   # the `// guide:<page>:<name>` lines that tie a code block to its test
         tokens = md.parse(text)
         title, seen = name, {}
         for i, tok in enumerate(tokens):

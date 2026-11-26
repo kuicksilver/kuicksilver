@@ -66,6 +66,7 @@ tree_version() { # <X.Y.Z of every -SNAPSHOT fallback> <version the README, docs
   mkdir -p docs/guide
   printf '> The API can change between any two 0.x releases, and %s is on Maven Central.\n\n    implementation("io.kuicksilver:kuicksilver-ktor-client:%s")\n' "$p" "$p" > README.md
   printf '    implementation(platform("io.kuicksilver:kuicksilver-bom:%s"))\n.package(url: "https://github.com/kuicksilver/kuicksilver-swift", .upToNextMinor(from: "%s")),\n' "$p" "$p" > docs/install.md
+  printf '    implementation(platform("io.kuicksilver:kuicksilver-bom:%s"))\n' "$p" > docs/guide/quickstart.md
   printf '        implementation("io.kuicksilver:kuicksilver-http3:%s")   // or -quic\n    .package(url: "https://github.com/kuicksilver/kuicksilver-swift", .upToNextMinor(from: "%s")),\n            url: "https://github.com/kuicksilver/kuicksilver/releases/download/v%s/Kuicksilver.xcframework.zip",\n' "$p" "$p" "$p" > docs/guide/ios.md
 }
 commit() { git add -A; git commit -qm "$1"; }
@@ -754,7 +755,7 @@ new_repo "$tmp/real"
 for f in build-logic/src/main/kotlin/kuicksilver.kmp.gradle.kts build-logic/src/main/kotlin/kuicksilver.release.gradle.kts \
     kuicksilver-bom/build.gradle.kts samples/realtime-telemetry/build.gradle.kts samples/ios/shared/build.gradle.kts \
     samples/ios/kuicksilver-swift/build.gradle.kts samples/compose-demo/build.gradle.kts samples/kq-cli/build.gradle.kts \
-    tools/check/consumer-smoke.sh README.md docs/install.md docs/guide/ios.md; do
+    tools/check/consumer-smoke.sh README.md docs/install.md docs/guide/ios.md docs/guide/quickstart.md; do
   mkdir -p "$(dirname "$f")"; cp "$root/$f" "$f" || { echo "FAIL: $f is gone from the repository"; exit 2; }
 done
 line=$(sed -n 's/.*getOrElse("\([0-9]*\.[0-9]*\.[0-9]*\)-SNAPSHOT").*/\1/p' build-logic/src/main/kotlin/kuicksilver.kmp.gradle.kts)
@@ -763,7 +764,7 @@ published=$(grep -v 'Until [0-9.]* is on Maven Central' README.md \
 printf '# Changelog\n\n## [%s] - 2026-01-01\n' "$line" > CHANGELOG.md; git add -A; git commit -qm real
 # before the release the README names both versions, and the README and docs/install.md call the line's version the release
 # in preparation
-prep=$(printf 'README.md still calls %s the release in preparation\ndocs/install.md still calls %s the release in preparation' "$line" "$line")
+prep=$(printf 'README.md still calls %s the release in preparation\ndocs/install.md still calls %s the release in preparation\ndocs/guide/quickstart.md still calls %s the release in preparation' "$line" "$line" "$line")
 want=""; if [ -z "$published" ]; then want="$prep"
 elif [ "$published" != "$line" ]; then want=$(printf 'README.md names %s instead of %s\n%s' \
   "$(printf '%s\n%s\n' "$published" "$line" | sort -u | tr '\n' ' ' | sed 's/ $//')" "$line" "$prep"); fi

@@ -18,7 +18,6 @@ limits, HTTP/3 and HTTP/2 on the server, h2c, turning HTTP/3 off, the CONNECT-UD
   (EngineMain)](server-config-file.md); ports, firewalls, Docker and Kubernetes in [Deploying the HTTP/3
   server](deployment.md); WebSockets and WebTransport in [WebSockets, WebTransport and priorities](realtime.md).
 
-
 The server's first screen is the [Minimal example](ktor.md#minimal-example): `tls { pemFiles(…) }` and one
 `tlsConnector { port = 443 }`. Its second line, the recipes for common deployments, is stable too:
 
@@ -216,8 +215,8 @@ TLS 1.3, and over TLS 1.2 on a connector that allows it ([TLS 1.2 on the server]
 section 9.2).
 
 ```kotlin
-// guide:ktor:http2-server
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:ktor:http2-server
 val server = embeddedServer(Kuicksilver, configure = {
     tlsConnector {
         tls { this.identity = identity }
@@ -300,8 +299,8 @@ for gRPC between services: the hop from the proxy to the server keeps HTTP/2's m
 HTTP/1.1. It is turned on per plain connector:
 
 ```kotlin
-// guide:ktor:h2c-server
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:ktor:h2c-server
 val server = embeddedServer(Kuicksilver, configure = {
     plainConnector {
         port = 8080
@@ -356,8 +355,8 @@ A running server can stop advertising HTTP/3, or take it out of service, without
 endpoint, a feature flag.
 
 ```kotlin
-// guide:ktor:http3-advertising
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:ktor:http3-advertising
 val server = embeddedServer(Kuicksilver, configure = {
     tlsConnector {
         tls { this.identity = identity }
@@ -416,8 +415,8 @@ counts them (`connectionsActive`, every HTTP/3 connection the listeners still ho
 has no deadline of its own, give the wait one:
 
 ```kotlin
-// guide:ktor:drain-wait
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:ktor:drain-wait
 server.engine.http3Advertising = Http3Advertising.Drain
 // wait until the HTTP/3 connections are gone, or for 10 minutes at most (Drain has no deadline of its own)
 withTimeoutOrNull(10.minutes) {
@@ -445,8 +444,8 @@ UDP proxying ought to restrict its use to authenticated users" (RFC 9298 section
 of it goes out as it is. The proxy's configuration is code (a filter, a resolver), so it has no configuration-file key.
 
 ```kotlin
-// guide:ktor:connect-udp-server
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:ktor:connect-udp-server
 val proxyServer = embeddedServer(Kuicksilver, configure = {
     tlsConnector {
         tls { this.identity = identity }

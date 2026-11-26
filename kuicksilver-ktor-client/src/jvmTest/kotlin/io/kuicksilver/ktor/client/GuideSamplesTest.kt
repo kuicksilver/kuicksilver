@@ -166,7 +166,9 @@ class GuideSamplesTest {
                     // guide:ktor:client-diagnostics
                     val response = client.get(url)
                     val d = response.kuicksilverDiagnostics
-                    if (d != null && d.protocol != HttpProtocolVersion.HTTP_3_0) {
+                    if (d == null) {
+                        println("not served by Kuicksilver: create the client with HttpClient(Kuicksilver)")
+                    } else if (d.protocol != HttpProtocolVersion.HTTP_3_0) {
                         println("HTTP/3 not used: ${d.fallback} (alternative ${d.alternative} via ${d.alternativeSource})")
                     }
 
@@ -741,6 +743,8 @@ class GuideSamplesTest {
             val config = it.engine.config as KuicksilverEngineConfig
             assertEquals(Http3Discovery.Auto, config.http3.discovery)
         }
+        val currentPin = "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+        val backupPin = "sha256/u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7s="
         // guide:ktor:pinning
         val pinned =
             HttpClient(Kuicksilver) {
@@ -749,8 +753,8 @@ class GuideSamplesTest {
                         trust =
                             TrustConfig.Pinned(
                                 setOf(
-                                    SpkiSha256.parse("sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="), // the current key
-                                    SpkiSha256.parse("sha256/u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7s="), // the backup key
+                                    SpkiSha256.parse(currentPin), // your server's key: "sha256/<base64>", made as below
+                                    SpkiSha256.parse(backupPin), // a backup key you hold offline
                                 ),
                                 base = TrustConfig.Platform, // the chain is still verified; the pin comes on top
                             )

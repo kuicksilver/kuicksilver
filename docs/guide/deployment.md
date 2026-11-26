@@ -86,8 +86,8 @@ load balancer exposes another number, clients would try the wrong port. Two fixe
   `http3 { endpoint { loops } }` above 1 without the accelerated socket); there the header would send clients to a port where nothing answers:
 
 ```kotlin
-// guide:deployment:public-alt-svc
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:deployment:public-alt-svc
 val publicPort = 443   // the UDP port clients reach (the load balancer's or the NAT's), not the one bound here
 lateinit var engine: KuicksilverApplicationEngine
 val server = embeddedServer(Kuicksilver, configure = {
@@ -303,8 +303,8 @@ them speaks UDP, so the probes check the TCP side and the HTTP/3 side is watched
   TCP connections, so the probes fail during it on their own; a `preStop` delay lets the Service drop the pod before that.
 
 ```kotlin
-// guide:deployment:health
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:deployment:health
 lateinit var engine: KuicksilverApplicationEngine
 val server = embeddedServer(Kuicksilver, configure = {
     tlsConnector {
@@ -611,8 +611,8 @@ the server sees real client addresses: it is what stops one address from taking 
 answer limit (8 per second per address) still applies to everyone behind a shared address.
 
 ```kotlin
-// guide:deployment:quic-limits
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:deployment:quic-limits
 val server = embeddedServer(Kuicksilver, configure = {
     tlsConnector {
         tls { this.identity = identity }

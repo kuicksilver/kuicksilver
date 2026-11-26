@@ -141,10 +141,15 @@ minors are adopted in Kuicksilver releases; see [Supported Ktor versions](guide/
 
 ## Next
 
-- The Ktor client: discovery modes (`Auto`, `Preferred`, `H3Only`; `http3 { enabled = false }` for none), trust and pins, timeouts:
-  [Ktor engines](guide/ktor.md).
-- The Ktor server: one TLS connector serves HTTP/1.1 over TLS on TCP and HTTP/3 on UDP on the same port number, and
-  advertises HTTP/3 with `Alt-Svc`; open and forward both `443/tcp` and `443/udp`:
-  [deploying the HTTP/3 server](guide/deployment.md).
+- A first client and server in one screen: [Quickstart](guide/quickstart.md).
+- The Ktor client: [Ktor client engine](guide/client.md) (timeouts, HTTP/2, the pool) and
+  [HTTP/3 in the Ktor client](guide/client-http3.md) (discovery modes `Auto`, `Preferred`, `H3Only`; `http3 { enabled = false }` for none);
+  trust and pins: [TLS in the Ktor engines](guide/engine-tls.md).
+- The Ktor server: one TLS connector serves HTTP/2 and HTTP/1.1 on TCP and HTTP/3 on UDP on the same port number, and
+  advertises HTTP/3 with `Alt-Svc` ([Ktor server engine](guide/server.md)); open and forward both `443/tcp` and
+  `443/udp`: [deploying the HTTP/3 server](guide/deployment.md).
+- Coming from OkHttp, Retrofit or another Ktor engine:
+  [Migrating from OkHttp and Retrofit](guide/migrating-from-okhttp.md),
+  [Migrating from another Ktor engine](guide/migrating-ktor-engines.md).
 - Raw QUIC (your own protocol, streams and datagrams): [QUIC](guide/quic.md); HTTP/3 without Ktor: [HTTP/3](guide/http3.md).
 - Every option with its default: the [configuration reference](guide/configuration.md).

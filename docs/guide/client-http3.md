@@ -11,8 +11,9 @@ connection migration between networks.
 
 **Before you start**
 
-- In short: the first request to a host goes over TCP (HTTP/2 or HTTP/1.1); the server's `Alt-Svc` announces HTTP/3, and
-  the next requests use it; when HTTP/3 fails, the request goes over TCP.
+- In short: the first request to a host goes over TCP (HTTP/2 or HTTP/1.1); the server's `Alt-Svc` announces HTTP/3; the
+  next request races HTTP/3 against the open TCP connection (TCP usually wins that one), and from then on the HTTP/3
+  connection serves the requests; when HTTP/3 fails, the request goes over TCP.
 - The imports of the code blocks: [Ktor engines: Imports](ktor.md#imports). When a request does not use HTTP/3 and you do not know why:
   [Observability: Why did this request not use HTTP/3?](observability.md#why-did-this-request-not-use-http3).
 
@@ -24,7 +25,7 @@ connection migration between networks.
 
 | Mode | Behaviour |
 |---|---|
-| `Auto` (default) | TCP first (HTTP/2 or HTTP/1.1); HTTP/3 once the origin announced it with `Alt-Svc` ([Discovery and Alt-Svc](#discovery-and-alt-svc)) |
+| `Auto` (default) | TCP first (HTTP/2 or HTTP/1.1); once the origin announced HTTP/3 with `Alt-Svc`, the next request races HTTP/3 against TCP and HTTP/3 serves the requests from when its connection is up ([Discovery and Alt-Svc](#discovery-and-alt-svc)) |
 | `Preferred` | HTTP/3 by prior knowledge, falling back to TCP (like `curl --http3`); `http3 { hints }` gives the same treatment to listed origins in `Auto` mode |
 | `H3Only` | HTTP/3 only (like `curl --http3-only`): failures are reported, never retried over TCP; an `http://` or `ws://` request (HTTP/3 needs `https`, RFC 9114 section 3.1), and with a proxy configured every request, fails with `UnsupportedOperationException` |
 
@@ -260,8 +261,8 @@ setup that loses the race keeps going in the background and serves the next requ
 that loses goes back to the pool. When both setups fail, the TCP
 failure is reported — the race was the one TCP attempt, there is no second one.
 
-An alternative is marked broken only when HTTP/3 failed while HTTP/1.1 worked (a lost race, or a request that fell
-back to HTTP/1.1 after the HTTP/3 connection failed as a whole: setup, QUIC transport, an HTTP/3 connection error; a
+An alternative is marked broken only when HTTP/3 failed while TCP worked (a lost race, or a request that fell
+back to TCP after the HTTP/3 connection failed as a whole: setup, QUIC transport, an HTTP/3 connection error; a
 single stream reset or a malformed response falls back for that request only) — per origin and alternative, never "UDP is blocked" for everything: 5 minutes, doubling up to 2 days, and forgotten when the network changes
 (`network { networkId }`, or the networks `http3 { migration }` follows). Broken alternatives are skipped (straight to TCP).
 The first alternative marked broken on a network is one Warn line of the engine's logger: `HTTP/3 to <origin> failed
@@ -340,9 +341,9 @@ restart. The engine calls it once per `https://` request, on the call's coroutin
 answer at once without blocking, so read a value your configuration keeps up to date:
 
 ```kotlin
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val remoteConfig = MutableStateFlow(true)
 // guide:ktor:http3-switch
-@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val quicAllowed: StateFlow<Boolean> = remoteConfig // updated by your remote configuration
 val client =
     HttpClient(Kuicksilver) {
@@ -403,10 +404,10 @@ idempotent request still waiting for its response falls back to TCP). What the o
 On Android:
 
 ```kotlin
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val connectivity = context.getSystemService(ConnectivityManager::class.java)
 // inside HttpClient(Kuicksilver) { engine { http3 { ... } } }:
 // guide:ktor:android-migration
-@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 migration = Http3ConnectionMigration.followDefaultNetwork(connectivity)
 ```
 

@@ -17,7 +17,6 @@ timeouts, HTTP/2, h2c, the connection pool and coalescing, Happy Eyeballs and na
   certificates in [TLS in the Ktor engines](engine-tls.md); [proxies](client-proxies.md); why a request did not use HTTP/3
   in [Observability and diagnostics](observability.md).
 
-
 The client's first screen for the most common case, configuring nothing, is in the [Minimal example](ktor.md#minimal-example).
 A mobile app talking to its own API sets a handful of options, all stable but `migration`:
 
@@ -126,8 +125,8 @@ val client = HttpClient(Kuicksilver) {
 ## HTTP/2 on the client
 
 ```kotlin
-// guide:ktor:http2-client
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:ktor:http2-client
 val client = HttpClient(Kuicksilver) {
     engine {
         http2 {
@@ -219,8 +218,8 @@ switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1
 ## h2c on the client
 
 ```kotlin
-// guide:ktor:h2c-client
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:ktor:h2c-client
 val client = HttpClient(Kuicksilver) {
     engine {
         http2 {
@@ -319,8 +318,8 @@ the server closed meanwhile is detected when it is taken from the pool and repla
 ## Connection coalescing (experimental)
 
 ```kotlin
-// guide:ktor:coalescing
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:ktor:coalescing
 val client = HttpClient(Kuicksilver) {
     engine {
         // another origin's HTTP/2 or HTTP/3 connection may carry a request when its certificate passes every check
@@ -444,8 +443,8 @@ server (DNS over HTTPS through a client you trust), fixed addresses for some nam
 answers, the engine connects to with Happy Eyeballs over TCP (HTTP/1.1, HTTP/2) and QUIC (HTTP/3).
 
 ```kotlin
-// guide:ktor:dns
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:ktor:dns
 // fixed addresses for some names, the system's resolver for the rest
 val fixed = mapOf("api.example.test" to listOf(IpAddress.parse("192.0.2.10"), IpAddress.parse("2001:db8::10")))
 val client = HttpClient(Kuicksilver) {

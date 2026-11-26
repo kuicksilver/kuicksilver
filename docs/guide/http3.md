@@ -184,9 +184,9 @@ completed is handled by `Http3Settings.earlyData`:
 - `Http3EarlyDataPolicy.Reject425()`: non-replayable early requests are answered with `425 Too Early` and never reach
   the application.
 
-> **Replay warning.** An early request may be a copy an attacker sent again (RFC 9846 section 8). Handlers of requests
-> that run early, those with `receivedEarly = true`, must have no side effects. Narrow `replayable` if a GET handler
-> of yours changes state.
+> **Replay warning.** An early request may be a copy an attacker sent again. Whether to turn 0-RTT on, what must not run
+> early and how the server limits replays: [0-RTT](zero-rtt.md), the one page about it; the rules there hold for this
+> API too.
 
 ## Serving requests
 
@@ -352,8 +352,8 @@ writes one capsule whole, never interleaved with another; `close()` writes what 
 `capsules` keeps reading the peer's side.
 
 ```kotlin
-// guide:http3:capsules (server)
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:http3:capsules (server)
 val config = capsuleConfig { knownTypes = setOf(0x2843) }   // the capsule types the protocol defines
 val tunnel = request.acceptConnect().useCapsuleProtocol(config)
 tunnel.capsules.collect { tunnel.send(it) }                 // echo each capsule until the client's FIN

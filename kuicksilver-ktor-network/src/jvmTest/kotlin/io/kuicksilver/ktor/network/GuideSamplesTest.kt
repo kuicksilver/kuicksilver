@@ -94,10 +94,11 @@ class GuideSamplesTest {
     }
 
     @Test fun trustSample() {
+        val serverPin = "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
         // guide:tls:trust
         val pinned =
             TrustConfig.Pinned(
-                pins = setOf(SpkiSha256.parse("sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")),
+                pins = setOf(SpkiSha256.parse(serverPin)), // "sha256/<base64>" of your server's key
                 scope = PinScope.Leaf,
                 base = TrustConfig.AnchoredCa(listOf(rootCertificate)), // or Platform
             )

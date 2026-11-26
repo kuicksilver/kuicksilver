@@ -56,8 +56,8 @@ kuicksilver.tls {
 }
 ```
 
-The most common client configures nothing; the first request to a host goes over TCP (HTTP/2 or HTTP/1.1), HTTP/3 from
-the next one once the server sent `Alt-Svc` (run it inside a coroutine, for example `runBlocking { }`):
+The most common client configures nothing; the first request to a host goes over TCP (HTTP/2 or HTTP/1.1), HTTP/3 once
+the server sent `Alt-Svc` and the HTTP/3 connection is up (run it inside a coroutine, for example `runBlocking { }`):
 
 ```kotlin
 // guide:ktor:first-screen-client

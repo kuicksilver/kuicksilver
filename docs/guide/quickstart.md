@@ -61,7 +61,7 @@ suspend fun main() {
 
 - **Name the engine.** `HttpClient()` without an argument takes the engine Ktor finds first, and the OkHttp and Android
   engines come before Kuicksilver on the JVM and Android. In an app that already has `ktor-client-okhttp`, it is OkHttp
-  that answers, silently ([troubleshooting](troubleshooting.md#the-ktor-client-never-uses-http3-or-stops-using-it)).
+  that answers, silently ([troubleshooting](troubleshooting.md#httpclient-uses-another-engine)).
 - **The first request to a host goes over TCP.** The server announces HTTP/3 in an `Alt-Svc` header field of that
   response. The next request races HTTP/3 against the TCP connection already open, which usually wins this once; from
   then on the client's HTTP/3 connection to the host serves the requests. Your own API can skip the TCP-only start:

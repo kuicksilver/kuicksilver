@@ -66,8 +66,8 @@ must also run elsewhere (another OS or CPU architecture) checks once at startup 
 catching `KslException` from the first connection:
 
 ```kotlin
-// guide:tls:availability
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:tls:availability
 if (!KslLoader.isAvailable()) fallBackToTcp()   // never throws; the outcome is cached for the process
 ```
 
@@ -194,8 +194,8 @@ when the bundle changes. It follows the rules of the identity above:
   through `AnchoredCa`.
 
 ```kotlin
-// guide:tls:client-ca-rotation
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:tls:client-ca-rotation
 val clientCa = TrustConfig.reloadable(TrustConfig.AnchoredCa(Certificate.parsePem(caBundlePem)))
 val mtlsServer = tlsConfig(TlsRole.Server) {
     alpn = listOf("h3")
@@ -253,12 +253,13 @@ Host names are always checked (RFC 9525) and the check cannot be disabled; it ca
 for proxies (`ExpectedName` wraps `Platform`, `AnchoredCa` or `Custom`; to pin as well, put it inside `Pinned` — except
 around `Custom`, which `Pinned` refuses directly and through `ExpectedName`:
 `Pinned(pins, base = ExpectedName(name, base))`). Pins are an additional check against the validated chain, never a
-replacement for it.
+replacement for it. A pin's text and how to make one: [TLS in the Ktor engines: Certificate
+pinning](engine-tls.md#certificate-pinning).
 
 ```kotlin
 // guide:tls:trust
 val pinned = TrustConfig.Pinned(
-    pins = setOf(SpkiSha256.parse("sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")),
+    pins = setOf(SpkiSha256.parse(serverPin)),   // "sha256/<base64>" of your server's key
     scope = PinScope.Leaf,
     base = TrustConfig.AnchoredCa(listOf(rootCertificate)),   // or Platform
 )

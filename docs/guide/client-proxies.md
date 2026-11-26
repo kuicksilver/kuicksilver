@@ -135,8 +135,8 @@ A proxied request uses TCP (`ProtocolReason.Proxy`: HTTP/1.1, or HTTP/2 inside a
 (`no_proxy`, the OS bypass list), or connect directly everywhere with `proxies { resolver = ProxyResolvers.None }`.
 
 ```kotlin
-// guide:ktor:proxy
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:ktor:proxy
 val password = System.getenv("PROXY_PASSWORD") ?: ""
 // one proxy for everything, with credentials for it
 val viaProxy = HttpClient(Kuicksilver) {
@@ -207,8 +207,8 @@ finds a path MTU above about 1250 bytes within a few round trips; over a path th
 through the tunnel times out.
 
 ```kotlin
-// guide:ktor:connect-udp-client
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:ktor:connect-udp-client
 val client = HttpClient(Kuicksilver) {
     engine {
         proxies { connectUdp = ConnectUdpProxy(

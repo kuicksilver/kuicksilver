@@ -109,15 +109,15 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    (`kuicksilver.kmp.gradle.kts`, `kuicksilver.release.gradle.kts`, `kuicksilver-bom`, the four sample builds,
    `tools/check/consumer-smoke.sh`), normally set when the
    line was started, and for a final version the README ("X.Y.Z is on Maven Central", the BOM version of its "Add it"
-   block), `docs/install.md` (the BOM version of its blocks, the Swift package line) and `docs/guide/ios.md` (the dependency line, the Swift package line, the xcframework
-   URL) name the version itself (a prerelease such as
+   block), `docs/install.md` (the BOM version of its blocks, the Swift package line), `docs/guide/ios.md` (the dependency line, the Swift package line, the xcframework
+   URL) and `docs/guide/quickstart.md` (the BOM version of its dependency block) name the version itself (a prerelease such as
    0.3.0-rc1 leaves the status line at the last final version and needs only the `0.3.0-SNAPSHOT` fallbacks).
    While a
    minor version is in preparation on `main`, the README's "Add it" block and `docs/install.md` already name it, and the
    README's status line and the "Versions" section of `docs/install.md` say it is not published yet; the release commit of that version turns them into "X.Y.Z is on
    Maven Central" and drops the build-it-yourself note (in the README and in `docs/install.md`), and `docs/guide/ios.md`
    (its dependency line and xcframework URL) and `docs/install.md` are bumped in the same commit as the README. The script refuses the release while the status line still names
-   the previous version, and while the README or `docs/install.md` still says "release in preparation" or "Until X.Y.Z is on Maven Central". For a final version of
+   the previous version, and while the README, `docs/install.md` or the quickstart still says "release in preparation" or "Until X.Y.Z is on Maven Central". For a final version of
    the newest line, the supported-versions table of `SECURITY.md` names it too ("0.2.1 today"; the script does not check
    this). The same commit carries the regenerated reliability page [reliability.md](reliability.md): its numbers are
    never typed by hand. Generate it before the commit, from the artifacts that exist then: the gate record of the last
