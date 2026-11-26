@@ -1489,7 +1489,35 @@ class H2RuntimeTest {
             assertTrue(e.message.orEmpty().endsWith("certificate_required (116)"), e.message)
             assertTrue(generateSequence<Throwable>(e) { it.cause }.any { it === alert }, "the transport's failure under $e")
             assertTrue(e.notProcessed, "the stream never went out")
+            assertTrue(e.byPeer, "a transport that failed under us is the peer's or the path's end")
             client.unreserve()
+        }
+
+    /**
+     * A loss told in order (the transport is sound: a peer that stopped answering PINGs, a fault of this side) is not the
+     * peer's end: the streams' ConnectionClosed says byPeer = false, as does the connection's [H2ClientConnection.closeCause].
+     */
+    @Test fun negative_aLossInOrderIsNotByThePeer() =
+        runTest {
+            val w = Wire()
+            val srv = RawServer(w)
+            val client =
+                H2ClientConnection.start(w.toClient, w.toServer, Http2Settings.Default, backgroundScope, Duration.INFINITE, {
+                    w.close()
+                }, clock = clock())
+            srv.settings()
+            runCurrent()
+            val s = client.get()
+            runCurrent()
+            val silent = ConnectionEndedException.PeerUnresponsive("no PING acknowledgement within 1000 ms")
+            client.abortInOrder(silent)
+            runCurrent()
+            val e = assertFailsWith<Http2Exception.ConnectionClosed> { s.response() }
+            assertFalse(e.byPeer, "$e")
+            assertEquals("the connection was lost: no PING acknowledgement within 1000 ms", e.message)
+            val ended = assertIs<Http2Exception.ConnectionClosed>(client.closeCause)
+            assertFalse(ended.byPeer, "$ended")
+            s.release()
         }
 
     /** The same after the connection ended by its own error (a peer's malformed frame): the stream names that end. */

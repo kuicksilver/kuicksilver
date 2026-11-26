@@ -231,13 +231,20 @@ internal class H2Runtime(
     /** Completed when the connection is over, with nothing left to write. */
     val closed = CompletableDeferred<Unit>()
 
-    /** Completed when the protocol ended ([closeCause] is set), possibly with frames still to write ([closed] follows). */
+    /**
+     * Completed when the protocol ended, possibly with frames still to write ([closed] follows). [closeCause] is set by
+     * then, and earlier for a lost transport: at the loss ([lost]), before the GOAWAY sent for it ends the protocol.
+     */
     val ended = CompletableDeferred<Unit>()
 
     /** The connection ended because the peer broke a flood limit (we sent ENHANCE_YOUR_CALM; not for a slow field block). */
     @Volatile var endedByFlood: Boolean = false
         private set
 
+    /**
+     * Why the connection ended: set as its end is noted ([takeEventsLocked]), or at once when the transport was lost
+     * ([lost]), so whoever finds the connection unusable from then on finds why.
+     */
     @Volatile var closeCause: Throwable? = null
         private set
 
@@ -249,6 +256,9 @@ internal class H2Runtime(
         private set
 
     @Volatile private var transportLost: Throwable? = null
+
+    /** Whether [transportLost] is the peer's or the path's doing: false for a loss told in order ([lost], inOrder: the transport is sound). */
+    @Volatile private var transportLostByPeer = true
 
     @Volatile private var shuttingDown = false
     private val transportClosed = AtomicBoolean(false)
@@ -364,7 +374,13 @@ internal class H2Runtime(
 
     /** The connection's end when its transport failed with [lost]. */
     private fun lostCause(lost: Throwable): Http2Exception.ConnectionClosed =
-        Http2Exception.ConnectionClosed(goAwayCode, byPeer = true, notProcessed = false, "the connection was lost: ${lost.message}", lost)
+        Http2Exception.ConnectionClosed(
+            goAwayCode,
+            byPeer = transportLostByPeer,
+            notProcessed = false,
+            "the connection was lost: ${lost.message}",
+            lost,
+        )
 
     /**
      * Wakes the writer when the core has something to write (only then: the writer's own poll would wake it forever) and
@@ -651,7 +667,7 @@ internal class H2Runtime(
                 lost != null -> {
                     Http2Exception.ConnectionClosed(
                         goAwayCode,
-                        byPeer = true,
+                        byPeer = transportLostByPeer,
                         notProcessed = e.notProcessed,
                         "the connection was lost" + (goAwayCode?.let { " after GOAWAY $it" } ?: "") + ": ${lost.message}",
                         lost,
@@ -857,6 +873,7 @@ internal class H2Runtime(
         val first =
             lock.withLock {
                 if (transportLost == null && !core.isClosed) {
+                    transportLostByPeer = !inOrder
                     transportLost = cause
                     // at once, with the loss: whoever finds the connection unusable from now on (a stream opened on a
                     // reservation taken before, a new connection that takes no stream) reports why, before the GOAWAY below
