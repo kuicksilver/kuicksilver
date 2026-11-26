@@ -162,9 +162,13 @@ class WebSocketPongsTest {
             c.peer.flushAndClose()
         }
 
-    /** After this side's Close no Pong goes out (section 5.5.1: the Close is the last frame this side sends). */
+    /**
+     * After this side's Close a Ping is still answered, until the peer's Close: section 5.5.2 asks for a Pong "unless it
+     * already received a Close frame", and section 5.5.1 forbids only data frames after a Close ("the application MUST
+     * NOT send any more data frames"). A Ping after the peer's Close is not answered.
+     */
     @Test
-    fun negative_noPongAfterOurClose() =
+    fun pongAfterOurCloseUntilThePeersClose() =
         runTest {
             val c = connection(masking = false)
             c.session.writeFully(close(1000))
@@ -172,7 +176,93 @@ class WebSocketPongsTest {
             assertEquals(0x88, oneFrame(c.wire).b0)
             c.peerSends(frame(0x89, "after".encodeToByteArray(), mask))
             advanceUntilIdle()
-            assertEquals(0, c.wire.availableForRead, "no Pong after our Close")
+            val pong = oneFrame(c.wire)
+            assertEquals(0x8A, pong.b0, "a Pong after our Close")
+            assertEquals("after", pong.payload.decodeToString())
+            c.peerSends(close(1000, mask = mask) + frame(0x89, "late".encodeToByteArray(), mask))
+            advanceUntilIdle()
+            assertEquals(0, c.wire.availableForRead, "nothing after the peer's Close")
             c.peer.flushAndClose()
+        }
+
+    /**
+     * Once the session's writer ended its channel (Ktor's does so right after its Close), no Pong is written any more, also
+     * when the transport under it stays open (the client engines hold it until they end it themselves).
+     */
+    @Test
+    fun negative_noPongAfterTheWriterEndedTheChannel() =
+        runTest {
+            val peer = ByteChannel()
+            val wire = ByteChannel()
+            val held = HeldOpen(wire)
+            val pongs = WebSocketPongs()
+            guardWebSocketInput(peer, 0, false, peerMasks = true, context = coroutineContext, pongs = pongs)
+            val session = guardWebSocketOutput(held, masking = false, pongs = pongs)
+            session.writeFully(close(1000))
+            session.flushAndClose()
+            assertEquals(0x88, oneFrame(wire).b0)
+            peer.writeFully(frame(0x89, "x".encodeToByteArray(), mask))
+            peer.flush()
+            advanceUntilIdle()
+            assertEquals(0, wire.availableForRead, "no Pong after the writer's end")
+            peer.flushAndClose()
+        }
+
+    /** A channel whose end only flushes [wire], as the client engines' held transport end. */
+    private class HeldOpen(
+        private val wire: ByteChannel,
+    ) : io.ktor.utils.io.ByteWriteChannel by wire {
+        override suspend fun flushAndClose() = wire.flush()
+    }
+
+    /**
+     * More than [WebSocketPongs.MAX_WAITING] Pings while a frame is part-way on the wire: when the frame ends, one Pong goes
+     * out, for the newest (section 5.5.3: an endpoint MAY "send a Pong frame for only the most recently processed Ping
+     * frame"); the session's Pongs for the older ones are no longer owed and pass, its Pong for the newest is dropped.
+     */
+    @Test
+    fun negative_onlyTheNewestOfTooManyPingsIsAnsweredAndTheOthersAreLeftToTheSession() =
+        runTest {
+            val c = connection(masking = false)
+            val payload = ByteArray(300) { 'x'.code.toByte() }
+            c.session.writeFully(header(0x82, 300) + payload.copyOf(100))
+            c.session.flush()
+            val count = WebSocketPongs.MAX_WAITING + 1
+            for (i in 0 until count) c.peerSends(frame(0x89, "p$i".encodeToByteArray(), mask))
+            advanceUntilIdle()
+            c.session.writeFully(payload.copyOfRange(100, 300))
+            c.session.flush()
+            advanceUntilIdle()
+            assertEquals(0x82, oneFrame(c.wire).b0)
+            val pong = oneFrame(c.wire)
+            assertEquals(0x8A, pong.b0)
+            assertEquals("p${count - 1}", pong.payload.decodeToString(), "only the newest is answered here")
+            // the session answers every Ping: its Pongs for the older ones pass, the one for the newest is dropped
+            for (i in 0 until count) c.session.writeFully(frame(0x8A, "p$i".encodeToByteArray()))
+            c.session.writeFully(close(1000))
+            c.session.flushAndClose()
+            val rest = frames(c.wire)
+            assertEquals((0 until count - 1).map { "p$it" } + "", rest.map { if (it.b0 == 0x88) "" else it.payload.decodeToString() })
+            c.peer.flushAndClose()
+        }
+
+    /**
+     * A Pong whose write fails (the transport reset while it waited for room) is no uncaught exception: the coroutine that
+     * writes Pongs stops quietly (an uncaught exception ends the process on Android and Kotlin/Native). A frame of 1 MiB
+     * less 20 bytes fills the wire, the 40-byte Ping's Pong then waits for room, and the wire is reset.
+     */
+    @Test
+    fun negative_aPongWriteThatFailsIsNotAnUncaughtException() =
+        runTest {
+            val c = connection(masking = false)
+            val size = (1 shl 20) - 20 - 10 // the frame, its 10-byte header included, is 1 MiB less 20 bytes
+            c.session.writeFully(header(0x82, size.toLong()) + ByteArray(size))
+            c.session.flush()
+            c.peerSends(frame(0x89, ByteArray(40) { 'p'.code.toByte() }, mask))
+            advanceUntilIdle()
+            c.wire.cancel(kotlinx.io.IOException("reset"))
+            advanceUntilIdle()
+            c.peer.flushAndClose()
+            advanceUntilIdle()
         }
 }

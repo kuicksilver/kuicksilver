@@ -5,6 +5,7 @@
 package io.kuicksilver.ktor.network
 
 import io.kuicksilver.annotations.InternalKuicksilverApi
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
@@ -20,28 +21,40 @@ import kotlinx.coroutines.sync.withLock
  * received a Close frame. It SHOULD respond with Pong frame as soon as is practical." Ktor's `DefaultWebSocketSession`
  * answers a Ping from a coroutine of its own (its "ponger"), which runs whenever its dispatcher gets to it: the
  * application's next frames, an echo of the message the Ping came in the middle of included (section 5.4: control frames
- * "MAY be injected in the middle of a fragmented message"), could go out before it. Here the input guard hands each
- * Ping's Application data to [answer] as soon as it has read the Ping, before it hands the Ping on; the Pong, with
- * "identical Application data" (section 5.5.3), goes out at the output's next frame boundary: at once when the output is
- * idle (a coroutine of its own writes it), or right after the frame the session is writing. The Pong the session then
- * writes for the same Ping is dropped by the output guard (one dropped per Ping answered here, matched by its data), so
- * the peer gets one Pong per Ping, as before. A Pong the application sends unsolicited (section 5.5.3) passes, unless its
- * data equals that of a Ping answered here whose session Pong has not come yet.
+ * "MAY be injected in the middle of a fragmented message"), could go out before it; a raw session answers none. Here the
+ * input guard hands each Ping's Application data to [answer] as soon as it has read the Ping, before it hands the Ping on;
+ * the Pong, with "identical Application data" (section 5.5.3), goes out at the output's next frame boundary: at once when
+ * the output is idle (a coroutine of its own writes it), or right after the frame the session is writing. Pings are
+ * answered after this side's Close too, until the peer's (section 5.5.1 forbids only data frames after a Close), while the
+ * output is open and its writer has not ended it; see [guardWebSocketOutput].
  *
- * Bounds: at most [MAX_WAITING] Pings wait to be answered; an older one is dropped for a newer (section 5.5.3: an endpoint
- * that "has not yet sent Pong frame(s) in response to previous Ping frame(s) ... MAY elect to send a Pong frame for only
- * the most recently processed Ping frame"); the session's Pong for a dropped one is not dropped, so it is still answered.
- * At most [MAX_OWED] answered Pings wait for the session's Pong (a raw session may never send one); past that the oldest
- * is forgotten, and a late session Pong for it goes out as an unsolicited one. No Pong goes out after this side's Close
- * (section 5.5.1) or after a refusal ended the output; the input guard answers no Ping that follows the peer's Close.
+ * The Pong the session then writes for the same Ping is dropped by the output guard (one dropped per Ping answered here,
+ * matched by its data), so the peer gets one Pong per Ping, as before. The engine cannot tell Ktor's default session from
+ * a raw one (both write to the same channel), so under a raw session too a Pong whose data equals that of a Ping answered
+ * here, and not yet matched, is taken for the application's answer to that Ping and dropped: the peer has its Pong
+ * already. An unsolicited Pong with other data (section 5.5.3: "A Pong frame MAY be sent unsolicited") passes; one with
+ * the same data as such a Ping (a heartbeat with the empty data of an empty Ping, say) is dropped once per such Ping.
+ *
+ * Bounds. At most [MAX_WAITING] Pings wait to be answered: when one more comes, only the newest is kept (section 5.5.3:
+ * an endpoint that "has not yet sent Pong frame(s) in response to previous Ping frame(s) ... MAY elect to send a Pong
+ * frame for only the most recently processed Ping frame"), and the older ones are no longer owed, so the session's Pongs
+ * for them pass. At most [MAX_OWED] answered Pings wait for the session's Pong (a raw session may never send one); past
+ * that the oldest is forgotten, and a late session Pong for it goes out as an unsolicited one. No Pong goes out after a
+ * failure of the output; the input guard answers no Ping that follows the peer's Close. A write of a Pong that fails
+ * (the transport reset while it waited for room) ends the writing of Pongs quietly: the output's own writer reports the
+ * failure, and an exception from here would reach the uncaught-exception handler, which ends the process on Android and
+ * Kotlin/Native.
  */
 @InternalKuicksilverApi
 public class WebSocketPongs {
     /** Taken by the output guard around everything it writes, and by the writer of Pongs. */
     internal val lock = Mutex()
 
-    /** The data of the Pings read and not yet taken under [lock]; never suspends the input guard. */
-    private val requests = Channel<ByteArray>(MAX_WAITING, BufferOverflow.DROP_OLDEST)
+    /**
+     * The data of the Pings read and not yet taken under [lock]; never suspends the input guard. One more than
+     * [MAX_WAITING], so that a burst past the bound is seen as one; a Ping dropped here was never owed (the session answers it).
+     */
+    private val requests = Channel<ByteArray>(MAX_WAITING + 1, BufferOverflow.DROP_OLDEST)
     private val wake = Channel<Unit>(Channel.CONFLATED)
 
     // under [lock]
@@ -65,7 +78,18 @@ public class WebSocketPongs {
     /** Writes the waiting Pongs while the output is idle, until [stop]; runs in [scope] (the input guard's). */
     internal fun start(scope: CoroutineScope) {
         scope.launch {
-            for (w in wake) lock.withLock { output?.sendWaiting(this@WebSocketPongs, flush = true) }
+            for (w in wake) {
+                try {
+                    lock.withLock { output?.sendWaiting(this@WebSocketPongs, flush = true) }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Throwable) {
+                    // the output failed (a reset transport): its writer sees the failure; nothing more is sent from here
+                    lock.withLock { dropWaiting() }
+                    wake.close()
+                    return@launch
+                }
+            }
         }
     }
 
@@ -73,11 +97,17 @@ public class WebSocketPongs {
         wake.close()
     }
 
-    /** Under [lock]: the Pings read since the last call, now waiting and owed. */
+    /**
+     * Under [lock]: the Pings read since the last call, now waiting and owed. When [MAX_WAITING] are waiting already, only
+     * the newest is kept and the others are no longer owed (section 5.5.3), so the session's Pongs answer them.
+     */
     internal fun takeRequests() {
         while (true) {
             val data = requests.tryReceive().getOrNull() ?: return
-            if (waiting.size == MAX_WAITING) waiting.removeFirst()
+            if (waiting.size == MAX_WAITING) {
+                for (old in waiting) owed.removeAt(owed.indexOfFirst { it === old }.takeIf { it >= 0 } ?: continue)
+                waiting.clear()
+            }
             waiting.addLast(data)
             if (owed.size == MAX_OWED) owed.removeFirst()
             owed.addLast(data)
@@ -87,7 +117,7 @@ public class WebSocketPongs {
     /** Under [lock]: the next Pong to send, or null. */
     internal fun nextWaiting(): ByteArray? = waiting.removeFirstOrNull()
 
-    /** Under [lock]: no Pong is sent any more (this side's Close went out, or the output failed). */
+    /** Under [lock]: the waiting Pongs are not sent (the output failed, or its writer ended it). */
     internal fun dropWaiting() {
         waiting.clear()
     }

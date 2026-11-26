@@ -24,8 +24,8 @@ import io.kuicksilver.ktor.client.Kuicksilver as KuicksilverClient
  * 7692 conformance): the Ktor engine on one plain connector (HTTP/1.1, the upgrade of RFC 6455 section 4), Ktor's
  * `WebSockets` plugin with this library's `PerMessageDeflate`, the engine's default limits (`webSocketMaxMessageSize`,
  * 16 MiB). Every path is an echo: each Text and Binary frame goes back as it came (its FIN bit kept, so a fragmented
- * message is echoed fragment by fragment); Ping, Pong and Close are Ktor's session's (a Pong for each Ping, the Close
- * answered). Arguments: `[host] [port]` (default 127.0.0.1, 0); the bound port is printed as
+ * message is echoed fragment by fragment); the engine answers each Ping as soon as it reads it (`WebSocketPongs`, the
+ * session's own Pong for it dropped), Ktor's session answers the Close. Arguments: `[host] [port]` (default 127.0.0.1, 0); the bound port is printed as
  * `autobahn-server listening on <port>` once the server accepts connections. Runs until the process is killed.
  */
 public fun autobahnServerMain(args: Array<String>) {

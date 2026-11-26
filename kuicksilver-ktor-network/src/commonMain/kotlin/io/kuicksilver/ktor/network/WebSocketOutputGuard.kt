@@ -63,7 +63,10 @@ import kotlinx.io.readTo
  *
  * With [pongs] (the same instance as the input guard's), the engine answers the peer's Pings itself, as soon as they are
  * read ([WebSocketPongs]): their Pongs go out at the next frame boundary of [output], between the frames of the session,
- * and the session's own Pong for each of them is dropped here.
+ * and the session's own Pong for each of them is dropped here. Pongs keep going out after this side's Close, until the
+ * peer's (RFC 6455 section 5.5.2; section 5.5.1 forbids only data frames after a Close), as long as [output] is open and
+ * the writer has not ended this channel: once it has ([flushAndClose]), the engine ends the transport itself, outside
+ * this guard, and no Pong is written any more.
  *
  * After that Close, data frames are discarded (RFC 6455 section 5.5.1: "After sending a Close frame, the application
  * MUST NOT send any more data frames"): nothing of them reaches [output] and the write does not fail, so a session that
@@ -83,7 +86,7 @@ public fun guardWebSocketOutput(
     onClose: () -> Unit = {},
     peerClosed: () -> Boolean = { false },
     pongs: WebSocketPongs? = null,
-): ByteWriteChannel = OutputGuard(output, masking, checkText, compression, onClose, peerClosed, pongs)
+): ByteWriteChannel = OutputGuard(output, masking, checkText, compression, onClose, peerClosed, pongs).also { pongs?.attach(it) }
 
 /**
  * Whether this channel, made by [guardWebSocketOutput], has handed on only whole frames: nothing of a frame is staged or
@@ -199,7 +202,7 @@ private class OutputGuard(
     val atFrameBoundary: Boolean
         get() =
             staged.exhausted() && headerLength == 0 && payloadLeft < 0 && closeSize < 0 && pongSize < 0 && discardLeft < 0 &&
-                !tailPending
+                !tailPending && !controlInFlight
 
     /** The 0x00 0x00 0xff 0xff of a compressed non-final frame is being handed on: the frame is not whole yet. */
     private var tailPending = false
@@ -208,15 +211,17 @@ private class OutputGuard(
      * Part of a frame is on [output] and the rest is not: its header went out and its payload (or tail) did not all. A
      * header or a Close still being collected here is not on [output] yet, nor is a frame being discarded.
      */
-    val frameCutOnOutput: Boolean get() = payloadLeft >= 0 || tailPending
+    val frameCutOnOutput: Boolean get() = payloadLeft >= 0 || tailPending || controlInFlight
+
+    /** A control frame of the engine's own (a Pong) is being written to [output]: cut if that write does not finish. */
+    private var controlInFlight = false
+
+    /** The writer ended this channel ([flushAndClose]): nothing more is written, the engine's Pongs included. */
+    private var closed = false
 
     override val closedCause: Throwable? get() = output.closedCause
 
     override val writeBuffer: Sink get() = staged
-
-    init {
-        pongs?.attach(this)
-    }
 
     /** [block] under the lock of [pongs], when there is one: the Pongs the engine sends share [output]. */
     private suspend inline fun <T> locked(block: () -> T): T = if (pongs == null) block() else pongs.lock.withLock { block() }
@@ -237,6 +242,9 @@ private class OutputGuard(
         try {
             if (failure != null) return // the output was cancelled
             process()
+            // the Pongs that were due went out above; from here the engine ends the transport, outside this lock
+            closed = true
+            pongs?.dropWaiting()
             if (frameCutOnOutput) {
                 // the writer ended its channel in order inside a frame (Ktor's does so when it is cancelled): a clean end
                 // after a cut frame would present a truncated stream as whole (RFC 6455 section 7.1.1), so it is reset
@@ -283,7 +291,8 @@ private class OutputGuard(
         flush: Boolean,
     ) {
         pongs.takeRequests()
-        if (failure != null || closeWritten || output.isClosedForWrite) {
+        // after this side's Close too (RFC 6455 section 5.5.2): only a failure, a closed output or the writer's end stop them
+        if (failure != null || closed || output.isClosedForWrite) {
             pongs.dropWaiting()
             return
         }
@@ -291,10 +300,17 @@ private class OutputGuard(
         var sent = false
         while (true) {
             val data = pongs.nextWaiting() ?: break
-            output.writeFully(controlFrame(OPCODE_PONG_OUT, data, data.size))
+            writeControl(controlFrame(OPCODE_PONG_OUT, data, data.size))
             sent = true
         }
         if (sent && flush) output.flush()
+    }
+
+    /** One whole control frame of the engine's own: a cut frame if the write fails or is cancelled part-way. */
+    private suspend fun writeControl(frame: ByteArray) {
+        controlInFlight = true
+        output.writeFully(frame)
+        controlInFlight = false
     }
 
     /** A whole control frame of ours with [size] bytes of [data], masked with a new key on the client. */
@@ -322,7 +338,7 @@ private class OutputGuard(
         if (ktorMasked) unmask(pongBuffer, size, ktorMask, 0)
         pongs!!.takeRequests()
         if (pongs.owedTo(pongBuffer, size)) return
-        output.writeFully(controlFrame(OPCODE_PONG_OUT, pongBuffer, size))
+        writeControl(controlFrame(OPCODE_PONG_OUT, pongBuffer, size))
     }
 
     /** The next byte of a header; once the header is whole, it goes out rewritten (or a Close is collected). */
@@ -348,7 +364,7 @@ private class OutputGuard(
         headerLength = 0
         val b0 = header[0].toInt() and 0xff
         val opcode = b0 and 0x0f
-        if (opcode == OPCODE_PONG_OUT && pongs != null && length <= MAX_CONTROL && !closeWritten) {
+        if (opcode == OPCODE_PONG_OUT && pongs != null && length <= MAX_CONTROL) {
             pongSize = length.toInt()
             pongLength = 0
             if (length == 0L) pongBody()
