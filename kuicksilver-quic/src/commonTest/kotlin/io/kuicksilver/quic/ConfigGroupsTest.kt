@@ -300,4 +300,49 @@ class ConfigGroupsTest {
         assertSame(preferred, s.preferredAddress)
         assertFailsWith<IllegalArgumentException> { quicServerConfig(CoreFixtures.server()) { earlyDataContext = ByteArray(257) } }
     }
+
+    /** `toBuilder()` copies every value of a client and a server configuration (ADR-0026, principle 10: the readers are internal). */
+    @Test fun clientAndServerConfigsCopyWithToBuilder() {
+        val store = MemoryTokenStore()
+        val quic = quicConfig { keepAlive = 5.seconds }
+        val c =
+            quicClientConfig(CoreFixtures.client()) {
+                this.quic = quic
+                earlyData = io.kuicksilver.tls.EarlyDataState.Allowed
+                tokenStore = store
+            }
+        val c2 = c.toBuilder().build()
+        assertSame(c.tls, c2.tls)
+        assertSame(quic, c2.quic)
+        assertEquals(io.kuicksilver.tls.EarlyDataState.Allowed, c2.earlyData)
+        assertSame(store, c2.tokenStore)
+        val preferred =
+            PreferredAddress(
+                io.ktor.network.sockets
+                    .InetSocketAddress("10.0.0.3", 4433),
+                null,
+            )
+        val context = byteArrayOf(1, 2, 3)
+        val s =
+            quicServerConfig(CoreFixtures.server()) {
+                this.quic = quic
+                acceptEarlyData = true
+                earlyDataContext = context
+                newTokenLifetime = 1.minutes
+                newTokenReplayCapacity = 4096
+                preferredAddress = preferred
+            }
+        val b = s.toBuilder()
+        assertTrue(byteArrayOf(1, 2, 3).contentEquals(b.earlyDataContext), "the context is copied")
+        context[0] = 9 // the built configuration kept its own copy, and so does the builder
+        assertEquals(1, b.earlyDataContext!![0])
+        val s2 = b.build()
+        assertSame(s.tls, s2.tls)
+        assertSame(quic, s2.quic)
+        assertEquals(true, s2.acceptEarlyData)
+        assertEquals(1.minutes, s2.newTokenLifetime)
+        assertEquals(4096, s2.newTokenReplayCapacity)
+        assertSame(preferred, s2.preferredAddress)
+        assertNull(quicServerConfig(CoreFixtures.server()) { newTokenLifetime = null }.toBuilder().newTokenLifetime)
+    }
 }

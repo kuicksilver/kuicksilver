@@ -1153,8 +1153,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   handshake deadline) and refuses an explicit assignment with `... is derived by the engine (<why>); remove it`; the QUIC
   stream limits stay settable (`expert { maxUniStreams }` at least 3, RFC 9114 section 6.2) and default to 100, raised to
   fit the WebTransport sessions of a connection (`kuicksilver.http3.quic.expert.maxUniStreams` in `EngineMain`). The
-  readers of `QuicConfig`, `QuicEndpointConfig`, `Http3Settings` and `Http2Settings` are internal: build with the DSL,
-  copy with `toBuilder()`. The first-screen options of both engines are stable; `@SecuritySensitive` marks the options whose
+  readers of `QuicConfig`, `QuicEndpointConfig`, `QuicClientConfig`, `QuicServerConfig`, `Http3Settings` and
+  `Http2Settings` are internal: build with the DSL, copy with `toBuilder()`. The first-screen options of both engines are stable; `@SecuritySensitive` marks the options whose
   wrong value weakens security (🔒 in the reference). No deprecated aliases exist: an old Kotlin name does not compile, and
   `tools/migrate/config-0.3.py` rewrites most of them into their blocks. The options 0.2.x released move as follows
   (options added in 0.3.0 snapshots: under their new name in the reference):

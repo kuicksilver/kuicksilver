@@ -27,21 +27,32 @@ import kotlin.time.Duration.Companion.hours
 
 /**
  * Client side of a connection: TLS plus transport settings. [Builder.build] throws `TlsException.Config` for a TLS config QUIC cannot use
- * (TLS 1.2, empty ALPN, a cipher suite other than AES-GCM or ChaCha20-Poly1305; RFC 9001 section 4); build one with `quicClientConfig(tls) { }`.
+ * (TLS 1.2, empty ALPN, a cipher suite other than AES-GCM or ChaCha20-Poly1305; RFC 9001 section 4); build one with `quicClientConfig(tls) { }`
+ * and copy one with [toBuilder]. Its readers are internal API (ADR-0026, principle 10).
  *
  * @property tls The client's TLS settings: the server name to verify, trust, ALPN.
  * @property quic The transport settings of the connection.
  */
 public class QuicClientConfig private constructor(
+    @property:InternalKuicksilverApi
     public val tls: TlsConfig,
+    @property:InternalKuicksilverApi
     public val quic: QuicConfig,
     /** Whether this client resumes and sends 0-RTT (ADR-0015); see [Builder.earlyData]. */
-    @property:ExperimentalKuicksilverApi
+    @property:InternalKuicksilverApi
     public val earlyData: EarlyDataState,
     /** Where the endpoint keeps NEW_TOKEN tokens for this client's next connections, or null; see [Builder.tokenStore]. */
-    @property:ExperimentalKuicksilverApi
+    @property:InternalKuicksilverApi
     public val tokenStore: QuicTokenStore?,
 ) {
+    /** A builder pre-filled with these values, to change some of them: `config.toBuilder().apply { quic = other }.build()`. */
+    public fun toBuilder(): Builder =
+        Builder(tls).also {
+            it.quic = quic
+            it.earlyData = earlyData
+            it.tokenStore = tokenStore
+        }
+
     /**
      * The mutable side of [QuicClientConfig].
      *
@@ -95,28 +106,42 @@ public class QuicClientConfig private constructor(
 
 /**
  * Server side of an endpoint: TLS identity plus transport settings. [Builder.build] rejects a TLS config QUIC cannot use, like
- * [QuicClientConfig]; build one with `quicServerConfig(tls) { }`.
+ * [QuicClientConfig]; build one with `quicServerConfig(tls) { }` and copy one with [toBuilder]. Its readers are internal API
+ * (ADR-0026, principle 10).
  *
  * @property tls The server's TLS identity (certificate chain and key), ALPN and client authentication.
  * @property quic The transport settings of every connection the server accepts.
  */
 public class QuicServerConfig private constructor(
+    @property:InternalKuicksilverApi
     public val tls: TlsConfig,
+    @property:InternalKuicksilverApi
     public val quic: QuicConfig,
     /** Whether the server accepts 0-RTT (ADR-0015); see [Builder.acceptEarlyData]. */
-    @property:ExperimentalKuicksilverApi
+    @property:InternalKuicksilverApi
     public val acceptEarlyData: Boolean,
     private val earlyDataContext: ByteArray?,
     /** How long a NEW_TOKEN token this server issues stays valid, or null when it issues none; see [Builder.newTokenLifetime]. */
-    @property:ExperimentalKuicksilverApi
+    @property:InternalKuicksilverApi
     public val newTokenLifetime: Duration?,
     /** NEW_TOKEN tokens the server's replay register holds per lifetime; see [Builder.newTokenReplayCapacity]. */
-    @property:ExperimentalKuicksilverApi
+    @property:InternalKuicksilverApi
     public val newTokenReplayCapacity: Int,
     /** Where this server asks clients to move after the handshake, or null; see [Builder.preferredAddress]. */
-    @property:ExperimentalKuicksilverApi
+    @property:InternalKuicksilverApi
     public val preferredAddress: PreferredAddress?,
 ) {
+    /** A builder pre-filled with these values, to change some of them: `config.toBuilder().apply { quic = other }.build()`. */
+    public fun toBuilder(): Builder =
+        Builder(tls).also {
+            it.quic = quic
+            it.acceptEarlyData = acceptEarlyData
+            it.earlyDataContext = earlyDataContext?.copyOf()
+            it.newTokenLifetime = newTokenLifetime
+            it.newTokenReplayCapacity = newTokenReplayCapacity
+            it.preferredAddress = preferredAddress
+        }
+
     private val early = AtomicReference<ServerEarlyData?>(null)
 
     /**

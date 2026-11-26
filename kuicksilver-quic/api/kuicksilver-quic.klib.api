@@ -1201,14 +1201,7 @@ final class io.kuicksilver.quic/PreferredAddress { // io.kuicksilver.quic/Prefer
 }
 
 final class io.kuicksilver.quic/QuicClientConfig { // io.kuicksilver.quic/QuicClientConfig|null[0]
-    final val earlyData // io.kuicksilver.quic/QuicClientConfig.earlyData|{}earlyData[0]
-        final fun <get-earlyData>(): io.kuicksilver.tls/EarlyDataState // io.kuicksilver.quic/QuicClientConfig.earlyData.<get-earlyData>|<get-earlyData>(){}[0]
-    final val quic // io.kuicksilver.quic/QuicClientConfig.quic|{}quic[0]
-        final fun <get-quic>(): io.kuicksilver.quic/QuicConfig // io.kuicksilver.quic/QuicClientConfig.quic.<get-quic>|<get-quic>(){}[0]
-    final val tls // io.kuicksilver.quic/QuicClientConfig.tls|{}tls[0]
-        final fun <get-tls>(): io.kuicksilver.tls/TlsConfig // io.kuicksilver.quic/QuicClientConfig.tls.<get-tls>|<get-tls>(){}[0]
-    final val tokenStore // io.kuicksilver.quic/QuicClientConfig.tokenStore|{}tokenStore[0]
-        final fun <get-tokenStore>(): io.kuicksilver.quic/QuicTokenStore? // io.kuicksilver.quic/QuicClientConfig.tokenStore.<get-tokenStore>|<get-tokenStore>(){}[0]
+    final fun toBuilder(): io.kuicksilver.quic/QuicClientConfig.Builder // io.kuicksilver.quic/QuicClientConfig.toBuilder|toBuilder(){}[0]
 
     final class Builder { // io.kuicksilver.quic/QuicClientConfig.Builder|null[0]
         constructor <init>(io.kuicksilver.tls/TlsConfig) // io.kuicksilver.quic/QuicClientConfig.Builder.<init>|<init>(io.kuicksilver.tls.TlsConfig){}[0]
@@ -1490,18 +1483,7 @@ final class io.kuicksilver.quic/QuicLbConfig { // io.kuicksilver.quic/QuicLbConf
 }
 
 final class io.kuicksilver.quic/QuicServerConfig { // io.kuicksilver.quic/QuicServerConfig|null[0]
-    final val acceptEarlyData // io.kuicksilver.quic/QuicServerConfig.acceptEarlyData|{}acceptEarlyData[0]
-        final fun <get-acceptEarlyData>(): kotlin/Boolean // io.kuicksilver.quic/QuicServerConfig.acceptEarlyData.<get-acceptEarlyData>|<get-acceptEarlyData>(){}[0]
-    final val newTokenLifetime // io.kuicksilver.quic/QuicServerConfig.newTokenLifetime|{}newTokenLifetime[0]
-        final fun <get-newTokenLifetime>(): kotlin.time/Duration? // io.kuicksilver.quic/QuicServerConfig.newTokenLifetime.<get-newTokenLifetime>|<get-newTokenLifetime>(){}[0]
-    final val newTokenReplayCapacity // io.kuicksilver.quic/QuicServerConfig.newTokenReplayCapacity|{}newTokenReplayCapacity[0]
-        final fun <get-newTokenReplayCapacity>(): kotlin/Int // io.kuicksilver.quic/QuicServerConfig.newTokenReplayCapacity.<get-newTokenReplayCapacity>|<get-newTokenReplayCapacity>(){}[0]
-    final val preferredAddress // io.kuicksilver.quic/QuicServerConfig.preferredAddress|{}preferredAddress[0]
-        final fun <get-preferredAddress>(): io.kuicksilver.quic/PreferredAddress? // io.kuicksilver.quic/QuicServerConfig.preferredAddress.<get-preferredAddress>|<get-preferredAddress>(){}[0]
-    final val quic // io.kuicksilver.quic/QuicServerConfig.quic|{}quic[0]
-        final fun <get-quic>(): io.kuicksilver.quic/QuicConfig // io.kuicksilver.quic/QuicServerConfig.quic.<get-quic>|<get-quic>(){}[0]
-    final val tls // io.kuicksilver.quic/QuicServerConfig.tls|{}tls[0]
-        final fun <get-tls>(): io.kuicksilver.tls/TlsConfig // io.kuicksilver.quic/QuicServerConfig.tls.<get-tls>|<get-tls>(){}[0]
+    final fun toBuilder(): io.kuicksilver.quic/QuicServerConfig.Builder // io.kuicksilver.quic/QuicServerConfig.toBuilder|toBuilder(){}[0]
 
     final class Builder { // io.kuicksilver.quic/QuicServerConfig.Builder|null[0]
         constructor <init>(io.kuicksilver.tls/TlsConfig) // io.kuicksilver.quic/QuicServerConfig.Builder.<init>|<init>(io.kuicksilver.tls.TlsConfig){}[0]

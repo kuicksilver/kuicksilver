@@ -678,7 +678,8 @@ WebTransport sessions, and keep an explicit value.
 
 Pair a `TlsConfig` with a `QuicConfig`. `build()` throws `IllegalArgumentException` for a `TlsConfig` of the wrong role and
 `TlsException.Config` for one QUIC cannot use: TLS 1.2 allowed, an empty `alpn` or `TLS_AES_128_CCM_8_SHA256`. An endpoint
-applies its connection ID length and qlog sink to the `quic` of its server and of each client connection.
+applies its connection ID length and qlog sink to the `quic` of its server and of each client connection. `toBuilder()`
+copies a built one; its readers are internal.
 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
@@ -1113,7 +1114,7 @@ above under the new name only. Behaviour that changed with the defaults is in th
 | `http3Settings { enableQpackDynamicTable() }` | `http3Settings { qpack { enableDynamicTable() } }` | |
 | `http3Settings { grease; maxEarlyPriorityUpdates; glitchProtection }` | `http3Settings { expert { … } }` | experimental; `glitchProtection` delicate |
 | `http3Settings { maxInformationalResponses }` | removed | ignored since 0.2.1: interim responses are bounded by `maxFieldSectionSize` |
-| `config.maxIdleTimeout` (reading a `QuicConfig`, `QuicEndpointConfig`, `Http3Settings`) | `config.toBuilder()` | the readers are internal |
+| `config.maxIdleTimeout` (reading a `QuicConfig`, `QuicEndpointConfig`, `QuicClientConfig`, `QuicServerConfig`, `Http3Settings`) | `config.toBuilder()` | the readers are internal |
 
 ### `application.conf` keys
 

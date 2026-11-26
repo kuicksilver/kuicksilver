@@ -821,10 +821,7 @@ public abstract interface class io/kuicksilver/quic/QlogTrace : java/lang/AutoCl
 }
 
 public final class io/kuicksilver/quic/QuicClientConfig {
-	public final fun getEarlyData ()Lio/kuicksilver/tls/EarlyDataState;
-	public final fun getQuic ()Lio/kuicksilver/quic/QuicConfig;
-	public final fun getTls ()Lio/kuicksilver/tls/TlsConfig;
-	public final fun getTokenStore ()Lio/kuicksilver/quic/QuicTokenStore;
+	public final fun toBuilder ()Lio/kuicksilver/quic/QuicClientConfig$Builder;
 }
 
 public final class io/kuicksilver/quic/QuicClientConfig$Builder {
@@ -1293,12 +1290,7 @@ public abstract interface class io/kuicksilver/quic/QuicPath {
 }
 
 public final class io/kuicksilver/quic/QuicServerConfig {
-	public final fun getAcceptEarlyData ()Z
-	public final fun getNewTokenLifetime-FghU774 ()Lkotlin/time/Duration;
-	public final fun getNewTokenReplayCapacity ()I
-	public final fun getPreferredAddress ()Lio/kuicksilver/quic/PreferredAddress;
-	public final fun getQuic ()Lio/kuicksilver/quic/QuicConfig;
-	public final fun getTls ()Lio/kuicksilver/tls/TlsConfig;
+	public final fun toBuilder ()Lio/kuicksilver/quic/QuicServerConfig$Builder;
 }
 
 public final class io/kuicksilver/quic/QuicServerConfig$Builder {

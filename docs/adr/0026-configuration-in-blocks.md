@@ -54,8 +54,8 @@ The principles, checked by `tools/check/config-table.sh` and review:
    block is allowed only when its type is experimental or it is a separately enabled feature with an ADR of its own
    (h2c, coalescing, CONNECT-UDP, the HTTP/2 repeat-offender penalty); each such exception is listed in
    `tools/check/config-table.spec`.
-10. **Reading a configuration is not user API.** The readers of `QuicConfig`, `QuicEndpointConfig`, `Http3Settings` and
-    `Http2Settings` are `@InternalKuicksilverApi`; users build with the DSL and copy with `toBuilder()`. `TlsConfig`
+10. **Reading a configuration is not user API.** The readers of `QuicConfig`, `QuicEndpointConfig`, `QuicClientConfig`,
+    `QuicServerConfig`, `Http3Settings` and `Http2Settings` are `@InternalKuicksilverApi`; users build with the DSL and copy with `toBuilder()`. `TlsConfig`
     keeps public readers: `TrustConfig.Custom` implementations read them.
 11. **No shims.** Old names are removed. The cost of migration is carried by the migration tables of the CHANGELOG and
     of `docs/guide/configuration.md`, by `tools/migrate/config-0.3.py`, and by start-up errors for old keys.
@@ -241,3 +241,8 @@ The design left these cases open or met them only in the code; each was decided 
   itself (listeners, TCP, HTTP/1.1, HTTP/2, the TLS file watchers, the HTTP/3 endpoints); a warning about one call's answer
   (a final 1xx over HTTP/2, a CONNECT answered over HTTP/1.1) stays in the application's log next to the application's own
   lines.
+- **`QuicClientConfig` and `QuicServerConfig` follow principle 10.** Their readers (`tls`, `quic`, `earlyData`,
+  `tokenStore`; `acceptEarlyData`, `newTokenLifetime`, `newTokenReplayCapacity`, `preferredAddress`) had stayed public,
+  the only configuration classes besides `TlsConfig` to keep them. They are `@InternalKuicksilverApi` now, and each class
+  gains a stable `toBuilder()`, as `QuicConfig` and `QuicEndpointConfig` have, which copies every value, the server's
+  `earlyDataContext` included. `TlsConfig` keeps its public readers for `TrustConfig.Custom`.

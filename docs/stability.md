@@ -275,9 +275,10 @@ experimental.
 
 Stabilized in 0.3.0 with the configuration: `KuicksilverLogger` (`Default`, the platform's logger; `None`, `Stderr`,
 `platform(level)`, `stderr(level)`) and `LogLevel`, `Http3Discovery`, `ProxyProtocolConfig` and its builder,
-`KuicksilverPlainConnector`, `FileAltSvcStore(file)` on the JVM and Android, `QuicConfig.toBuilder()` and
-`QuicEndpointConfig.toBuilder()`. The readers of `QuicConfig`, `QuicEndpointConfig`, `Http3Settings` and `Http2Settings`
-(their properties) are internal: build a configuration with its DSL and change a copy with `toBuilder()`. `TlsConfig`
+`KuicksilverPlainConnector`, `FileAltSvcStore(file)` on the JVM and Android, `QuicConfig.toBuilder()`,
+`QuicEndpointConfig.toBuilder()`, `QuicClientConfig.toBuilder()` and `QuicServerConfig.toBuilder()`. The readers of
+`QuicConfig`, `QuicEndpointConfig`, `QuicClientConfig`, `QuicServerConfig`, `Http3Settings` and `Http2Settings` (their
+properties) are internal: build a configuration with its DSL and change a copy with `toBuilder()`. `TlsConfig`
 keeps public readers, which `TrustConfig.Custom` implementations use. `RateLimit`, `RaceHeadStart`, `KnownServers` and
 `WebTransportProxyPolicy` are only used in experimental blocks and are experimental.
 
