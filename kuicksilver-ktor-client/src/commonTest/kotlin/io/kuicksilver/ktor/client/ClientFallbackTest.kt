@@ -472,6 +472,62 @@ class ClientFallbackTest {
         }
 
     /**
+     * The first alternative marked broken on a network is one Warn line (ADR-0026), which the default logger shows; a
+     * second mark on the same network adds none.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    @Test
+    fun firstBrokenAlternativeIsOneWarning() =
+        h3Test {
+            kotlinx.coroutines.coroutineScope {
+                val refuseWith = kotlin.concurrent.atomics.AtomicReference<Long?>(null)
+                val (server, ep, port) = originWithRefusingH3(refuseWith)
+                val origin = "https://127.0.0.1:$port"
+                val warnings = kotlin.concurrent.atomics.AtomicReference(emptyList<String>())
+                val log =
+                    object : io.kuicksilver.quic.KuicksilverLogger {
+                        override fun isEnabled(level: io.kuicksilver.quic.LogLevel) = level >= io.kuicksilver.quic.LogLevel.Warn
+
+                        override fun log(
+                            level: io.kuicksilver.quic.LogLevel,
+                            message: String,
+                            cause: Throwable?,
+                        ) {
+                            if (!message.startsWith("HTTP/3 to ")) return
+                            while (true) {
+                                val l = warnings.load()
+                                if (warnings.compareAndSet(l, l + message)) break
+                            }
+                        }
+                    }
+                try {
+                    testClient(
+                        Http3Discovery.Auto,
+                        engine = {
+                            http3 { expert { raceHeadStart = RaceHeadStart.NoRace } }
+                            observability { logger = log }
+                        },
+                    ).use { c ->
+                        c.get("$origin/") // learns h3
+                        assertEquals(HttpProtocolVersion.HTTP_3_0, c.get("$origin/").version)
+                        val d = assertNotNull(c.get("$origin/close-no-error").kuicksilverDiagnostics)
+                        assertTrue(d.markedBroken, "$d")
+                        val line = warnings.load().single()
+                        assertTrue(line.startsWith("HTTP/3 to $origin failed ("), line)
+                        assertTrue(line.endsWith("; using TCP for 5m. See response.kuicksilverDiagnostics"), line)
+                        val engine = c.engine as KuicksilverEngine
+                        assertNull(engine.brokenAltSvc.markBroken(origin, "127.0.0.1:$port"), "a second mark on the network")
+                        assertEquals(1, warnings.load().size, "one warning per network")
+                    }
+                } finally {
+                    ep.close()
+                    server.stop(100, 500)
+                    coroutineContext[kotlinx.coroutines.Job]?.children?.forEach { it.cancel() }
+                }
+            }
+        }
+
+    /**
      * The request's own fallback path: the server rejects the request unprocessed (H3_REQUEST_REJECTED, as for a GOAWAY,
      * RFC 9114 section 5.2), the engine repeats it on a new connection, and the server refuses that one with
      * CONNECTION_REFUSED. The call falls back with `fallback = Refused`, the alternative is not marked broken, and once

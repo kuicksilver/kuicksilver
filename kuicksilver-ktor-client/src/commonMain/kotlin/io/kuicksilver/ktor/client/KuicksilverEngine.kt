@@ -60,6 +60,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.CoroutineContext
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
@@ -259,6 +260,29 @@ internal class KuicksilverEngine(
 
     /** Broken alternatives and networks where QUIC worked; internal for tests. */
     internal val brokenAltSvc = BrokenAltSvc(monotonicMillis(), ::getTimeMillis) // ends on either: wall steps, deep sleep
+
+    /**
+     * One Warn line when the first alternative is marked broken on a network (ADR-0026): the per-call line of the protocol
+     * choice is Info, which the default logger leaves out, so an application would otherwise never learn that it lost
+     * HTTP/3. [backoffMillis] is what [BrokenAltSvc.markBroken] returned: null for every later mark on the same network.
+     */
+    private fun warnFirstBroken(
+        origin: String,
+        reason: FallbackReason,
+        backoffMillis: Long?,
+    ) {
+        backoffMillis ?: return
+        val logger = events.logger
+        try {
+            if (!logger.isEnabled(LogLevel.Warn)) return
+            logger.log(
+                LogLevel.Warn,
+                "HTTP/3 to $origin failed ($reason); using TCP for ${backoffMillis.milliseconds}. See response.kuicksilverDiagnostics",
+            )
+        } catch (_: Throwable) {
+            // a failing logger is never the call's failure
+        }
+    }
 
     /** Races HTTP/3 against TCP with the configured head start (`http3 { expert { raceHeadStart } }`). */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -1120,7 +1144,8 @@ internal class KuicksilverEngine(
                         )
                     } else if (outcome !is CancellationException && !isTransientRefusal(outcome) && !resumptionOnly(outcome)) {
                         // a refusal (CONNECTION_REFUSED) is no failure of the alternative: the next call tries it again
-                        brokenAltSvc.markBroken(origin, alt, classifyH3Failure(outcome) ?: FallbackReason.Other)
+                        val reason = classifyH3Failure(outcome) ?: FallbackReason.Other
+                        warnFirstBroken(origin, reason, brokenAltSvc.markBroken(origin, alt, reason))
                         events.emit("altSvcMarkedBroken") { altSvcMarkedBroken(origin, alt) }
                     }
                 }
@@ -1580,7 +1605,7 @@ internal class KuicksilverEngine(
             } catch (e: Throwable) {
                 if (!isTransientRefusal(e) && !resumptionOnly(e)) {
                     val reason = classifyH3Failure(e) ?: FallbackReason.Other
-                    altSvcLock.withLock { brokenAltSvc.markBroken(origin, alt, reason) }
+                    warnFirstBroken(origin, reason, altSvcLock.withLock { brokenAltSvc.markBroken(origin, alt, reason) })
                     events.emit("altSvcMarkedBroken") { altSvcMarkedBroken(origin, alt) }
                 }
                 throw EndpointUnreachable(e)
@@ -1780,7 +1805,11 @@ internal class KuicksilverEngine(
         alt: String,
     ) {
         if (!stall.claim("$origin|$alt")) return
-        altSvcLock.withLock { brokenAltSvc.markBroken(origin, alt, FallbackReason.QuicStalled) }
+        warnFirstBroken(
+            origin,
+            FallbackReason.QuicStalled,
+            altSvcLock.withLock { brokenAltSvc.markBroken(origin, alt, FallbackReason.QuicStalled) },
+        )
         events.emit("altSvcMarkedBroken") { altSvcMarkedBroken(origin, alt) }
     }
 
@@ -1811,7 +1840,7 @@ internal class KuicksilverEngine(
         ) {
             val origin = originKey(data.url)
             val alt = "${target.host}:${target.port}"
-            altSvcLock.withLock { brokenAltSvc.markBroken(origin, alt, reason) }
+            warnFirstBroken(origin, reason, altSvcLock.withLock { brokenAltSvc.markBroken(origin, alt, reason) })
             d.markedBroken = true
             events.emit("altSvcMarkedBroken") { altSvcMarkedBroken(origin, alt) }
         }

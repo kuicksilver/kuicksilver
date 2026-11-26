@@ -1529,6 +1529,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.BrokenAltSvcTe
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.BrokenAltSvcTest.stallBackoffSurvivesAWorkingHandshake
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.BrokenAltSvcTest.stallBackoffWalksBackDown
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.BrokenAltSvcTest.workingResetsBackoff
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.BrokenAltSvcWarningTest.onlyTheFirstMarkOnANetworkIsReported
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.CleartextPolicyHostTest.aMappedIpv4AddressIsAskedAboutAsItsDottedQuad
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.CleartextPolicyHostTest.leadingZerosAreDropped
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.CleartextPolicyHostTest.namesAndDottedQuadsStayAsTheyAre
@@ -1747,6 +1748,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEventLis
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientFallbackTest.blockedUdpFallsBackAfterHardDelayAndMarksBroken
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientFallbackTest.closeAfterGoAwayDoesNotMarkBroken
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientFallbackTest.connectionRefusedFallsBackWithoutMarkingBroken
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientFallbackTest.firstBrokenAlternativeIsOneWarning
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientFallbackTest.h3FailureWithH1SuccessMarksBroken
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientFallbackTest.idempotentRetriedOnH1
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientFallbackTest.negative_closeWithoutGoAwayMarksBroken
