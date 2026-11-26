@@ -39,7 +39,9 @@ import kotlin.time.TestTimeSource
  * and the backoff for an address whose connections keep ending in ENHANCE_YOUR_CALM. Handlers wait for cancellation (no
  * timers): the bound on running handlers is the engine's, not the test's pace. Whether the client still reads the
  * GOAWAY depends on the race between it and the TCP reset its unread frames cause at the close, so the server's own count
- * of connections it ended in a flood defence is what each test checks.
+ * of connections it ended in a flood defence is what each test checks. A client that floods reads the server's SETTINGS
+ * and acknowledges them first ([prefaceAcknowledged]): unacknowledged, they would end a flood that a slow host takes more
+ * than 10 s over with SETTINGS_TIMEOUT before any flood limit.
  */
 class ServerH2FloodTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
@@ -105,16 +107,17 @@ class ServerH2FloodTest {
     }
 
     /**
-     * [flood] one frame at a time, [pause] apart on the real clock: a client slower than a timer of the server, which no
-     * event can stand for (tools/check/test-sleeps.allow).
+     * [flood] one frame at a time, [pause] apart on the real clock, until [ended] (the server ended the connection): a
+     * client slower than a timer of the server, which no event can stand for (tools/check/test-sleeps.allow).
      */
     private suspend fun RawH2Client.pacedFlood(
         count: Int,
         pause: Duration,
+        ended: () -> Boolean,
         frame: (Int) -> ByteArray,
     ): Int {
         var sent = 0
-        while (sent < count) {
+        while (sent < count && !ended()) {
             val one = batchOf(sent, 1, frame)
             if (runCatching { write(one) }.isFailure) return sent
             sent++
@@ -161,8 +164,8 @@ class ServerH2FloodTest {
      * SETTINGS_TIMEOUT (RFC 9113 section 6.5.3) after `settingsAckTimeout` (10 s) whenever the server takes longer than that
      * to reach a flood limit, as on a slow simulator, instead of with the flood defence the test is about.
      */
-    private suspend fun RawH2Client.prefaceAcknowledged() {
-        preface()
+    private suspend fun RawH2Client.prefaceAcknowledged(vararg settings: Pair<Int, Long>) {
+        preface(*settings)
         assertNotNull(await { it.type == RawFrame.SETTINGS && it.flags and 0x1 == 0 }, "the server's SETTINGS")
     }
 
@@ -225,8 +228,9 @@ class ServerH2FloodTest {
     /**
      * MadeYouReset as a slow machine runs it, the CI failure this guards against (iosSimulatorArm64): one request every
      * 30 ms, so the handlers mostly end in between and the requests are accepted and reset, and the flood takes longer
-     * than the server's `settingsAckTimeout` (1 s here). Unacknowledged SETTINGS ended such a flood with SETTINGS_TIMEOUT (0x4) before
-     * any flood limit; acknowledged ([prefaceAcknowledged]), it ends with ENHANCE_YOUR_CALM at the glitch budget.
+     * than the server's `settingsAckTimeout` (1 s here): about 1.5 s to the budget's 51st request, where the client stops
+     * once the server counted the flood's end. Unacknowledged SETTINGS ended such a flood with SETTINGS_TIMEOUT (0x4)
+     * before any flood limit; acknowledged ([prefaceAcknowledged]), it ends with ENHANCE_YOUR_CALM at the glitch budget.
      */
     @Test fun negative_madeYouResetSlowerThanTheSettingsTimeoutEndsCalm() =
         madeYouResetFlood(4 * MYR_GLITCHES, pause = 30.milliseconds, settingsAckTimeout = 1.seconds)
@@ -243,7 +247,11 @@ class ServerH2FloodTest {
             RawH2Client.connect(port).use { raw ->
                 raw.prefaceAcknowledged()
                 val sent =
-                    if (pause.isPositive()) raw.pacedFlood(count, pause, ::madeYouReset) else raw.flood(count, frame = ::madeYouReset)
+                    if (pause.isPositive()) {
+                        raw.pacedFlood(count, pause, { server.engine.h2FloodEnds.value > 0 }, ::madeYouReset)
+                    } else {
+                        raw.flood(count, frame = ::madeYouReset)
+                    }
                 raw.goAwaySeen()?.let { assertEquals(calm, it.errorCode, "GOAWAY after $sent requests") }
             }
             withTimeout(10.seconds) { server.engine.h2FloodEnds.first { it == 1L } }
@@ -261,45 +269,19 @@ class ServerH2FloodTest {
      * next request goes out, so the server's reset count does not depend on how it batches its reads or on how fast
      * handlers end. Each of our resets is a glitch: the 50 of the budget are answered with RST_STREAM (the client's preface
      * SETTINGS takes none), and the request that would take one more is answered with GOAWAY(ENHANCE_YOUR_CALM) instead,
-     * never later. The client writes only after an answer, so nothing it sends can arrive after the server closed. Requests
-     * refused because handlers of reset streams still run (REFUSED_STREAM) are not the client's errors (those streams are
-     * closed for the protocol) and take nothing from the budget.
+     * never later. The client writes only after an answer and after the core freed the stream, so nothing it sends can
+     * arrive after the server closed and no request is refused (REFUSED_STREAM, while a reset stream's handler still
+     * holds it, is not the client's error and would take nothing from the budget).
      */
     @Test fun negative_madeYouResetSpendsTheGlitchBudget() =
         serverTest {
             val handlers = Handlers()
             val (server, port) = floodServer(handlers) { smallGlitchBudget() }
             try {
-                RawH2Client.connect(port).use { raw ->
-                    raw.prefaceAcknowledged()
-                    var resets = 0
-                    var refused = 0
-                    var goAway: RawFrame? = null
-                    var i = 0
-                    while (goAway == null && i < 2_000) {
-                        val id = 1 + 2 * i
-                        raw.write(madeYouReset(i))
-                        val answer =
-                            assertNotNull(
-                                raw.await { it.type == RawFrame.GOAWAY || (it.type == RawFrame.RST_STREAM && it.stream == id) },
-                                "no answer to stream $id",
-                            )
-                        if (answer.type == RawFrame.GOAWAY) {
-                            goAway = answer
-                        } else {
-                            when (answer.errorCode) {
-                                0x1L -> resets++
-                                0x7L -> refused++
-                                else -> error("stream $id reset with ${answer.errorCode}")
-                            }
-                        }
-                        i++
-                    }
-                    val end = assertNotNull(goAway, "no GOAWAY after $resets resets and $refused refusals")
-                    assertEquals(calm, end.errorCode, "GOAWAY after $resets resets and $refused refusals")
-                    // the whole budget: the client's preface SETTINGS takes none
-                    assertEquals(MYR_GLITCHES, resets, "resets before the GOAWAY ($refused refused)")
-                }
+                val r = RawH2Client.connect(port).use { raw -> raw.madeYouResetInStep(server, handlers, window = 1, max = 2_000) }
+                assertEquals(calm, r.goAway.errorCode, "$r")
+                assertEquals(0, r.refused, "no request refused between rounds: $r")
+                assertEquals(MYR_GLITCHES, r.resets, "the whole budget, the client's preface SETTINGS takes none: $r")
                 withTimeout(10.seconds) { server.engine.h2FloodEnds.first { it == 1L } }
                 withTimeout(10.seconds) { handlers.running.first { it == 0 } }
                 assertTrue(handlers.maxRunning.value <= MYR_STREAMS, "handlers at once: ${handlers.maxRunning.value}")
@@ -308,6 +290,85 @@ class ServerH2FloodTest {
                 server.stop(100, 500)
             }
         }
+
+    /**
+     * MadeYouReset in step with the default limits (glitch budget 10 000, 100 streams), so they stay covered end to end:
+     * rounds of 50 requests, each round's answers read and its streams freed by the core before the next, so no request is
+     * refused for streams our handlers still hold and none takes from the budget but by its reset. The server's clock stands still
+     * (`h2ClockForTest`), so the budget's refill (330 per second) gives nothing however slow the host: the connection ends
+     * with ENHANCE_YOUR_CALM after exactly the burst of resets.
+     */
+    @Test fun negative_madeYouResetSpendsTheDefaultGlitchBudget() =
+        serverTest {
+            val handlers = Handlers()
+            val defaults = io.kuicksilver.http2.Http2Settings()
+            val (server, port) = floodServer(handlers) { h2ClockForTest = { 0L } }
+            try {
+                val r = RawH2Client.connect(port).use { raw -> raw.madeYouResetInStep(server, handlers, window = 50, max = 20_000) }
+                assertEquals(calm, r.goAway.errorCode, "$r")
+                assertEquals(0, r.refused, "no request refused between rounds: $r")
+                assertEquals(defaults.glitchBurst, r.resets, "the whole burst, no refill: $r")
+                withTimeout(10.seconds) { server.engine.h2FloodEnds.first { it == 1L } }
+                withTimeout(10.seconds) { handlers.running.first { it == 0 } }
+                assertTrue(handlers.maxRunning.value <= defaults.maxConcurrentStreams, "handlers at once: ${handlers.maxRunning.value}")
+                assertServes(port)
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /** What [madeYouResetInStep] saw: our resets for the client's error, refusals, and the GOAWAY that ended it. */
+    private data class InStep(
+        val resets: Int,
+        val refused: Int,
+        val requests: Int,
+        val goAway: RawFrame,
+    ) {
+        override fun toString() = "$resets resets and $refused refusals of $requests requests, GOAWAY ${goAway.errorCode}"
+    }
+
+    /**
+     * MadeYouReset requests in rounds of [window], at most [max]: each round's answers (RST_STREAM for each of its streams)
+     * are read, its handlers ended and its streams freed by the core of [server]'s connection (`openRequests` back at 0: a
+     * handler that returned has not released its stream yet, and a request that comes before would be refused), before
+     * the next round goes out, until the server's GOAWAY; the client then has nothing in flight that could arrive after the
+     * server closed. The server's SETTINGS are acknowledged first.
+     */
+    private suspend fun RawH2Client.madeYouResetInStep(
+        server: Server,
+        handlers: Handlers,
+        window: Int,
+        max: Int,
+    ): InStep {
+        prefaceAcknowledged()
+        var resets = 0
+        var refused = 0
+        var sent = 0
+        while (sent < max) {
+            val first = sent
+            write(batchOf(first, window, ::madeYouReset))
+            sent += window
+            val waiting = HashSet<Int>()
+            for (i in first until sent) waiting += 1 + 2 * i
+            while (waiting.isNotEmpty()) {
+                val f =
+                    assertNotNull(
+                        await { it.type == RawFrame.GOAWAY || (it.type == RawFrame.RST_STREAM && it.stream in waiting) },
+                        "no answer to streams $waiting after $resets resets and $refused refusals",
+                    )
+                if (f.type == RawFrame.GOAWAY) return InStep(resets, refused, sent, f)
+                waiting -= f.stream
+                when (f.errorCode) {
+                    0x1L -> resets++
+                    0x7L -> refused++
+                    else -> error("stream ${f.stream} reset with ${f.errorCode}")
+                }
+            }
+            withTimeout(10.seconds) { handlers.running.first { it == 0 } }
+            withTimeout(10.seconds) { liveConnection(server).openRequests.first { it == 0 } }
+        }
+        error("no GOAWAY after $resets resets and $refused refusals of $sent requests")
+    }
 
     /**
      * The CONTINUATION flood (CVE-2023-45288, CVE-2024-27316): a field block that never ends. The connection ends after
@@ -324,7 +385,7 @@ class ServerH2FloodTest {
             val (server, port) = floodServer(handlers)
             try {
                 RawH2Client.connect(port).use { raw ->
-                    raw.preface()
+                    raw.prefaceAcknowledged()
                     raw.write(RawH2Client.frame(RawFrame.HEADERS, 0x1, 1, RawH2Client.block(RawH2Client.get("/hold"))))
                     raw.flood(1_000_000, batch = 10_000) { RawH2Client.frame(RawFrame.CONTINUATION, 0, 1, byteArrayOf(0)) }
                     withTimeout(10.seconds) { server.engine.h2FloodEnds.first { it == 1L } }
@@ -380,7 +441,7 @@ class ServerH2FloodTest {
             try {
                 for ((k, flood) in floods.withIndex()) {
                     RawH2Client.connect(port).use { raw ->
-                        raw.preface()
+                        raw.prefaceAcknowledged()
                         raw.flood(100_000, batch = 1_000, frame = flood.second)
                         withTimeout(10.seconds) { server.engine.h2FloodEnds.first { it == k + 1L } }
                     }
@@ -404,12 +465,12 @@ class ServerH2FloodTest {
             val (server, port) = floodServer(Handlers())
             try {
                 RawH2Client.connect(port).use { raw ->
-                    raw.preface()
+                    raw.prefaceAcknowledged()
                     raw.flood(100_000, batch = 1_000) { RawH2Client.frame(RawFrame.WINDOW_UPDATE, 0, 0, byteArrayOf(0, 0, 0, 1)) }
                     withTimeout(10.seconds) { server.engine.h2FloodEnds.first { it == 1L } }
                 }
                 RawH2Client.connect(port).use { raw ->
-                    raw.preface()
+                    raw.prefaceAcknowledged()
                     raw.flood(40_000, batch = 1_000) { RawH2Client.frame(RawFrame.WINDOW_UPDATE, 0, 0, byteArrayOf(0, 1, 0, 0)) }
                     raw.goAwaySeen()?.let { assertEquals(0x3L, it.errorCode) }
                 }
@@ -676,7 +737,7 @@ class ServerH2FloodTest {
             val (server, port) = floodServer(handlers)
             try {
                 RawH2Client.connect(port).use { raw ->
-                    raw.preface()
+                    raw.prefaceAcknowledged()
                     var next = 1
                     for (round in 1..10) {
                         raw.flood(30, batch = 30) {
@@ -708,9 +769,12 @@ class ServerH2FloodTest {
             }
         }
 
-    /** The preface with the largest stream window (SETTINGS_INITIAL_WINDOW_SIZE) and connection window flow control allows. */
+    /**
+     * The preface with the largest stream window (SETTINGS_INITIAL_WINDOW_SIZE) and connection window flow control allows,
+     * the server's SETTINGS acknowledged ([prefaceAcknowledged]).
+     */
     private suspend fun RawH2Client.wideOpenPreface() {
-        preface(0x4 to 0x7fff_ffffL)
+        prefaceAcknowledged(0x4 to 0x7fff_ffffL)
         write(RawH2Client.frame(RawFrame.WINDOW_UPDATE, 0, 0, byteArrayOf(0x7f, 0xff.toByte(), 0, 0)))
     }
 
