@@ -13,7 +13,7 @@ every rule and every known blind spot of the checks, is in [process.md](process.
 | Check | What it covers | Where | When it runs |
 |---|---|---|---|
 | [RFC conformance tables](#rfc-conformance-tables) | one row per requirement, with the tests that pin it | [rfc-compliance.md](spec/rfc-compliance.md), [spec/rfc/](spec/rfc/) | every change; format and test names checked by scripts |
-| [Interop](#interop) | six QUIC stacks, h2spec, other HTTP engines, browsers | [interop.md](spec/interop.md), `tools/interop/` | release gate (QUIC Interop Runner); weekly in CI |
+| [Interop](#interop) | six QUIC stacks, h2spec, h3spec, the Autobahn\|Testsuite, other HTTP engines, browsers | [interop.md](spec/interop.md), `tools/interop/` | release gate (QUIC Interop Runner); weekly in CI |
 | [Public HTTP/3 servers](#public-http3-servers) | the client against six public deployments, each a different QUIC implementation | [`public-h3.yml`](../.github/workflows/public-h3.yml), `PublicH3Main` | weekly in CI, by hand |
 | [Fuzzing](#fuzzing) | 34 targets: every parser and the QUIC, HTTP/3 and HTTP/2 connection state machines | `tools/fuzz/` | weekly in CI; the corpus in every gate |
 | [Planted bugs](#planted-bugs-instead-of-mutation-testing) | the fuzz reproducers and HTTP/1.1 and HTTP/3 targets still catch the bugs they found | `tools/fuzz/plants/`, `tools/fuzz/reproducers.txt` | weekly in CI, by hand |
@@ -49,6 +49,8 @@ only for a peer that breaks it are listed with their removal condition in [compa
 | QUIC Interop Runner, JVM image | msquic, ngtcp2, picoquic, quic-go, quiche, quinn; Kuicksilver as server and as client; 21 cases | 227 of the 237 cells both sides support are green; every required cell green | 2026-10-13, 0.2.0 code, runner `740c05a` | [interop.md](spec/interop.md#interop-matrix-020-quic-interop-runner-740c05a-2026-10-13) |
 | QUIC Interop Runner, Kotlin/Native `linuxArm64` image | the same six, both roles, 9 cases | 96 of 99 | same | same |
 | h2spec 2.6.0, the HTTP/2 server | JVM, `macosArm64` and `linuxX64` servers | 146 of 146 cases on each | 2026-11-06 (`linuxX64`: 2026-11-14) | [interop.md, h2spec](spec/interop.md#h2spec-the-http2-server-h2spec-260-2026-11-06) |
+| h3spec v0.1.15, the HTTP/3 server | JVM, `macosArm64` and `linuxX64` servers | 85 of 86 cases on each; the 86th is h3spec's error (RFC 9114 §7.1 asks for the H3_FRAME_ERROR the server sends) | 2026-11-26 | [interop.md, h3spec](spec/interop.md#h3spec-the-http3-server-h3spec-v0115-2026-11-26) |
+| Autobahn\|Testsuite 25.10.1, WebSockets (RFC 6455, RFC 7692) | the server and the client engine: `linuxX64` both and the JVM client in the release gate, all four in hosted CI (the JVM server only there: Docker Desktop drops an occasional connect to the host) | 517 cases each way; every one OK or INFORMATIONAL but those the script records with the RFC text that allows their verdict (Ktor's session answering a Close before the application's echo, the optional `*_max_window_bits` parameters); 2 bugs of ours found and fixed | 2026-11-26 | [interop.md, Autobahn](spec/interop.md#autobahntestsuite-the-websocket-server-and-client-25101-2026-11-26) |
 | Engine interop | Ktor's Netty (HTTP/1.1, HTTP/2, HTTP/3) and CIO engines, plain Netty, OkHttp, the JDK's HttpClient, Netty's HTTP/3 client; 19 HTTP scenarios per pair and a WebSocket suite | every pair passes (where a peer behaves differently, the test asserts our side and the page describes the peer's); 3 bugs of ours found and fixed | 2026-11-13 | [interop.md, Engine interop](spec/interop.md#engine-interop-the-ktor-engines-against-other-http-stacks-jvm-2026-11-13) |
 | WebSockets over HTTP/2 (RFC 8441) | Node.js 24 (nghttp2) both ways, Chrome 157 | pass | 2026-11-12 | [interop.md](spec/interop.md#websockets-over-http2-rfc-8441-2026-11-12) |
 | WebTransport | Chrome 155 (headless, automated), Firefox 158 (by hand) | pass; Safari not run yet | 2026-10-22 and 2026-10-23 | [interop.md](spec/interop.md#interop-webtransport-browsers-2026-10-22-and-2026-10-23) |
@@ -60,12 +62,14 @@ makes sure every peer image is really present, so a peer that cannot run fails t
 red without a cause. The release gate runs both images against all six peers (`--with-interop`), and hosted CI runs the
 runner weekly. The engine interop bench, `kuicksilver-engine-interop`, runs in every gate and in CI. The server engine
 also runs Ktor's own engine contract suites (adapted from Ktor 3.6.0) in its common tests, so on every target.
+h3spec (`tools/interop/h3spec.sh`) and the Autobahn|Testsuite (`tools/interop/autobahn.sh`) run in every gate and in
+hosted CI, as h2spec does (the JVM WebSocket server only in hosted CI, on Linux): each fails on a case that does not pass, except the cases it lists with the RFC text that
+allows them, and on a change in the number of cases. Their durations in hosted CI are to be recorded after the first run there
+([interop.md](spec/interop.md#autobahntestsuite-the-websocket-server-and-client-25101-2026-11-26)).
 
 - TODO(measure): the runner matrix on the 0.3.0 code: `tools/ci/local-matrix.sh --with-interop` (or
   `tools/interop/run-local.sh` per image), then the tables of [interop.md](spec/interop.md) and
   [reliability.md](reliability.md) (`tools/report/reliability.sh`).
-- TODO(measure): h3spec and the Autobahn WebSocket suite, planned for 0.3.0 ([roadmap](roadmap.md#feature-parity-decided-2026-11-16));
-  no script in the repository runs them yet.
 
 ## Public HTTP/3 servers
 
@@ -223,9 +227,9 @@ refuses anything else ([release.md](release.md)). `tools/ci/local-matrix.sh --dr
 
 | Steps | Count |
 |---|---|
-| default | 76 |
-| for a release, with `--with-interop --with-windows` | 81 |
-| with `--with-browser` too (Chrome WebTransport) | 82 |
+| default | 79 |
+| for a release, with `--with-interop --with-windows` | 84 |
+| with `--with-browser` too (Chrome WebTransport) | 85 |
 
 | Platform or area | What runs |
 |---|---|
@@ -234,7 +238,7 @@ refuses anything else ([release.md](release.md)). `tools/ci/local-matrix.sh --dr
 | JVM on Windows (release run) | every module's suite in the Windows 11 VM against the mingw-w64 dll |
 | Android | the AAR, its size gate, 16 KiB page alignment, R8 keep rules, the device tests on the emulator, connection migration against a server on the host; the changed modules' device tests on an API 24 emulator |
 | macOS and iOS | `macosArm64` tests, every module's `iosSimulatorArm64` tests on the simulator, `iosArm64` compiled |
-| Linux (Kotlin/Native) | the `linuxX64` and `linuxArm64` test executables of every module in Docker, glibc floors, h2spec, the deployment guide's commands with `curl --http3-only` |
+| Linux (Kotlin/Native) | the `linuxX64` and `linuxArm64` test executables of every module in Docker, glibc floors, h2spec, h3spec and the Autobahn\|Testsuite, the deployment guide's commands with `curl --http3-only` |
 | Windows (Kotlin/Native) | the `mingwX64` test executables are linked here and run in hosted CI |
 | C (`ksl`) | the C tests under ASan and UBSan, and under ThreadSanitizer, on macOS; on Linux x64 and arm64 in Docker |
 | Simulation | 200 seeded QUIC transfers through the network simulator on random links (delay, loss, reordering, MTU) |
@@ -248,7 +252,8 @@ The list of what each step does is in [process.md, stage 5](process.md#5-integra
 
 [`build.yml`](../.github/workflows/build.yml) runs the counterpart of the gate on GitHub's runners on every push and
 pull request to `main` and `release/**`, weekly, and by hand: lint; Linux x64 and arm64 (C tests, JVM suites, system
-OpenSSL); the Kotlin/Native Linux executables; Windows (the `mingwX64` test executables, the C tests, the JVM suites);
+OpenSSL; on x64 the Autobahn|Testsuite against the JVM WebSocket server and client); the Kotlin/Native Linux executables
+(with h2spec, h3spec and the Autobahn|Testsuite against the linuxX64 ones); Windows (the `mingwX64` test executables, the C tests, the JVM suites);
 Apple (ABI dumps, ASan C tests, JVM suites, the double build, `macosArm64` and `iosSimulatorArm64` suites); Android on
 API 24 and 35 emulators; JDK 17 and 25; the jar with all five JNI libraries; a sample built from a local publication;
 and, weekly, the QUIC Interop Runner. The other workflows: [`codeql.yml`](../.github/workflows/codeql.yml) (CodeQL over

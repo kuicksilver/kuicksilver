@@ -27,6 +27,7 @@ import io.ktor.utils.io.close
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writePacket
 import io.kuicksilver.ktor.network.DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE
+import io.kuicksilver.ktor.network.awaitWebSocketOutputEnd
 import io.kuicksilver.ktor.network.fieldListElements
 import io.kuicksilver.ktor.network.isWebSocketFrameCut
 import io.kuicksilver.ktor.server.ServerWebSocket
@@ -121,8 +122,12 @@ internal class H1Response(
             val upgradedJob = upgrade.upgrade(upgradedInput, upgradedOutput, engineDispatcher, userDispatcher)
             upgradedJob.join()
         } finally {
-            // the frame guard stops first, then the extension's state is freed (the guard inflates with a codec of its own, so
-            // the order is for clarity, not safety)
+            // the frame guard stops after the held end below, then the extension's state is freed (the guard inflates with a
+            // codec of its own, so that order is for clarity, not safety)
+            // the transport end the frame guard held for Pongs after the server's Close is ended first, while the guard
+            // still reads the client's Pings and Close (RFC 6455 section 5.5.2): a handler that returns right after its
+            // Close (a raw session) leaves that to the engine
+            sessionOutput?.awaitWebSocketOutputEnd()
             guard.cancel()
             webSocket?.done()
             if (sessionOutput?.isWebSocketFrameCut() == true) {

@@ -23,6 +23,16 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   the imports and a map, and its old anchors lead to the new places. Troubleshooting covers `HttpClient()` picking
   another engine, a private key that is not PKCS#8 and configuration refusals at start. Every Kotlin block of the new
   pages is compiled; the quickstart and migration ones with no opt-in.
+- Conformance suites in the release gate and in hosted CI (`build.yml`, jobs `linux-native` and `linux`), beside
+  h2spec: h3spec v0.1.15 against the HTTP/3 server (`tools/interop/h3spec.sh`; 85 of 86 cases pass, the 86th is
+  h3spec's error, recorded with RFC 9114 section 7.1) and the Autobahn|Testsuite 25.10.1 against the WebSocket server
+  and client of both Ktor engines (`tools/interop/autobahn.sh`; 517 cases each way, the JVM server in hosted CI only;
+  it found that bad UTF-8 in a text frame was failed only at the end of the frame and that a Pong could follow the
+  echo of a message, both fixed below). Each script pins its tool (h3spec's release binaries by sha256, the Autobahn
+  image by digest, both checked by `tools/check/pins.sh`), records the number of cases, and fails on any case that
+  does not pass except the ones it lists with the RFC text that allows them; the verification pages show their counts.
+  Their server and client are one executable of `kuicksilver-soak` (`conformanceMain`). Results in
+  `docs/spec/interop.md`. The local gate has two more steps (82 by default, 87 for a release).
 - WebTransport (experimental): `WebTransportSession.maxStreamErrorCode`, the highest application code of the session's
   stream resets and STOP_SENDING: 255 on a draft-02 session (draft-02 section 4.3), which browsers negotiate, 2^32-1 on
   later drafts.
@@ -2064,6 +2074,24 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- WebSocket (both Ktor engines): the engine answers a Ping itself, as soon as it reads it, with a Pong carrying the
+  Ping's data (RFC 6455 sections 5.5.2 and 5.5.3). The Pong goes out at once when nothing else is being sent,
+  otherwise right after the frame on the wire, so also between the fragments of a message. Ktor's session's own Pong
+  for that Ping is dropped, so the peer still gets one Pong per Ping; under a raw session (`webSocketRaw`), which
+  never answered a Ping and now gets it answered, the application's Pong with that Ping's data is dropped as its
+  answer (an unsolicited Pong with other data goes out). Pings are answered after this side's Close too, until the
+  peer's: the engine keeps its side of the transport open after its own Close (Ktor's writer ends its channel right
+  after it) until the peer's Close is read, the input ends or the close wait passes (5 s; the client's
+  `webSocketCloseWaitMillis`), and closes it then (RFC 6455 section 5.5.1: the transport is closed "after both sending
+  and receiving a Close message"); a peer that answers the Close at once sees no delay. Before, a server that closed
+  first ended the transport (FIN, END_STREAM) right after its Close, and a Ping sent before the client's Close went
+  unanswered on both engines. At most 16 Pings wait; past that only the newest is answered and the session answers the
+  others (section 5.5.3). A Pong whose write fails (a reset transport) is not an uncaught exception. Before, the Pong
+  was left to Ktor's session, whose pong coroutine could run after the application had echoed the whole message the
+  Ping came in the middle of (Autobahn|Testsuite 5.6 to 5.8, 5.19 and 5.20 failed in some runs).
+- WebSocket (both Ktor engines): a text frame whose bytes are not UTF-8 fails the connection with 1007 as soon as those
+  bytes arrive (RFC 6455 section 8.1), compressed or not. Before, the check waited for the rest of the frame, up to 16 KiB,
+  so a peer that sent the bad bytes and then nothing kept the connection open (Autobahn|Testsuite 6.4.3 and 6.4.4).
 - WebTransport (experimental): on a draft-02 session, which Chrome and Firefox speak, a stream the peer resets before its
   header named a session now reaches the session's application with the reset's code (draft-02 section 4.3: an
   implementation that "intentionally allows only one session over a given HTTP/3 connection [...] SHALL forward the error

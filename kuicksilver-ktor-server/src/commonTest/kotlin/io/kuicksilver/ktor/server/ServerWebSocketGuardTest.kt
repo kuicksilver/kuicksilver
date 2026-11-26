@@ -11,14 +11,17 @@ import io.ktor.server.application.install
 import io.ktor.server.routing.routing
 import io.ktor.server.websocket.WebSockets
 import io.ktor.server.websocket.webSocket
+import io.ktor.server.websocket.webSocketRaw
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.LineEnding
+import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.readByte
 import io.ktor.utils.io.readByteArray
 import io.ktor.utils.io.readLine
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.ktor.websocket.Frame
+import io.ktor.websocket.close
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.http3Request
@@ -106,6 +109,182 @@ class ServerWebSocketGuardTest {
                 }
             } finally {
                 selector.close()
+                server.stop(100, 500)
+            }
+        }
+
+    /** A masked frame from the client: [b0], then [payload] masked with a fixed key. */
+    private fun masked(
+        b0: Int,
+        payload: ByteArray,
+    ): ByteArray {
+        val key = byteArrayOf(0x11, 0x22, 0x33, 0x44)
+        val body = ByteArray(payload.size) { (payload[it].toInt() xor key[it % 4].toInt()).toByte() }
+        return byteArrayOf(b0.toByte(), (0x80 or payload.size).toByte()) + key + body
+    }
+
+    /** The next frame from the server (unmasked, at most 125 bytes): its first byte and payload. */
+    private suspend fun serverFrame(input: ByteReadChannel): Pair<Int, ByteArray> {
+        val b0 = input.readByte().toInt() and 0xff
+        val length = input.readByte().toInt() and 0x7f
+        return b0 to input.readByteArray(length)
+    }
+
+    /** An upgraded HTTP/1.1 connection to /ws of a server with [module], for [block]. */
+    private suspend fun h1WebSocket(
+        module: Application.() -> Unit,
+        block: suspend (io.ktor.utils.io.ByteWriteChannel, ByteReadChannel) -> Unit,
+    ) {
+        val (server, port) = tlsServer(module = module)
+        val selector = SelectorManager(Dispatchers.IO)
+        try {
+            val socket = connectTcp(selector, InetSocketAddress("127.0.0.1", port)).tls(ServerFixtures.clientTls())
+            try {
+                val w = socket.openWriteChannel(autoFlush = true)
+                val r = socket.openReadChannel()
+                w.writeStringUtf8(
+                    "GET /ws HTTP/1.1\r\nHost: server.test\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+                        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n",
+                )
+                assertEquals("HTTP/1.1 101 Switching Protocols", r.readLine(LineEnding.Lenient))
+                while (r.readLine(LineEnding.Lenient)?.isNotEmpty() == true) continue
+                block(w, r)
+            } finally {
+                socket.close()
+            }
+        } finally {
+            selector.close()
+            server.stop(100, 500)
+        }
+    }
+
+    /**
+     * RFC 6455 section 5.5.2: "Upon receipt of a Ping frame, an endpoint MUST send a Pong frame in response ... It SHOULD
+     * respond with Pong frame as soon as is practical"; section 5.4: control frames "MAY be injected in the middle of a
+     * fragmented message". The engine answers the Ping itself as soon as it reads it, with its data (section 5.5.3), while
+     * the message is still incomplete, even under a raw session, which never answers a Ping. Before, the Pong was Ktor's
+     * session's alone: none under a raw session, and under the default one it could follow the echo of the whole message
+     * (Autobahn|Testsuite 5.6 to 5.8, 5.19 and 5.20).
+     */
+    @Test fun negative_pingBetweenFragmentsIsAnsweredBeforeTheMessageEnds() =
+        serverTest {
+            h1WebSocket({
+                install(WebSockets)
+                routing { webSocketRaw("/ws") { for (frame in incoming) continue } }
+            }) { w, r ->
+                w.writeFully(masked(0x01, "frag".encodeToByteArray()) + masked(0x89, "ping 1".encodeToByteArray()))
+                val (b0, payload) = withTimeout(10.seconds) { serverFrame(r) }
+                assertEquals(0x8A, b0)
+                assertEquals("ping 1", payload.decodeToString())
+            }
+        }
+
+    /** Under the default session, which answers Pings too, the client still gets one Pong per Ping, then the echo. */
+    @Test fun negative_oneServerPongPerPing() =
+        serverTest {
+            h1WebSocket({ webSocketEcho() }) { w, r ->
+                w.writeFully(masked(0x89, "p".encodeToByteArray()) + masked(0x81, "a".encodeToByteArray()))
+                val got = ArrayList<Pair<Int, String>>()
+                withTimeout(10.seconds) {
+                    // the Pong and the echo, then the Close the client sends only now: a second Pong would come before it
+                    repeat(2) { serverFrame(r).let { (b0, payload) -> got += b0 to payload.decodeToString() } }
+                    w.writeFully(masked(0x88, byteArrayOf(0x03, 0xE8.toByte())))
+                    serverFrame(r).let { (b0, _) -> got += b0 to "" }
+                }
+                assertEquals(listOf(0x8A to "p", 0x81 to "a", 0x88 to ""), got)
+            }
+        }
+
+    /**
+     * RFC 6455 section 5.5.2: a Pong is owed "unless it already received a Close frame", so also after this side's own
+     * Close, until the peer's; section 5.5.1 forbids only data frames after a Close, and the transport is closed "after
+     * both sending and receiving a Close message". The server closes first; the client sends a Ping before its own Close
+     * and gets the Pong, then sends its Close, and only then does the server end the connection. Before, the server's FIN
+     * followed its Close at once (Ktor's writer ends its channel right after its Close) and the Ping went unanswered.
+     */
+    @Test fun negative_pingAfterTheServersCloseIsAnsweredBeforeTheFin() =
+        serverTest {
+            h1WebSocket({
+                install(WebSockets)
+                routing {
+                    webSocket("/ws") {
+                        close(io.ktor.websocket.CloseReason(io.ktor.websocket.CloseReason.Codes.NORMAL, "bye"))
+                        for (frame in incoming) continue
+                    }
+                }
+            }) { w, r ->
+                withTimeout(10.seconds) {
+                    assertEquals(0x88, serverFrame(r).first, "the server's Close")
+                    w.writeFully(masked(0x89, "still".encodeToByteArray()))
+                    val (b0, payload) = serverFrame(r)
+                    assertEquals(0x8A, b0, "the Pong after the server's Close")
+                    assertEquals("still", payload.decodeToString())
+                    w.writeFully(masked(0x88, byteArrayOf(0x03, 0xE8.toByte())))
+                    assertTrue(r.readBuffer().exhausted(), "nothing more, then the end of the connection")
+                }
+            }
+        }
+
+    /** A raw session that sends its Close and returns at once: everything after it is the engine's. */
+    private fun Application.rawCloseAndReturn() {
+        install(WebSockets)
+        routing {
+            webSocketRaw("/ws") {
+                outgoing.send(Frame.Close(io.ktor.websocket.CloseReason(io.ktor.websocket.CloseReason.Codes.NORMAL, "bye")))
+            }
+        }
+    }
+
+    /**
+     * The same after a raw session's Close, whose handler returns right after it: the engine keeps the guard reading after
+     * the handler is over, so the client's Ping still gets its Pong, and the connection ends after the client's Close.
+     * Before, the engine stopped the input guard as soon as the handler returned, before it waited for the held end: the
+     * FIN followed the Close and the Ping went unanswered.
+     */
+    @Test fun negative_pingAfterARawSessionsCloseIsAnswered() =
+        serverTest {
+            h1WebSocket({ rawCloseAndReturn() }) { w, r ->
+                withTimeout(10.seconds) {
+                    assertEquals(0x88, serverFrame(r).first, "the server's Close")
+                    w.writeFully(masked(0x89, "raw".encodeToByteArray()))
+                    val (b0, payload) = serverFrame(r)
+                    assertEquals(0x8A, b0, "the Pong after the raw session's Close")
+                    assertEquals("raw", payload.decodeToString())
+                    w.writeFully(masked(0x88, byteArrayOf(0x03, 0xE8.toByte())))
+                    assertTrue(r.readBuffer().exhausted(), "nothing more, then the end of the connection")
+                }
+            }
+        }
+
+    /** [negative_pingAfterARawSessionsCloseIsAnswered] over HTTP/3 (RFC 9220): the stream's FIN after the client's Close. */
+    @Test fun negative_pingAfterARawSessionsCloseIsAnsweredH3() =
+        h3ServerTest {
+            val (server, port) = tlsServer { rawCloseAndReturn() }
+            val ep = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))
+            try {
+                val c = ep.connect(InetSocketAddress("127.0.0.1", port), ServerFixtures.clientTls(alpn = listOf("h3")))
+                try {
+                    val request =
+                        http3Request("CONNECT", "server.test", "/ws") {
+                            headers = Http3Headers.of("sec-websocket-version" to "13")
+                        }
+                    val stream = c.connect(request, "websocket")
+                    withTimeout(10.seconds) {
+                        assertEquals(0x88, serverFrame(stream.input).first, "the server's Close")
+                        stream.output.writeFully(masked(0x89, "raw".encodeToByteArray()))
+                        stream.output.flush()
+                        val (b0, payload) = serverFrame(stream.input)
+                        assertEquals(0x8A, b0, "the Pong after the raw session's Close")
+                        assertEquals("raw", payload.decodeToString())
+                        stream.output.writeFully(masked(0x88, byteArrayOf(0x03, 0xE8.toByte())))
+                        stream.output.flush()
+                        assertTrue(stream.input.readBuffer().exhausted(), "nothing more, then the stream's FIN")
+                    }
+                } finally {
+                    c.close()
+                }
+            } finally {
+                ep.close()
                 server.stop(100, 500)
             }
         }

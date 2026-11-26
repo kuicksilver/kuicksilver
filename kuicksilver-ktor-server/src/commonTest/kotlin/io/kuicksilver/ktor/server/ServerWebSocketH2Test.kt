@@ -137,6 +137,56 @@ class ServerWebSocketH2Test {
         return open("CONNECT", "https", "server.test", path, fields, endStream = false, protocol = protocol)
     }
 
+    /**
+     * RFC 6455 section 5.5.2 over HTTP/2 (RFC 8441): a raw session sends its Close and returns at once; the client's Ping
+     * still gets its Pong, and the server's END_STREAM comes after the client's Close. Before, the engine stopped the
+     * input guard as soon as the handler returned: END_STREAM followed the Close and the Ping went unanswered.
+     */
+    @Test fun negative_pingAfterARawSessionsCloseIsAnswered() =
+        serverTest {
+            val (server, port) =
+                h2TlsServer {
+                    install(WebSockets)
+                    routing {
+                        webSocketRaw("/ws") { outgoing.send(Frame.Close(CloseReason(CloseReason.Codes.NORMAL, "bye"))) }
+                    }
+                }
+            try {
+                h2(port) { c ->
+                    val s = c.connect()
+                    assertEquals(200, s.response().status)
+                    coroutineScopeWithJob { scope ->
+                        val out = ByteChannel()
+                        scope.launch { runCatching { s.sendBody(out, stallMillis = null) { error("no stall") } } }
+                        val key = byteArrayOf(0x11, 0x22, 0x33, 0x44)
+
+                        fun masked(
+                            b0: Int,
+                            payload: ByteArray,
+                        ) = byteArrayOf(b0.toByte(), (0x80 or payload.size).toByte()) + key +
+                            ByteArray(payload.size) { (payload[it].toInt() xor key[it % 4].toInt()).toByte() }
+
+                        suspend fun frame(): Pair<Int, String> {
+                            val b0 = s.body.readByte().toInt() and 0xff
+                            val length = s.body.readByte().toInt() and 0x7f
+                            return b0 to s.body.readByteArray(length).decodeToString()
+                        }
+                        withTimeout(10.seconds) {
+                            assertEquals(0x88, frame().first, "the server's Close")
+                            out.writeFully(masked(0x89, "raw".encodeToByteArray()))
+                            out.flush()
+                            assertEquals(0x8A to "raw", frame(), "the Pong after the raw session's Close")
+                            out.writeFully(masked(0x88, byteArrayOf(0x03, 0xE8.toByte())))
+                            out.flushAndClose()
+                            assertTrue(s.body.readBuffer().exhausted(), "nothing more, then END_STREAM")
+                        }
+                    }
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
     /** A client-side WebSocket session on [s]: its output is sent as the stream's DATA, ended with END_STREAM. */
     private fun CoroutineScope.session(s: H2ClientStream): Pair<io.ktor.websocket.WebSocketSession, ByteWriteChannel> {
         val out = ByteChannel()

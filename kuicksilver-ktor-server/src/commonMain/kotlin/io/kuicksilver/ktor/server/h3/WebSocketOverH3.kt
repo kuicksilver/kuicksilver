@@ -16,6 +16,7 @@ import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3ServerRequest
 import io.kuicksilver.ktor.network.DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE
+import io.kuicksilver.ktor.network.awaitWebSocketOutputEnd
 import io.kuicksilver.ktor.network.isWebSocketFrameCut
 import io.kuicksilver.ktor.server.ServerWebSocket
 import io.kuicksilver.ktor.server.checkWebSocketRsvConflicts
@@ -138,9 +139,12 @@ internal class H3UpgradeResponse(
             sessionOutput = out
             upgrade.upgrade(input.channel, out, engineDispatcher, userDispatcher).join()
         } finally {
-            // the session is over: nothing reads its input any more, so the guard stops here, before it copies what the
-            // client still sends into a channel nobody reads; then the extension's state is freed (the guard inflates with
-            // a codec of its own)
+            // the session is over: nothing reads its input any more, so the guard stops right after the held end below,
+            // before it copies what the client still sends into a channel nobody reads; then the extension's state is freed
+            // (the guard inflates with a codec of its own)
+            // the stream end the frame guard held for Pongs after the server's Close is ended first, while the guard still
+            // reads the client's Pings and Close (RFC 6455 section 5.5.2): a handler that returns right after its Close
+            sessionOutput?.awaitWebSocketOutputEnd()
             guard.cancel()
             webSocket?.done()
             // a call cancelled while the session ran, or while the flush below waits, cannot end the stream in order: RFC

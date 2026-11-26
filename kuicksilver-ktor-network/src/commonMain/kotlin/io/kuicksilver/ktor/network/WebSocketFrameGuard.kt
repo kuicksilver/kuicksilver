@@ -7,6 +7,7 @@ package io.kuicksilver.ktor.network
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.copyTo
+import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.readByte
 import io.ktor.utils.io.readFully
 import io.ktor.utils.io.writeByte
@@ -214,6 +215,10 @@ public const val DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE: Long = 16L shl 20
  * but outside its job, so it never holds a call open (a reader that gave up leaves it waiting for room); the end of
  * [context]'s job stops it.
  *
+ * With [pongs] (the same instance as the output guard's), each Ping is answered by the engine as soon as it is read,
+ * before it is handed on ([WebSocketPongs]: RFC 6455 section 5.5.2, "as soon as is practical", also between the fragments
+ * of a message); no Ping after the peer's Close is answered.
+ *
  * @throws IllegalArgumentException when [maxMessageSize] is less than 1.
  */
 @InternalKuicksilverApi
@@ -230,6 +235,7 @@ public fun guardWebSocketInput(
     checkText: Boolean = true,
     onEnd: () -> Unit = {},
     onClose: () -> Unit = {},
+    pongs: WebSocketPongs? = null,
 ): ByteReadChannel {
     require(maxMessageSize >= 1) { "maxMessageSize $maxMessageSize is less than 1" }
     val out = ByteChannel()
@@ -238,19 +244,26 @@ public fun guardWebSocketInput(
     val rules = InputRules(allowedRsv, untilClose, peerMasks, perMessageDeflate, maxMessageSize, checkText)
     // ATOMIC: a session that ended before the copy ran (its job cancelled at once) still runs its finally, so [onEnd]
     // comes in every case and nobody waits for it in vain
+    pongs?.start(CoroutineScope(context + job + CoroutineName("ws-pongs")))
     CoroutineScope(context + job).launch(CoroutineName("ws-frame-guard"), start = CoroutineStart.ATOMIC) {
-        val guard = InputGuard(input, out, rules, inflate, onClose)
+        val guard = InputGuard(input, out, rules, inflate, onClose, pongs)
         try {
             guard.run()
         } catch (_: EOFException) {
             // the stream ended (between or inside frames): so does the session's input. ktor-io's readFully answers an input
             // failed with a cause with an EOFException too: that one fails the session's input with the cause
             val cause = input.closedCause
-            if (cause == null) out.flushAndClose() else out.cancel(cause)
+            if (cause == null) {
+                pongs?.inputEnded() // the peer ended its side in order: a held end of ours may go in order
+                out.flushAndClose()
+            } else {
+                out.cancel(cause)
+            }
         } catch (cause: Throwable) {
             out.cancel(cause)
         } finally {
             guard.close()
+            pongs?.stop()
             onEnd()
         }
     }
@@ -287,7 +300,9 @@ private class InputGuard(
     private val rules: InputRules,
     inflate: WebSocketInflate?,
     private val onClose: () -> Unit,
+    private val pongs: WebSocketPongs?,
 ) {
+    private var peerClosed = false
     private val inflater =
         inflate?.let { MessageInflater(it.noContextTakeover, minOf(it.maxMessageSize, rules.maxMessageSize)) }
     private val header = ByteArray(MAX_HEADER)
@@ -380,7 +395,15 @@ private class InputGuard(
             control.copyInto(closeBody, 0, 0, size)
             if (mask != null) unmask(closeBody, size, mask, 0)
             checkCloseBody(closeBody, size)
+            peerClosed = true
+            pongs?.peerClosed()
             onClose()
+        }
+        // RFC 6455 section 5.5.2: a Pong "as soon as is practical", "unless it already received a Close frame"
+        if (opcode == OPCODE_PING && pongs != null && !peerClosed) {
+            val data = control.copyOf(size)
+            if (mask != null) unmask(data, size, mask, 0)
+            pongs.answer(data)
         }
         out.writeFully(header, 0, headerLength)
         out.writeFully(control, 0, size)
@@ -443,7 +466,12 @@ private class InputGuard(
         out.flush()
     }
 
-    /** An uncompressed text frame: its payload checked as UTF-8 piece by piece and handed on re-framed. */
+    /**
+     * An uncompressed text frame: its payload checked as UTF-8 piece by piece and handed on re-framed. Each piece is what
+     * has arrived (at most [INPUT_CHUNK]), not a full chunk: bytes that are not UTF-8 fail the connection as soon as they
+     * are read (RFC 6455 section 8.1: an endpoint that "finds that the byte stream is not, in fact, a valid UTF-8 stream ...
+     * MUST _Fail the WebSocket Connection_"), never after the rest of the frame, which a peer may never send.
+     */
     private suspend fun textFrame(
         length: Long,
         mask: ByteArray?,
@@ -453,8 +481,9 @@ private class InputGuard(
         var left = length
         var position = 0L
         while (left > 0) {
-            val n = minOf(left, buf.size.toLong()).toInt()
-            input.readFully(buf, 0, n)
+            val n = input.readAvailable(buf, 0, minOf(left, buf.size.toLong()).toInt())
+            // ktor-io's readAvailable answers an input that ended, or failed with a cause, with -1
+            if (n < 0) throw input.closedCause ?: EOFException("the stream ended inside a frame")
             if (mask != null) unmask(buf, n, mask, position)
             position += n
             left -= n
@@ -479,7 +508,10 @@ private class InputGuard(
         }
     }
 
-    /** A compressed frame: its payload (unmasked) inflated and handed on re-framed (RFC 7692 section 7.2.2). */
+    /**
+     * A compressed frame: its payload (unmasked) inflated and handed on re-framed (RFC 7692 section 7.2.2). As in
+     * [textFrame], each piece is what has arrived, so inflated bytes that are not UTF-8 fail the connection at once.
+     */
     private suspend fun inflateFrame(
         length: Long,
         mask: ByteArray?,
@@ -491,8 +523,8 @@ private class InputGuard(
         var position = 0L
         try {
             while (left > 0) {
-                val n = minOf(left, buf.size.toLong()).toInt()
-                input.readFully(buf, 0, n)
+                val n = input.readAvailable(buf, 0, minOf(left, buf.size.toLong()).toInt())
+                if (n < 0) throw input.closedCause ?: EOFException("the stream ended inside a frame")
                 if (mask != null) unmask(buf, n, mask, position)
                 position += n
                 left -= n
@@ -675,4 +707,5 @@ private fun violation(
 internal const val OPCODE_CONTINUATION = 0x0
 internal const val OPCODE_TEXT = 0x1
 internal const val OPCODE_CLOSE = 0x8
+private const val OPCODE_PING = 0x9
 private const val OPCODE_PONG = 0xA

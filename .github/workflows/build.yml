@@ -314,12 +314,24 @@ jobs:
           grep -q 'udp_fd_df_probe_forged_ptb: OK' <<< "$out" || { echo "udp_fd_df_probe_forged_ptb did not run (SKIP)"; exit 1; }
       - name: 'docker: jvm ${{ matrix.target }} (.so + tests)'
         run: bash tools/ci/docker-jvm.sh ${{ matrix.classifier }}
+      - name: 'docker: Autobahn, the JVM server and client (WebSocket)'
+        # the Autobahn|Testsuite against the JVM engines, on the .so just built: the release gate runs the JVM client but
+        # not the JVM server, which Docker Desktop reaches only through host.docker.internal (an occasional connect times
+        # out there); here Docker is native and the suite reaches the server on the host network as 127.0.0.1. The image is
+        # the digest pin of tools/interop/autobahn.sh, pulled here (the script never pulls)
+        if: matrix.arch == 'x64'
+        run: |
+          image=$(sed -n 's/^image="\(crossbario\/autobahn-testsuite:[^"]*@sha256:[0-9a-f]\{64\}\)"$/\1/p' tools/interop/autobahn.sh)
+          [ -n "$image" ] || { echo "::error::no digest-pinned image= line in tools/interop/autobahn.sh"; exit 1; }
+          docker pull --platform linux/amd64 "$image"
+          KSL_GRADLE="$G -x :kuicksilver-native:buildJniHost" bash tools/interop/autobahn.sh jvm
       - name: 'verify: results for the documentation site (tools/docs/verify.py)'
         if: '!cancelled()'
-        env: { ARCH: '${{ matrix.arch }}' }
+        env: { ARCH: '${{ matrix.arch }}', AUTOBAHN: "${{ matrix.arch == 'x64' && '--autobahn-manifest build/autobahn/variants.txt' || '' }}" }
         run: |
+          # shellcheck disable=SC2086   # AUTOBAHN is empty or one option and its value
           python3 -I tools/docs/verify.py collect --lane "linux-$ARCH" --host "Linux $ARCH" --out "$RUNNER_TEMP/verify/linux-$ARCH.json" \
-            --junit 'jvm:*/build/test-results/jvmTest/*.xml'
+            --junit 'jvm:*/build/test-results/jvmTest/*.xml' $AUTOBAHN
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: '!cancelled()'
         with: { name: 'verify-linux-${{ matrix.arch }}-a${{ github.run_attempt }}', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
@@ -400,12 +412,27 @@ jobs:
           [ -n "$image" ] || { echo "::error::no digest-pinned image= line in tools/interop/h2spec.sh"; exit 1; }
           docker pull --platform linux/amd64 "$image"
           KSL_GRADLE="$G" bash tools/interop/h2spec.sh linux-x64
+      - name: 'docker: h3spec linux-x64 (HTTP/3 server)'
+        # the release gate's h3spec run on the linuxX64 server: every case passes but the ones tools/interop/h3spec.sh
+        # records as h3spec's own error, which must fail as recorded. The script builds its image (Debian 13 and h3spec's
+        # release binary, checked against the sha256 it pins) and lists its run in build/h3spec/variants.txt
+        run: KSL_GRADLE="$G" bash tools/interop/h3spec.sh linux-x64
+      - name: 'docker: Autobahn linux-x64 (WebSocket server and client)'
+        # the Autobahn|Testsuite against the linuxX64 server and client, in the suite's own container: every case OK or
+        # INFORMATIONAL but the ones tools/interop/autobahn.sh records. The image is the digest pin of the script itself,
+        # pulled here (the script never pulls); its runs are listed in build/autobahn/variants.txt
+        run: |
+          image=$(sed -n 's/^image="\(crossbario\/autobahn-testsuite:[^"]*@sha256:[0-9a-f]\{64\}\)"$/\1/p' tools/interop/autobahn.sh)
+          [ -n "$image" ] || { echo "::error::no digest-pinned image= line in tools/interop/autobahn.sh"; exit 1; }
+          docker pull --platform linux/amd64 "$image"
+          KSL_GRADLE="$G" bash tools/interop/autobahn.sh linux-x64
       - name: 'verify: results for the documentation site (tools/docs/verify.py)'
         if: '!cancelled()'
         run: |
           python3 -I tools/docs/verify.py collect --lane linux-native --host 'Linux x64 (manylinux2014 container)' \
             --out "$RUNNER_TEMP/verify/linux-native.json" --gtest "linuxX64:$RUNNER_TEMP/verify-logs/linuxX64/*.log" \
-            --h2spec-manifest build/h2spec/variants.txt \
+            --h2spec-manifest build/h2spec/variants.txt --h3spec-manifest build/h3spec/variants.txt \
+            --autobahn-manifest build/autobahn/variants.txt \
             --size 'klib:kuicksilver-*/build/classes/kotlin/*/main/klib/*' --size 'klib:kuicksilver-*/build/classes/kotlin/*/main/cinterop/kuicksilver-native-cinterop-ksl' --skip-module kuicksilver-testing
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: '!cancelled()'

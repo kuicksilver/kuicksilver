@@ -3274,7 +3274,14 @@ session's `closeReason`, and `incoming` ends without the bad frame (a raw `webSo
 bit; one implemented by an installed Ktor extension the bits its factory declares. A text message the application
 builds from bytes (`Frame.Text(fin, ByteArray)`) that is not UTF-8 is not sent (also when Ktor's
 `WebSocketDeflateExtension` compresses it): the session fails with `ProtocolViolationException`. An extension the
-application brings with its own specification defines its payload: with one agreed, text is not checked.
+application brings with its own specification defines its payload: with one agreed, text is not checked. The engine
+answers every Ping itself as soon as it reads it (RFC 6455 section 5.5.2: "as soon as is practical"), with a Pong
+carrying its data, between the frames the session is sending; it drops the Pong the session then writes for that
+Ping, so the peer gets one. Pings are answered after this side's Close too, until the peer's: the engine keeps its
+side of the transport open after its Close until the peer's Close arrives (or the close wait passes, 5 s; on the
+client `webSocketCloseWaitMillis`), and closes it then, at once when the peer answers the Close promptly. This holds for a raw `webSocketRaw` session too,
+which still sees the Ping in `incoming` but no longer needs to answer it: its own Pong with the Ping's data is taken
+for that answer and dropped (an unsolicited Pong with other data goes out).
 
 #### Which protocol a client WebSocket takes, and how it closes
 

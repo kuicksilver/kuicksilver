@@ -9,7 +9,7 @@ Two steps, so that the CI jobs upload a few kilobytes of counts instead of their
       run at the end of a build.yml job (from the repository root): reads what the job produced and writes one JSON record
       with the commit, run and attempt it belongs to (GITHUB_SHA, GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT by default). Only
       counts, outcomes, test and file names and sizes are kept: no path, host name or output of the runner. A source that
-      matches nothing, or a declared h2spec run without a report, makes the exit status 1 after the record is written
+      matches nothing, or a declared h2spec, h3spec or Autobahn run without a report, makes the exit status 1 after the record is written
       (--allow-empty: a source may match nothing). Sources (each may repeat):
         --junit TARGET:GLOB         JUnit XML reports (Gradle test-results, Android connected tests); the module is the
                                     first path component of each file
@@ -23,6 +23,9 @@ Two steps, so that the CI jobs upload a few kilobytes of counts instead of their
         --skip-module MODULE        no size of MODULE (a module that is not published)
         --h2spec-manifest FILE      the runs tools/interop/h2spec.sh declared (build/h2spec/variants.txt: kind, variant,
                                     report directory) and their reports
+        --h3spec-manifest FILE      the same for tools/interop/h3spec.sh (build/h3spec/variants.txt)
+        --autobahn-manifest FILE    the same for tools/interop/autobahn.sh (build/autobahn/variants.txt; the variants
+                                    are the server and the client)
         --interop-runner IMAGE:GLOB QUIC Interop Runner result files (tools/interop/run-local.sh)
   verify.py build --sha SHA --version V --ref REF --src REPO --out VERSION_DIR [--meta FILE --data DIR]
                   [--fuzz-meta FILE --fuzz-stats DIR] [--fuzz-targets FILE] [--perf-meta FILE --perf DIR] [--base-url URL]
@@ -260,30 +263,39 @@ def collect(args):
                                                      "bytes": i.file_size})
             else:
                 sys.exit(f"verify.py collect: unknown size kind '{kind}'")
-    # h2spec: the runs tools/interop/h2spec.sh declared in its manifest ("<kind> <variant> <report dir>" per line, written
-    # before any run); a declared run without a report is shown as incomplete and fails the collect
-    for path in args.h2spec_manifest or []:
-        if not os.path.isfile(path):
-            problems.append(f"--h2spec-manifest {path}: no manifest (h2spec.sh did not start)")
-            continue
-        for line in open(path, encoding="utf-8"):
-            cols = line.split()
-            if len(cols) != 3:
+    # h2spec, h3spec and the Autobahn|Testsuite: the runs tools/interop/h2spec.sh, h3spec.sh and autobahn.sh declared in
+    # their manifests ("<kind> <variant> <report dir>" per line, written before any run); a declared run without a report
+    # is shown as incomplete and fails the collect. h2spec's report is its own output; the other two write summary.txt,
+    # whose "recorded" failures are the cases the script lists as wrong in the suite itself, each failing as recorded.
+    for suite, option, manifests, report_name in (("h2spec", "--h2spec-manifest", args.h2spec_manifest, "h2spec.txt"),
+                                                  ("h3spec", "--h3spec-manifest", args.h3spec_manifest, "summary.txt"),
+                                                  ("Autobahn", "--autobahn-manifest", args.autobahn_manifest, "summary.txt")):
+        script = {"h2spec": "h2spec.sh", "h3spec": "h3spec.sh", "Autobahn": "autobahn.sh"}[suite]
+        for path in manifests or []:
+            if not os.path.isfile(path):
+                problems.append(f"{option} {path}: no manifest ({script} did not start)")
                 continue
-            kind, variant, d = cols
-            entry = {"suite": "h2spec", "variant": variant, "host": f"{args.host} ({kind} server)", "tests": 0, "passed": 0, "skipped": 0, "failed": 0,
-                     "status": "error"}
-            report = os.path.join(d, "h2spec.txt")   # the report directory, relative to the repository root as h2spec.sh writes it
-            m = None
-            if os.path.isfile(report):
-                for rl in open(report, encoding="utf-8", errors="replace"):
-                    m = re.match(r"^(\d+) tests, (\d+) passed, (\d+) skipped, (\d+) failed", rl.strip()) or m
-            if m:
-                t, p, sk, fl = (int(x) for x in m.groups())
-                entry.update(tests=t, passed=p, skipped=sk, failed=fl, status="fail" if fl or sk or p != t else "pass")
-            else:
-                problems.append(f"h2spec {kind} {variant}: declared in {path}, no summary in {d}/h2spec.txt")
-            rec["conformance"].append(entry)
+            for line in open(path, encoding="utf-8"):
+                cols = line.split()
+                if len(cols) != 3:
+                    continue
+                kind, variant, d = cols
+                entry = {"suite": suite, "variant": variant, "host": f"{args.host} ({kind})" if suite == "Autobahn" else
+                         f"{args.host} ({kind} server)", "tests": 0, "passed": 0, "skipped": 0, "failed": 0, "recorded": 0,
+                         "status": "error"}
+                report = os.path.join(d, report_name)   # relative to the repository root, as the scripts write it
+                m = None
+                if os.path.isfile(report):
+                    for rl in open(report, encoding="utf-8", errors="replace"):
+                        m = re.match(r"^(\d+) tests, (\d+) passed, (\d+) skipped, (\d+) failed(?:, (\d+) recorded)?", rl.strip()) or m
+                if m:
+                    t, p, sk, fl = (int(x) for x in m.groups()[:4])
+                    rc = int(m.group(5) or 0)
+                    entry.update(tests=t, passed=p, skipped=sk, failed=fl, recorded=rc,
+                                 status="fail" if fl != rc or sk or p + fl != t else "pass")
+                else:
+                    problems.append(f"{suite} {kind} {variant}: declared in {path}, no summary in {d}/{report_name}")
+                rec["conformance"].append(entry)
     for spec in args.interop_runner or []:
         image, pattern = _split(spec, "--interop-runner")
         for f in matched("--interop-runner", spec, _files(pattern)):
@@ -785,17 +797,20 @@ def page_interop(m, model):
 
 def page_conformance(m, model):
     rows = []
-    h2 = [c for c in model["conformance"] if c["suite"] == "h2spec"]
-    for variant in ("tls", "h2c"):
-        mine = [c for c in h2 if c["variant"] == variant]
-        if mine:
-            for c in mine:
-                rows.append([f"h2spec ({esc(variant)})", esc(c["host"]), num(c["tests"]), num(c["passed"]), num(c["skipped"]),
-                             num(c["failed"]), mark(m, c["status"])])
-        else:
-            rows.append([f"h2spec ({esc(variant)})", "", "", "", "", "", f'<span class="nodata">{esc(m("conformance.notInCi"))}</span>'])
-    for suite in ("h3spec", "Autobahn"):
-        rows.append([esc(suite), "", "", "", "", "", f'<span class="nodata">{esc(m("conformance.notYet"))}</span>'])
+    for suite, variants in (("h2spec", ("tls", "h2c")), ("h3spec", ("server",)), ("Autobahn", ("server", "client"))):
+        runs = [c for c in model["conformance"] if c["suite"] == suite]
+        for variant in variants:
+            mine = [c for c in runs if c["variant"] == variant]
+            label = f"{esc(suite)} ({esc(variant)})"
+            if mine:
+                for c in mine:
+                    status = mark(m, c["status"])
+                    if c.get("recorded"):   # beside the verdict: the number cells are the same in every language
+                        status += f' <small>{esc(m("conformance.recorded", n=c["recorded"]))}</small>'
+                    rows.append([label, esc(c["host"]), num(c["tests"]), num(c["passed"]), num(c["skipped"]), num(c["failed"]),
+                                 status])
+            else:
+                rows.append([label, "", "", "", "", "", f'<span class="nodata">{esc(m("conformance.notInCi"))}</span>'])
     return (f"<p>{esc(m('conformance.intro'))}</p>\n" +
             table([esc(m(k)) for k in ("col.suite", "col.where", "col.tests", "col.passed", "col.skipped", "col.failed", "col.status")],
                   rows, nums=(2, 3, 4, 5)) +
@@ -1089,7 +1104,8 @@ def main():
     c.add_argument("--run-id")
     c.add_argument("--run-attempt")
     c.add_argument("--allow-empty", action="store_true", help="a source that matches nothing is not an error")
-    for opt in ("--junit", "--cases", "--gtest", "--compiled", "--size", "--skip-module", "--h2spec-manifest", "--interop-runner"):
+    for opt in ("--junit", "--cases", "--gtest", "--compiled", "--size", "--skip-module", "--h2spec-manifest", "--h3spec-manifest",
+                "--autobahn-manifest", "--interop-runner"):
         c.add_argument(opt, action="append")
     b = sub.add_parser("build")
     b.add_argument("--sha", required=True)

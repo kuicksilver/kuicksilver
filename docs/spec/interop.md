@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Kuicksilver — interop results
 
-Results of the QUIC Interop Runner matrices, the runner's http3 case, h2spec against the HTTP/2 server, WebSockets over HTTP/2 against Node.js and Chrome, the engine interop bench (the Ktor engines against other HTTP implementations on the JVM), the browser WebTransport checks and the weekly check of the client against public HTTP/3 servers, with the analysis of every red cell. They are the evidence for the ✅ rows of the [RFC compliance summary](rfc-compliance.md); `tools/interop/required.json` lists the cells that must stay green and `tools/interop/perf-thresholds.json` the throughput floors. What Kuicksilver does only to work with a peer that lags behind or breaks a standard is listed, with its removal condition, in [compat-shims.md](compat-shims.md).
+Results of the QUIC Interop Runner matrices, the runner's http3 case, h2spec against the HTTP/2 server, h3spec against the HTTP/3 server, the Autobahn|Testsuite against the WebSocket server and client, WebSockets over HTTP/2 against Node.js and Chrome, the engine interop bench (the Ktor engines against other HTTP implementations on the JVM), the browser WebTransport checks and the weekly check of the client against public HTTP/3 servers, with the analysis of every red cell. They are the evidence for the ✅ rows of the [RFC compliance summary](rfc-compliance.md); `tools/interop/required.json` lists the cells that must stay green and `tools/interop/perf-thresholds.json` the throughput floors. What Kuicksilver does only to work with a peer that lags behind or breaks a standard is listed, with its removal condition, in [compat-shims.md](compat-shims.md).
 
 ## msquic's provisional SCID: the cells expected red (2026-11-21)
 
@@ -185,7 +185,7 @@ The runner's `http3` case (three files of 5 KiB / 10 KiB / 500 KiB, one HTTP/3 t
 
 "?" — msquic does not declare `http3` in the runner's `implementations.json`. All 20 green cells are added to `required.json`.
 
-Third-party clients outside the runner: `curl --http3-only` (the `ymuski/curl-http3` build, quiche 0.18, amd64 under emulation) downloads a Ktor server response over HTTP/3 — `kuicksilver-ktor-server` `CurlHttp3Test.curlDownloadsOverHttp3Only` (enabled by the `KSL_CURL_H3_IMAGE` variable; the official `curlimages/curl` image is built without HTTP/3). h3spec has no ready image (it needs a Haskell stack build); its scenarios are covered by negative tests of `kuicksilver-http3` (threat-model 3.17); an h3spec run is deferred until such an environment exists.
+Third-party clients outside the runner: `curl --http3-only` (the `ymuski/curl-http3` build, quiche 0.18, amd64 under emulation) downloads a Ktor server response over HTTP/3 — `kuicksilver-ktor-server` `CurlHttp3Test.curlDownloadsOverHttp3Only` (enabled by the `KSL_CURL_H3_IMAGE` variable; the official `curlimages/curl` image is built without HTTP/3). h3spec runs against the HTTP/3 server since 2026-11-26, from its release binaries ([below](#h3spec-the-http3-server-h3spec-v0115-2026-11-26)).
 
 ## h2spec: the HTTP/2 server (h2spec 2.6.0, 2026-11-06)
 
@@ -208,6 +208,116 @@ runs with the check on (2026-11-14: 146 / 146). The check itself is covered by `
 | JVM (macOS arm64 host; h2spec in Docker Desktop, amd64 under emulation, reaching the host as `host.docker.internal`; `trusted-gateway`) | 44 / 44 | 94 / 94 | 8 / 8 | 146 / 146 |
 | macosArm64 executable (same host; `trusted-gateway`) | 44 / 44 | 94 / 94 | 8 / 8 | 146 / 146 |
 | linuxX64 executable (one linux/amd64 container with the h2spec binary; the check on; release gate, `tools/ci/local-matrix.sh`) | 44 / 44 | 94 / 94 | 8 / 8 | 146 / 146 |
+
+## h3spec: the HTTP/3 server (h3spec v0.1.15, 2026-11-26)
+
+`tools/interop/h3spec.sh` runs h3spec v0.1.15 (kazu-yamamoto/h3spec; `-n`, the certificate not validated; 2 s per case)
+against the Ktor server engine with HTTP/3 on a TLS connector and 0-RTT accepted (`http3 { earlyData { enabled } }`, so the 0-RTT case
+runs instead of staying pending), default QUIC settings and `Http3Settings` (`H3specServer.kt` in `kuicksilver-soak`,
+in the conformance executable). h3spec is the project's release binary, checked against the sha256 the script pins
+(GitHub's digest of the release asset): the macOS arm64 one beside the JVM and macOS servers, the linux-x86_64 one with
+the linuxX64 executable in one Debian 13 container (`tools/interop/h3spec.Dockerfile`; the binary needs glibc 2.34 and
+libgmp). h3spec reaches every server as 127.0.0.1, so the misdirected-request check stays on. The script records the
+number of cases (86) and fails on any failure or pending case except the ones it records as h3spec's own error, which
+must fail exactly as recorded. The release gate runs it against the JVM server and the linuxX64 executable, hosted CI
+(`build.yml`, job `linux-native`) against the linuxX64 executable.
+
+One case is h3spec's error. "MUST NOT buffer an over-long frame on a control stream [HTTP/3 7.1]" sends a GOAWAY frame
+whose Length is 2^30 and expects H3_EXCESSIVE_LOAD (or H3_GENERAL_PROTOCOL_ERROR or H3_INTERNAL_ERROR). A GOAWAY carries
+one variable-length integer, at most 8 bytes (RFC 9114 section 7.2.6), so that Length can only mean "a frame payload that
+contains additional bytes after the identified fields", which section 7.1 says "MUST be treated as a connection error of
+type H3_FRAME_ERROR". The server closes with H3_FRAME_ERROR from the frame's header, before any payload, buffering
+nothing (`FrameRules.checkControlLength`: H3_EXCESSIVE_LOAD is its answer for a SETTINGS or PRIORITY_UPDATE frame over
+its limit, where the Length itself is not malformed). The script requires that failure message, "frame 0x7 of
+1073741824 bytes holds one integer".
+
+| server | QUIC (RFC 9000, RFC 9001) | HTTP/3 (RFC 9114, RFC 9204) | total |
+|---|---|---|---|
+| JVM (macOS arm64 host, h3spec's macOS binary beside it) | 44 / 44 | 41 / 42 (the recorded case) | 85 / 86 |
+| macosArm64 executable (same host) | 44 / 44 | 41 / 42 (the recorded case) | 85 / 86 |
+| linuxX64 executable (one linux/amd64 container with h3spec's Linux binary, under emulation on the Mac; release gate and hosted CI) | 44 / 44 | 41 / 42 (the recorded case) | 85 / 86 |
+
+Before 0.3.0 no h3spec run was possible (no ready image; h3spec needs a Haskell build), and its scenarios were covered by
+negative tests of `kuicksilver-http3` alone (threat-model 3.17); those stay.
+
+## Autobahn|Testsuite: the WebSocket server and client (25.10.1, 2026-11-26)
+
+`tools/interop/autobahn.sh` runs every case of the Autobahn|Testsuite 25.10.1 (517: framing, pings, reserved bits and
+opcodes, fragmentation, UTF-8, the closing handshake, limits, and permessage-deflate, RFC 6455 and RFC 7692) in both
+directions: its fuzzing client against the server engine (`server`) and the client engine against its fuzzing server
+(`client`). The server and the client are the conformance executable's (`Autobahn.kt` in `kuicksilver-soak`): Ktor's
+`WebSockets` plugin with `PerMessageDeflate`, over HTTP/1.1, the engines' default limits, and an echo of every Text
+and Binary frame as it came; the engine answers each Ping (`WebSocketPongs`) and Ktor's `DefaultWebSocketSession`
+answers the Close, as in an application. The image
+(`crossbario/autobahn-testsuite`, linux/amd64 only) is pinned by its digest. A case passes when the suite's verdict is OK
+or INFORMATIONAL for the case and for its closing handshake; any other verdict fails the run, except where the script
+records the verdicts a case may get with the RFC text that allows them, and the number of cases (517) is recorded too.
+The linuxX64 executable runs inside the suite's container; the JVM and macOS ones on the host. Where each runs:
+
+| | linuxX64 server | linuxX64 client | JVM server | JVM client |
+|---|---|---|---|---|
+| release gate (`tools/ci/local-matrix.sh`, a Mac with Docker Desktop) | ✓ | ✓ | — (see below) | ✓ |
+| hosted CI (`build.yml`) | ✓ (job `linux-native`) | ✓ (job `linux-native`) | ✓ (job `linux`, x64) | ✓ (job `linux`, x64) |
+
+In hosted CI Docker runs on the Linux host itself: the suite reaches the JVM server on the host network as 127.0.0.1,
+with none of Docker Desktop's forwarding in between. How long each hosted CI run takes (amd64, no emulation) is to be recorded here after its first
+run; on the Mac, under emulation, the linuxX64 runs take about 14 minutes per direction and the JVM client about 8.
+
+The first three rows are runs of the final `tools/interop/autobahn.sh`, after both fixes below (2026-11-26):
+
+| run | OK | INFORMATIONAL | recorded (verdict) | other | total |
+|---|---|---|---|---|---|
+| linuxX64 server (in the suite's container, amd64 under emulation on the Mac; 14 min) | 514 | 3 | 0 | 0 | 517 |
+| linuxX64 client (same container) | 433 | 3 | 9 (NON-STRICT), 72 (UNIMPLEMENTED) | 0 | 517 |
+| JVM client (macOS arm64 host, the fuzzing server's port published on the host's loopback) | 434 | 3 | 8 (NON-STRICT), 72 (UNIMPLEMENTED) | 0 | 517 |
+| JVM server (macOS arm64 host, the fuzzing client reaching it as `host.docker.internal`; two runs before the Pong fix, see below) | 470 | 3 | 7 (NON-STRICT), 36 (UNIMPLEMENTED, 13.3 and 13.5) | 1 (FAILED, 5.6, fixed since: 5.1 to 5.20 OK in 5 of 5 runs after it, 5.15 recorded) | 517 |
+
+**Found and fixed.** 6.4.3 and 6.4.4 (NON-STRICT on the JVM and linuxX64 servers at the first runs): a text frame whose
+second chop is not UTF-8 was failed only when its third chop came, a second later, because the frame guard checked the
+payload in whole pieces of 16 KiB. It now checks the bytes as they arrive, compressed or not (RFC 6455 section 8.1;
+`WebSocketInputRulesTest.negative_invalidUtf8FailsBeforeTheFrameIsComplete`,
+`.negative_invalidUtf8InACompressedTextFailsBeforeTheFrameIsComplete`).
+
+**Recorded: a valid message before a violation (3.2 to 3.4, 4.1.3 to 4.2.5, 5.15).** The suite sends a valid message and,
+in the same read or octet by octet, a frame the receiver must fail the connection on (a reserved RSV bit or opcode, a
+continuation with nothing to continue). OK means the echo of the valid message came before the Close 1002; NON-STRICT,
+the suite's "allowed, not the strictest" verdict, that only the Close came. The engines hand Ktor's session a Close 1002
+in place of the bad frame and Ktor's `DefaultWebSocketSession` answers it at once from its reading coroutine, while the
+application's echo goes through its writing coroutine. On the server the order depends on thread scheduling (OK in the
+runs of the table, NON-STRICT for some of these cases in other runs, JVM and linuxX64 alike); on the client the session
+also cancels the application's block once both Close frames have passed, often before it read the message, so most of
+these cases are NON-STRICT there in most runs. RFC 6455 section 7.1.7 asks the endpoint that fails the connection to send "a Close frame
+with an appropriate status code" (1002 in every run); nothing asks for an answer to data that came before the violation.
+
+**Found and fixed: the Pong after the echo (5.6 to 5.8, 5.19, 5.20).** A Ping comes between the fragments of a message;
+the suite wants its Pong before the echo of the message. In some runs (2 of 4 of 5.6 on the JVM server, 1 of 2 of 5.19 on
+the linuxX64 server) the Pong came right after the echo (FAILED): it was Ktor's `DefaultWebSocketSession`'s, written by a
+coroutine of its own that ran after the application had echoed the message. RFC 6455 section 5.5.2: "It SHOULD respond
+with Pong frame as soon as is practical", and section 5.4 lets control frames "be injected in the middle of a fragmented
+message". The engines now answer a Ping themselves as soon as they read it (`WebSocketPongs`), at the output's next frame
+boundary, with the Ping's data (section 5.5.3), and drop the session's own Pong for it
+(`WebSocketPongsTest.negative_pingBetweenFragmentsIsAnsweredBeforeTheMessageCompletes`,
+`ServerWebSocketGuardTest.negative_oneServerPongPerPing`). These cases are not recorded: they must be OK.
+
+**Recorded: client_max_window_bits (13.3 to 13.6, client).** In these cases the fuzzing server accepts permessage-deflate
+only by answering `client_max_window_bits` (9 or 15), which RFC 7692 section 7.1.2.2 forbids when the offer does not
+carry it ("the corresponding extension negotiation response to the offer MUST NOT include the "client_max_window_bits"
+extension parameter"). `PerMessageDeflate` does not offer it ("A client MAY include" it, the same section): the JVM's
+Deflater has a fixed 15-bit window and could not keep to a smaller value. So the suite declines the extension and marks
+the case UNIMPLEMENTED. The linuxX64 server runs all of 13 with every offer the suite makes (OK).
+
+**Recorded: server_max_window_bits=9 on the JVM (13.3 and 13.5, JVM server).** Here the fuzzing client offers
+`server_max_window_bits=9`. RFC 7692 section 7.1.2.1: a server accepts it "by including the "server_max_window_bits"
+extension parameter in the extension negotiation response ... with the same or smaller value", and "declines an extension
+negotiation offer with this parameter if the server doesn't support it". The JVM's Deflater has a fixed 15-bit window,
+so the JVM server declines and the suite marks the case UNIMPLEMENTED; the linuxX64 server, on zlib, keeps to 9 (OK).
+
+**The JVM and macOS servers on a Mac.** The suite in Docker Desktop reaches a server on the host only through
+`host.docker.internal`, where an occasional TCP connect times out whatever the server: 3 of 1,500 connects to a plain
+Python TCP server timed out (2026-11-26), and a run of 517 cases opens 517 connections, so most full runs stop part-way
+with the suite's "User timeout caused connection failure". That is why the gate runs the linuxX64 server, inside the
+suite's own container, and not the JVM one; hosted CI runs the JVM server on its Linux runner. The JVM server's row is
+two runs on the Mac: all cases up to 13.7.6 (the next connect timed out), then 13.7.
 
 ## WebSockets over HTTP/2 (RFC 8441, 2026-11-12)
 

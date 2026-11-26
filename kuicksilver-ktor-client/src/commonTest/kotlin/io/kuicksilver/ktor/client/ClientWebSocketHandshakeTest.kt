@@ -18,6 +18,7 @@ import io.ktor.utils.io.readByteArray
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.ktor.websocket.Frame
+import io.ktor.websocket.close
 import io.ktor.websocket.readText
 import io.kuicksilver.ktor.network.bindTcp
 import io.kuicksilver.native.KslLoader
@@ -259,6 +260,76 @@ class ClientWebSocketHandshakeTest {
         }
 
     /**
+     * RFC 6455 section 5.5.2: a Pong "as soon as is practical", also for a Ping "in the middle of a fragmented message"
+     * (section 5.4), with the Ping's data (section 5.5.3). The server sends a message in two fragments with a Ping between
+     * them, all at once; the application echoes the message. The engine answers the Ping as soon as it reads it, so its
+     * Pong is the client's first frame, before the echo, and the only one: Ktor's session's own Pong for it is dropped.
+     * Before, the Pong was the session's alone, from a coroutine of its own, and could follow the echo (Autobahn|Testsuite
+     * 5.6 to 5.8, 5.19 and 5.20).
+     */
+    @Test fun negative_pingBetweenFragmentsIsAnsweredBeforeTheEcho() =
+        clientTest {
+            val frames = Channel<Pair<Int, String>>(Channel.UNLIMITED)
+            val message =
+                byteArrayOf(0x01, 4) + "frag".encodeToByteArray() + byteArrayOf(0x89.toByte(), 1, 0x70) +
+                    byteArrayOf(0x80.toByte(), 4) + "ment".encodeToByteArray()
+            server({ _, key -> head(upgrade + accept(key)) }, frames = message, afterUpgrade = { input ->
+                repeat(3) {
+                    val b0 = input.readByte().toInt() and 0xff
+                    val b1 = input.readByte().toInt() and 0xff
+                    val mask = input.readByteArray(4)
+                    val payload = input.readByteArray(b1 and 0x7f).mapIndexed { i, b -> (b.toInt() xor mask[i % 4].toInt()).toByte() }
+                    frames.send(b0 to (if (b0 == 0x88) "" else payload.toByteArray().decodeToString()))
+                    if (it == 1) closeCodes.send(0) // the echo is in: the client closes now
+                }
+            }) { port ->
+                testClient(block = { install(WebSockets) }).use { c ->
+                    c.webSocket("ws://127.0.0.1:$port/ws") {
+                        val m = incoming.receive() as Frame.Text
+                        send(Frame.Text(m.readText()))
+                        withTimeout(10.seconds) { closeCodes.receive() }
+                        close()
+                    }
+                }
+            }
+            val got = List(3) { withTimeout(10.seconds) { frames.receive() } }
+            assertEquals(listOf(0x8A to "p", 0x81 to "fragment", 0x88 to ""), got)
+        }
+
+    /**
+     * RFC 6455 section 5.5.2: a Pong is owed "unless it already received a Close frame", so also after this side's own
+     * Close, until the peer's (section 5.5.1 forbids only data frames after a Close). The client closes first; the server
+     * sends a Ping before its Close and gets the Pong; then its Close ends the session. Before, the client's frame guard
+     * dropped every Pong once Ktor's writer had ended its channel, right after the client's Close.
+     */
+    @Test fun negative_pingAfterTheClientsCloseIsAnswered() =
+        clientTest {
+            val seen = Channel<String>(Channel.UNLIMITED)
+            server({ _, key -> head(upgrade + accept(key)) }, afterUpgradeBoth = { input, output ->
+                suspend fun read(): Pair<Int, String> {
+                    val b0 = input.readByte().toInt() and 0xff
+                    val b1 = input.readByte().toInt() and 0xff
+                    val mask = input.readByteArray(4)
+                    val payload = input.readByteArray(b1 and 0x7f).mapIndexed { i, b -> (b.toInt() xor mask[i % 4].toInt()).toByte() }
+                    return b0 to payload.toByteArray().decodeToString()
+                }
+                seen.send("client ${read().first}") // the client's Close
+                output.writeFully(byteArrayOf(0x89.toByte(), 4) + "late".encodeToByteArray())
+                read().let { (b0, data) -> seen.send("client $b0 $data") }
+                output.writeFully(byteArrayOf(0x88.toByte(), 2, 0x03, 0xE8.toByte()))
+                output.flushAndClose()
+            }) { port ->
+                testClient(block = { install(WebSockets) }).use { c ->
+                    c.webSocket("ws://127.0.0.1:$port/ws") {
+                        close()
+                        closeReason.await()
+                    }
+                }
+            }
+            assertEquals(listOf("client 136", "client 138 late"), List(2) { withTimeout(10.seconds) { seen.receive() } })
+        }
+
+    /**
      * A raw HTTP/1.1 server on 127.0.0.1: per connection (numbered from 0), reads the request head and writes what
      * [answer] returns for it; after a 101 it sends [frames], reads the client's first frame and puts its close code in
      * [closeCodes] (-1 for none, or one that is not a Close).
@@ -267,6 +338,7 @@ class ClientWebSocketHandshakeTest {
         answer: (index: Int, key: String?) -> String,
         frames: ByteArray = ByteArray(0),
         afterUpgrade: suspend (ByteReadChannel) -> Unit = { closeCodes.send(closeCode(it)) },
+        afterUpgradeBoth: (suspend (ByteReadChannel, io.ktor.utils.io.ByteWriteChannel) -> Unit)? = null,
         block: suspend (Int) -> Unit,
     ) {
         val selector = SelectorManager(Dispatchers.IO)
@@ -285,7 +357,7 @@ class ClientWebSocketHandshakeTest {
                                 output.writeStringUtf8(text)
                                 if (text.startsWith("HTTP/1.1 101")) {
                                     output.writeFully(frames)
-                                    afterUpgrade(input)
+                                    if (afterUpgradeBoth != null) afterUpgradeBoth(input, output) else afterUpgrade(input)
                                 }
                             }
                         }

@@ -25,7 +25,7 @@ t() { # <name> <expected exit> <expected listed steps, or a pattern of the refus
 }
 t onlyListAndRange          0 "25 53 54 58"                          -- --only 25,53-54,58
 t onlyLeadingZeros          0 "5 7"                                  -- --only=05,007
-t fromWithDependencies      0 "$(seq 53 80 | tr '\n' ' ' | sed 's/ $//')" -- --from 53
+t fromWithDependencies      0 "$(seq 53 82 | tr '\n' ' ' | sed 's/ $//')" -- --from 53
 t onlyWithItsProducer       0 "47 48"                                -- --only 47,48
 t oldPlatformSteps          0 "35 36 60"                             -- --only 35-36,60
 t negative_noValue          2 "needs a value"                        -- --only
@@ -40,15 +40,15 @@ t negative_negative         2 "not a step number"                    -- --only -
 t negative_halfRange        2 "not a step number"                    -- --only 3-
 t negative_backwards        2 "runs backwards"                       -- --only 5-3
 t negative_stepZero         2 "no step 0"                            -- --only 0-3
-t negative_pastLast         2 "past the last step"                   -- --only 3,81
+t negative_pastLast         2 "past the last step"                   -- --only 3,83
 t negative_hugeNumber       2 "past the last step"                   -- --only 3-123456789012345678901234
 t negative_fromLineBreak    2 "not a step number"                    -- --from $'44\n1'
-t negative_fromPastLast     2 "past the last step"                   -- --from 81
+t negative_fromPastLast     2 "past the last step"                   -- --from 83
 t negative_onlyTwice        2 "given twice"                          -- --only 3 --only 4
 t negative_onlyAndFrom      2 "together"                             -- --only 3 --from 4
 t negative_missingProducer  2 "select those steps too: --only 47,50" -- --only 50
 t negative_missingMarkers   2 "select those steps too: --only 70-72" -- --only 72
-t negative_fromMissesLink   2 "select those steps too: --only 65,73-80" -- --from 73
+t negative_fromMissesLink   2 "select those steps too: --only 65,73-82" -- --from 73
 KSL_MATRIX_ALL_MODULES=yes t negative_allModulesValue 2 "KSL_MATRIX_ALL_MODULES='yes'" -- --only 35
 KSL_MATRIX_ALL_MODULES=" 1" t negative_allModulesSpace 2 "KSL_MATRIX_ALL_MODULES=' 1'" -- --only 1
 # a release run tests every module on the old platforms, whatever KSL_MATRIX_ALL_MODULES says

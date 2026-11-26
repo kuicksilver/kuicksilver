@@ -162,8 +162,8 @@ cherry-picked from `main` to `release/<X.Y>.x` ([release.md](release.md#releasin
 
 The gate is [`tools/ci/local-matrix.sh`](../tools/ci/local-matrix.sh), run on the maintainer's Mac with Docker (Linux
 and mingw), a running Android emulator, an API 24 emulator of its own and a Windows 11 VM. `tools/ci/local-matrix.sh --dry-run` lists its steps. By
-default it has **80 steps**; a release needs `--with-interop --with-windows`, which makes **85** (and `--with-browser`
-adds a Chrome WebTransport run, 86). Before step 1 it builds any missing OpenSSL, resolves every dependency and runs the
+default it has **82 steps**; a release needs `--with-interop --with-windows`, which makes **87** (and `--with-browser`
+adds a Chrome WebTransport run, 88). Before step 1 it builds any missing OpenSSL, resolves every dependency and runs the
 race tests the branch added or changed 10 times under load ([Race tests repeated under load](#repository-checks)), and it
 refuses to start if any of them fails. What the steps cover:
 
@@ -176,7 +176,7 @@ refuses to start if any of them fails. What the steps cover:
 | JVM on Windows | every module's JVM suite in the Windows 11 VM against the mingw-w64 dll (`--with-windows`) |
 | Android | the AAR, its size gate, 16 KiB page alignment, R8 keep rules, the ALTSVC frame learner's R8 inlining, the exports and OpenSSL of `libksl.so`, the device tests on the emulator (`androidConnectedCheck`), the connection migration tests against a server on the host (`androidMigrationDeviceTest`, and the Compose demo's `migrationDemoDeviceTest`), and the device tests again on an API 24 emulator, the minimum SDK (the hosted CI's `android (24)` job) |
 | Native macOS and iOS | `macosArm64` tests, `iosSimulatorArm64` tests on the simulator, `iosArm64` compiled, OpenSSL symbol prefix |
-| Native Linux | the `linuxX64` and `linuxArm64` test executables of every module, run in Docker; glibc floors; symbol prefix; the deployment guide's commands in a container (`tools/check/deployment-guide.sh`: `curl --http3-only` and `tcpdump` against the engine's Linux executable) |
+| Native Linux | the `linuxX64` and `linuxArm64` test executables of every module, run in Docker; glibc floors; symbol prefix; the deployment guide's commands in a container (`tools/check/deployment-guide.sh`: `curl --http3-only` and `tcpdump` against the engine's Linux executable); the conformance suites h2spec (HTTP/2, `tools/interop/h2spec.sh`), h3spec (HTTP/3 and QUIC, `tools/interop/h3spec.sh`) and the Autobahn\|Testsuite (WebSocket server and client, `tools/interop/autobahn.sh`) against the Linux executables, h2spec and h3spec against the JVM server too |
 | Native Windows | the `mingwX64` test executables are linked here, not run: they run in the hosted CI's `windows` job (stage 6) |
 | C | the `ksl` C tests under ASan and UBSan on macOS, again against an OpenSSL with brotli's decoder only, as Android and iOS ship it (`tools/c-test.sh --decoder-only`); for mingw-x64 cross-built with `-Werror`, not run; on Linux x64 and arm64 in Docker without sanitizers, with the ICMP error-queue tests required to have run |
 | Fuzzing | the committed fuzz inputs of the Jazzer targets as regression tests |
@@ -444,8 +444,8 @@ another file, `select { ch.onReceive }`, comments and string templates that look
 names, and the same module and interop case lists from [`tools/ci/matrix.sh`](../tools/ci/matrix.sh). It runs on pushes
 to `main` and `release/**`, on pull requests to them, weekly, and by hand. The QUIC Interop Runner jobs run only weekly
 and by hand, so hosted CI does not repeat every local step on every push. Its jobs: `lint`; the OpenSSL
-builds in Docker; `linux` (x64 and arm64: C tests, `libksl.so`, JVM suites, system OpenSSL); `linux-native` and
-`linux-native-arm64` (Kotlin/Native test executables; `linux-native` also runs h2spec against the linuxX64 server); `windows` (the `mingwX64` test executables and the C tests on a
+builds in Docker; `linux` (x64 and arm64: C tests, `libksl.so`, JVM suites, system OpenSSL; on x64 also the Autobahn|Testsuite against the JVM WebSocket server and client); `linux-native` and
+`linux-native-arm64` (Kotlin/Native test executables; `linux-native` also runs h2spec, h3spec and the Autobahn|Testsuite against the linuxX64 executable); `windows` (the `mingwX64` test executables and the C tests on a
 Windows runner); `windows-jvm` (JVM suites on Windows against the mingw-w64 dll); `windows-loops-bench` (by hand only, with `only=windows-loops-bench`: `MultiLoopBenchmark` on Windows, not a gate); `openssl-next` (weekly, or by hand with `only=openssl-next`: the newest OpenSSL 4.x built on linux-x64 and macos-arm64 with the C tests and a JVM smoke test; `continue-on-error`, never required, no artifact); `apple` (ABI dumps, ASan C tests, JVM suites, the Intel-Mac library, the double build) and `apple-native` (`macosArm64`
 and `iosSimulatorArm64` suites, `iosArm64` compiled, the release `Kuicksilver.xcframework` built); `android` (API 24 and 35 emulators); `jdk-compat`
 (tests on JDK 17 and 25); `jvm-jar` and `consumer-smoke` (the jar with all five JNI libraries, a sample built from a

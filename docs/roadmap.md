@@ -203,7 +203,8 @@ what the peers really do, and is delivered whole or not at all.
   then zlib, built into libcrypto from pinned and verified releases, [ADR-0025](adr/0025-zlib-and-brotli-in-libcrypto.md)).
 - qlog: HTTP/3 events, checked against qvis. The events are in place ([ADR-0021](adr/0021-qlog-http3-events.md)) and
   the traces are checked offline against the draft's definitions; opening them in qvis is still to do.
-- h3spec and the Autobahn WebSocket suite in the gate.
+- h3spec and the Autobahn WebSocket suite in the gate. Done: `tools/interop/h3spec.sh` and `tools/interop/autobahn.sh`
+  run in the release gate and in hosted CI ([interop.md](spec/interop.md#h3spec-the-http3-server-h3spec-v0115-2026-11-26)).
 - OpenSSL 4.1.x instead of the 3.5 LTS, and 4.2 LTS once it is released (planned by OpenSSL for April 2027): the 3.5
   branch has no ECH ([ADR-0019](adr/0019-openssl-4-and-ech.md), decided 2026-11-18). Done: the pin is 4.1.0.
 - TLS Encrypted Client Hello ([RFC 9849](spec/rfc/9849.md#ech), and its HTTPS record parameter,
@@ -225,6 +226,11 @@ what the peers really do, and is delivered whole or not at all.
 - The GSSAPI method of SOCKS5, a MUST of [RFC 1928 §3](spec/rfc/1928-1929.md#s3-gssapi): where the platform has a GSS-API
   (JGSS on the JVM, GSS.framework on Apple, SSPI on Windows, libgssapi on Linux); Android has none, so there it stays
   unavailable, documented.
+- Optional: permessage-deflate on the JVM with a window below 15 bits. java.util.zip's Deflater has a fixed 15-bit
+  window, so the JVM server declines an offer of `server_max_window_bits` below 15 (RFC 7692 section 7.1.2.1 allows it to)
+  and the client never offers `client_max_window_bits` (a MAY of section 7.1.2.2). Compressing such a message Huffman-only
+  (no back-references, so any window size holds) would let both accept them; the Autobahn|Testsuite marks those cases
+  UNIMPLEMENTED today ([interop.md](spec/interop.md#autobahntestsuite-the-websocket-server-and-client-25101-2026-11-26)).
 - Verification and measurements, moved from 0.3.0 on 2026-11-26 (none of them changes what 0.3.0 does):
   - a mutation score of the protocol cores, starting with HTTP/3 ([how we verify](how-we-verify.md#planted-bugs-instead-of-mutation-testing));
   - differential fuzzing of the QUIC code against quiche and quic-go;

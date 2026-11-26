@@ -23,11 +23,15 @@ kotlin {
     val h2spec: org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget.() -> Unit = {
         binaries.executable("h2specServer", listOf(org.jetbrains.kotlin.gradle.plugin.mpp.NativeBuildType.DEBUG)) { entryPoint = "io.kuicksilver.soak.h2specServerMain"; baseName = "h2spec-server" }
     }
+    // the h3spec server and the Autobahn server and client (tools/interop/h3spec.sh, autobahn.sh) as one executable, as h2spec's
+    val conformance: org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget.() -> Unit = {
+        binaries.executable("conformance", listOf(org.jetbrains.kotlin.gradle.plugin.mpp.NativeBuildType.DEBUG)) { entryPoint = "io.kuicksilver.soak.conformanceMain"; baseName = "conformance" }
+    }
     // the deployment guide's server (tools/check/deployment-guide.sh), run in a Linux container of the host's architecture
     val deployment: org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget.() -> Unit = {
         binaries.executable("deploymentServer", listOf(org.jetbrains.kotlin.gradle.plugin.mpp.NativeBuildType.DEBUG)) { entryPoint = "io.kuicksilver.soak.deploymentServerMain"; baseName = "deployment-server" }
     }
-    linuxX64 { h2spec(); deployment() }; linuxArm64(deployment); macosArm64(h2spec)
+    linuxX64 { h2spec(); conformance(); deployment() }; linuxArm64(deployment); macosArm64 { h2spec(); conformance() }
     applyDefaultHierarchyTemplate()
     sourceSets {
         all { languageSettings.optIn("io.kuicksilver.annotations.InternalKuicksilverApi"); languageSettings.optIn("io.kuicksilver.annotations.ExperimentalKuicksilverApi") }
@@ -35,6 +39,9 @@ kotlin {
             implementation(project(":kuicksilver-ktor-client"))
             implementation(project(":kuicksilver-ktor-server"))
             implementation(libs.ktor.server.auto.head.response) // the deployment server answers the guide's `curl -I`
+            implementation(project(":kuicksilver-ktor-network")) // PerMessageDeflate, for the Autobahn server and client
+            implementation(libs.ktor.server.websockets)
+            implementation(libs.ktor.websockets)
             implementation(libs.kotlinx.io.core)
         }
         // the why-QUIC comparison (tools/bench/why-quic.sh): OkHttp, the TCP client it measures against, on the JVM only
@@ -81,6 +88,14 @@ tasks.register<Sync>("installH2specServer") {
     group = "distribution"
     from(tasks.named("jvmJar")); from(configurations["jvmRuntimeClasspath"])
     into(layout.buildDirectory.dir("install/h2spec-server/lib"))
+}
+
+// The conformance executable on the JVM (tools/interop/h3spec.sh, autobahn.sh): the same layout as installH2specServer under
+// build/install/conformance/lib, the main class io.kuicksilver.soak.ConformanceJvmKt.
+tasks.register<Sync>("installConformance") {
+    group = "distribution"
+    from(tasks.named("jvmJar")); from(configurations["jvmRuntimeClasspath"])
+    into(layout.buildDirectory.dir("install/conformance/lib"))
 }
 
 // The why-QUIC server and clients (tools/bench/why-quic.sh) on the JVM: the same layout as installH2specServer, run inside the

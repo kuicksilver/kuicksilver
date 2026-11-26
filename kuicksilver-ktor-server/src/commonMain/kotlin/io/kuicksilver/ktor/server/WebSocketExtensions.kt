@@ -19,6 +19,7 @@ import io.ktor.utils.io.charsets.Charsets
 import io.ktor.utils.io.writeFully
 import io.ktor.websocket.ProtocolViolationException
 import io.kuicksilver.ktor.network.SentCompression
+import io.kuicksilver.ktor.network.WebSocketPongs
 import io.kuicksilver.ktor.network.guardWebSocketInput
 import io.kuicksilver.ktor.network.guardWebSocketOutput
 import io.kuicksilver.ktor.network.negotiatedPerMessageDeflate
@@ -62,6 +63,13 @@ internal class ServerWebSocket(
 
     val channel: ByteReadChannel
 
+    /**
+     * The engine answers the client's Pings itself, as soon as it reads them (RFC 6455 section 5.5.2), also after the
+     * server's Close until the client's, within the server's close wait (one value on every transport:
+     * WebSocketOverH2.CLOSE_WAIT, which the HTTP/2 and HTTP/3 paths also wait for the client's end with).
+     */
+    private val pongs = WebSocketPongs(io.kuicksilver.ktor.server.h2.WebSocketOverH2.CLOSE_WAIT)
+
     /** The client's Close arrived: the output starts no new message (RFC 6455 sections 1.4, 5.5.1 and 7.1.2). */
     @kotlin.concurrent.Volatile private var clientClosed = false
 
@@ -93,6 +101,7 @@ internal class ServerWebSocket(
                     clientClosed = true
                     onPeerClose()
                 },
+                pongs = pongs,
             )
     }
 
@@ -103,7 +112,7 @@ internal class ServerWebSocket(
     fun output(
         output: ByteWriteChannel,
         onClose: () -> Unit = {},
-    ): ByteWriteChannel = guardWebSocketOutput(output, masking = false, checkText, sentCompression, onClose) { clientClosed }
+    ): ByteWriteChannel = guardWebSocketOutput(output, masking = false, checkText, sentCompression, onClose, { clientClosed }, pongs)
 
     fun done() {
         deflate?.dispose()
