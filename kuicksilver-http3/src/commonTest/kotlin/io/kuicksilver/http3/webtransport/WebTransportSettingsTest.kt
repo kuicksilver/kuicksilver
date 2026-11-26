@@ -56,7 +56,7 @@ import kotlin.time.Duration.Companion.seconds
 internal val wtOn: Http3Settings =
     http3Settings {
         enableConnectProtocol = true
-        webTransport = true
+        webTransport { enabled = true }
     }
 
 /** The SETTINGS the peer of [q] sent on its control stream. */
@@ -251,10 +251,10 @@ class WebTransportSettingsTest {
             http3Settings {
                 enableConnectProtocol = true
                 h3Datagram = false
-                webTransport = true
+                webTransport { enabled = true }
             }
         }
-        assertFailsWith<IllegalArgumentException> { http3Settings { webTransport = true } }
+        assertFailsWith<IllegalArgumentException> { http3Settings { webTransport { enabled = true } } }
         assertTrue(wtOn.toBuilder().build().webTransport)
     }
 

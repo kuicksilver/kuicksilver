@@ -435,7 +435,6 @@ class PseudoHeadersTest {
 }
 
 class PriorityFieldTest {
-    @Suppress("DEPRECATION") // the deprecated maxInformationalResponses keeps its default
     @Test
     fun defaults() {
         assertEquals(StreamPriority.Default, PriorityField.parse(null))
@@ -685,7 +684,6 @@ class Http3ExceptionTest {
 }
 
 class Http3SettingsTest {
-    @Suppress("DEPRECATION") // the deprecated maxInformationalResponses keeps its default
     @Test
     fun defaults() {
         val s = Http3Settings.Default
@@ -696,13 +694,12 @@ class Http3SettingsTest {
         assertEquals(false, s.enableConnectProtocol)
         assertEquals(true, s.h3Datagram)
         assertEquals(true, s.grease)
-        assertEquals(5, s.maxInformationalResponses)
         assertEquals(32, s.maxEarlyPriorityUpdates)
         assertEquals(true, s.glitchProtection)
     }
 
     @Test fun dynamicTableFlag() {
-        val s = http3Settings { enableQpackDynamicTable() }
+        val s = http3Settings { qpack { enableDynamicTable() } }
         assertEquals(4096, s.qpackMaxTableCapacity)
         assertEquals(16, s.qpackBlockedStreams)
     }
@@ -711,8 +708,7 @@ class Http3SettingsTest {
         assertFailsWith<IllegalArgumentException> { http3Settings { maxFieldSectionSize = 0 } }
         assertFailsWith<IllegalArgumentException> {
             http3Settings {
-                qpackBlockedStreams =
-                    -1
+                qpack { blockedStreams = -1 }
             }
         }
     }

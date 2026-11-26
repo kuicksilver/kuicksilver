@@ -65,7 +65,7 @@ class QpackStreamCancellationTest {
         h3Test {
             QuicPair.open().use { q ->
                 val (c, s) = q.connect()
-                val server = Http3Connection.server(s, http3Settings { enableQpackDynamicTable() })
+                val server = Http3Connection.server(s, http3Settings { qpack { enableDynamicTable() } })
                 val raw = RawPeer(c)
                 raw.openControl()
                 val decoderBytes = MutableStateFlow(ByteArray(0))
@@ -115,7 +115,7 @@ class QpackStreamCancellationTest {
         h3Test {
             QuicPair.open().use { q ->
                 val (c, s) = q.connect()
-                val client = Http3Connection.client(c, http3Settings { enableQpackDynamicTable() })
+                val client = Http3Connection.client(c, http3Settings { qpack { enableDynamicTable() } })
                 RawPeer(s).openControl()
                 val decoderBytes = MutableStateFlow(ByteArray(0))
                 val requests = Channel<QuicStream>(Channel.UNLIMITED)
@@ -159,7 +159,7 @@ class QpackStreamCancellationTest {
         h3Test {
             QuicPair.open().use { q ->
                 val (c, s) = q.connect()
-                val client = Http3Connection.client(c, http3Settings { enableQpackDynamicTable() })
+                val client = Http3Connection.client(c, http3Settings { qpack { enableDynamicTable() } })
                 val raw = RawPeer(s)
                 raw.openControl(listOf(SettingsId.MAX_FIELD_SECTION_SIZE to 1000L))
                 val decoderBytes = MutableStateFlow(ByteArray(0))

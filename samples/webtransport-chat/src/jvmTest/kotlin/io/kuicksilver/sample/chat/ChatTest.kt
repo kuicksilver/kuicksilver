@@ -29,7 +29,7 @@ class ChatTest {
         HttpClient(Kuicksilver) {
             engine {
                 trust = ChatTls.clientTrust()
-                http3 { settings = http3Settings { webTransportInitialMaxData = 64L * 1024 } }
+                http3 { settings = http3Settings { webTransport { initialMaxData = 64L * 1024 } } }
             }
         }
 

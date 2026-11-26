@@ -120,6 +120,35 @@ rule(
 # QuicServerConfig.Builder (quicServerConfig(tls) { })
 rule("quic-server", builder("quicServerConfig", "QuicServerConfig"), {"earlyData": ((), "acceptEarlyData")}, receiver="QuicServerConfig")
 
+# Http3Settings.Builder (http3Settings { }); maxInformationalResponses, ignored since 0.2.1, is removed
+rule(
+    "http3",
+    builder("http3Settings", "Http3Settings"),
+    {
+        "qpackMaxTableCapacity": (("qpack",), "maxTableCapacity"),
+        "qpackBlockedStreams": (("qpack",), "blockedStreams"),
+        "encoderMaxTableCapacity": (("qpack",), "encoderMaxTableCapacity"),
+        "grease": (("expert",), "grease"),
+        "maxEarlyPriorityUpdates": (("expert",), "maxEarlyPriorityUpdates"),
+        "glitchProtection": (("expert",), "glitchProtection"),
+        "webTransport": (("webTransport",), "enabled"),
+        "webTransportMaxSessions": (("webTransport",), "maxSessions"),
+        "webTransportInitialMaxStreamsBidi": (("webTransport",), "initialMaxStreamsBidi"),
+        "webTransportInitialMaxStreamsUni": (("webTransport",), "initialMaxStreamsUni"),
+        "webTransportInitialMaxData": (("webTransport",), "initialMaxData"),
+        "maxInformationalResponses": ((), None),
+    },
+    receiver="Http3Settings.Builder",
+)
+
+# Http2Settings: constructor calls are rewritten by rewrite_h2_calls (no builder block existed before)
+rule("http2", r"(?!x)x", {})
+
+# Calls that moved into a group: (pattern, replacement), applied everywhere.
+CALLS = {
+    "http3": [(re.compile(r"(?<![.\w])enableQpackDynamicTable\(\)"), "qpack { enableDynamicTable() }")],
+}
+
 # The same moves in any block: the names are TlsConfig.Builder's alone (test fixtures that take a builder lambda).
 rule("tls-any", r"\{", RULES["tls"][1])
 
@@ -274,11 +303,95 @@ def _one_change(text, code, names, report, where):
 
 def rewrite_code(text, names, report, where):
     """text rewritten with the rules in names; report collects lines that need a manual decision."""
+    for name in names:
+        for pattern, replacement in CALLS.get(name, []):
+            text = pattern.sub(replacement, text)
+    if "http2" in names:
+        text = rewrite_h2_calls(text, report, where)
     while True:
         new = _one_change(text, kotlin_scan.blank(text), names, report, where)
         if new is None:
             return text
         text = new
+
+
+# Http2Settings(...) (a constructor in 0.3.0 snapshots) becomes http2Settings { }: named arguments only.
+H2_TOP = {"headerTableSize", "maxConcurrentStreams", "initialStreamWindow", "maxStreamWindow", "initialConnectionWindow",
+          "maxConnectionWindow", "maxFrameSize", "settingsAckTimeout", "maxHeaderBlockTime"}
+H2_FLOOD = {"maxContinuationFrames", "maxControlFramesQueued", "maxEmptyFrames"}
+H2_RATES = {"resets": ("resetsPerSecond", "resetBurst", "33", "1_000"), "glitches": ("glitchesPerSecond", "glitchBurst", "330", "10_000")}
+_H2_CALL = re.compile(r"(?<![.\w])(?:io\.kuicksilver\.http2\.)?Http2Settings\(")
+
+
+def _args(code, text, start):
+    """(end, [(name or None, value)]) of the argument list whose '(' is at start."""
+    depth, i, cur, out = 0, start, start + 1, []
+    while i < len(code):
+        c = code[i]
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+            if depth == 0:
+                if text[cur:i].strip():
+                    out.append(text[cur:i])
+                break
+        elif c == "," and depth == 1:
+            out.append(text[cur:i])
+            cur = i + 1
+        i += 1
+    args = []
+    for a in out:
+        m = re.match(r"\s*(\w+)\s*=(?!=)(.*)$", a, re.S)
+        args.append((m.group(1), m.group(2).strip()) if m else (None, a.strip()))
+    return i + 1, args
+
+
+def rewrite_h2_calls(text, report, where):
+    while True:
+        code = kotlin_scan.blank(text)
+        m = _H2_CALL.search(code)
+        if not m:
+            return text
+        end, args = _args(code, text, m.end() - 1)
+        line = text.count("\n", 0, m.start()) + 1
+        if any(n is None for n, _ in args):
+            report.append(f"{where}:{line}: Http2Settings(...) with positional arguments: rewrite by hand as http2Settings {{ }}")
+            text = text[:m.start()] + "Http2Settings/*positional*/" + text[m.end() - 1:]  # left for the compiler
+            continue
+        if not args:
+            text = text[:m.start()] + "Http2Settings.Default" + text[end:]
+            continue
+        given = dict(args)
+        indent = re.match(r"[ \t]*", text[text.rfind("\n", 0, m.start()) + 1:]).group(0)
+        body, flood = [], []
+        for n, v in args:
+            if n in H2_TOP:
+                body.append(f"{n} = {v}")
+            elif n == "maxHeaderListSize":
+                body.append(f"maxFieldSectionSize = {v}")
+            elif n in H2_FLOOD:
+                flood.append(f"{n} = {v}")
+        for group, (rate, burst, d_rate, d_burst) in H2_RATES.items():
+            if rate in given or burst in given:
+                flood.append(f"{group} = RateLimit({given.get(rate, d_rate)}, {given.get(burst, d_burst)})")
+                if given.get(rate) in ("0",):
+                    report.append(f"{where}:{line}: {rate} = 0 (never refills) is gone: RateLimit needs at least 1 a second")
+        unknown = [n for n in given if n not in H2_TOP | H2_FLOOD | {"maxHeaderListSize"} | {x for r in H2_RATES.values() for x in r[:2]}]
+        for n in unknown:
+            report.append(f"{where}:{line}: Http2Settings({n} = ...) is no option")
+        inner = indent + "    "
+        lines = [inner + b for b in body]
+        if flood:
+            lines.append(inner + "floodLimits {")
+            lines += [inner + "    " + f for f in flood]
+            lines.append(inner + "}")
+        block = "http2Settings {\n" + "\n".join(lines) + "\n" + indent + "}"
+        text = text[:m.start()] + block + text[end:]
+        if "RateLimit(" in block and "import io.kuicksilver.config.RateLimit" not in text and where.endswith(".kt"):
+            text = re.sub(r"^(import )", "import io.kuicksilver.config.RateLimit\n\\1", text, count=1, flags=re.M)
+        if where.endswith(".kt") and "import io.kuicksilver.http2.http2Settings" not in text and re.search(r"^package io\.kuicksilver\.http2\b", text, re.M) is None:
+            text = re.sub(r"^(import )", "import io.kuicksilver.http2.http2Settings\n\\1", text, count=1, flags=re.M)
 
 
 _ERROR = re.compile(r"^e: (?:file://)?(\S+?\.kts?):(\d+):(\d+) (Unresolved reference '(\w+)'(?: on receiver of type '([\w.<>?]+)')?"

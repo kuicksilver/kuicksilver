@@ -42,7 +42,7 @@ class ServerWebTransportTest {
     private val wt =
         http3Settings {
             enableConnectProtocol = true
-            webTransport = true
+            webTransport { enabled = true }
         }
 
     private fun wtReq(

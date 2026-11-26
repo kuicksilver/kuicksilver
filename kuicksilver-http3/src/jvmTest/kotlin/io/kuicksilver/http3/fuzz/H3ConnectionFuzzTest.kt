@@ -158,13 +158,13 @@ internal class H3Run(
 
     private fun settings(b: Int): Http3Settings =
         http3Settings {
-            qpackMaxTableCapacity = listOf(0L, 220L, 4096L)[b % 3]
-            qpackBlockedStreams = listOf(0L, 1L, 16L)[(b / 3) % 3]
-            encoderMaxTableCapacity = listOf(4096L, 64L)[(b / 9) % 2]
+            qpack { maxTableCapacity = listOf(0L, 220L, 4096L)[b % 3] }
+            qpack { blockedStreams = listOf(0L, 1L, 16L)[(b / 3) % 3] }
+            qpack { encoderMaxTableCapacity = listOf(4096L, 64L)[(b / 9) % 2] }
             maxFieldSectionSize = if ((b / 18) % 4 == 0) 600L else 65_536L
             enableConnectProtocol = (b / 72) % 2 == 1
             h3Datagram = false
-            grease = (b / 144) % 2 == 1
+            expert { grease = (b / 144) % 2 == 1 }
         }
 
     fun run() {

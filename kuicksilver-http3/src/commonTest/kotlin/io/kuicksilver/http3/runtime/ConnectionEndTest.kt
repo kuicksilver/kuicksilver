@@ -603,7 +603,7 @@ class ConnectionEndTest {
             val wt =
                 http3Settings {
                     enableConnectProtocol = true
-                    webTransport = true
+                    webTransport { enabled = true }
                 }
             H3Pair.open(clientSettings = wt, serverSettings = wt).useScoped { p ->
                 val server = async { p.server.acceptRequest().acceptWebTransport() }

@@ -63,7 +63,7 @@ class WtHeaderlessResetTest {
             // draft-02 without reset_stream_at, as browsers
             val quic = if (resetStreamAt) H3Fixtures.quic else QuicConfig.Default
             // no reserved streams: the server's count of dropped unidirectional streams is the test's alone
-            val settings = wtOn.toBuilder().apply { grease = false }.build()
+            val settings = wtOn.toBuilder().apply { expert { grease = false } }.build()
             H3Pair
                 .open(clientSettings = settings, serverSettings = settings, serverQuic = quic, clientQuic = quic)
                 .useScoped { p ->

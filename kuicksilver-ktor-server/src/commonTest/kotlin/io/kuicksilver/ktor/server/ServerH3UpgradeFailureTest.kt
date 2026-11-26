@@ -70,7 +70,7 @@ class ServerH3UpgradeFailureTest {
                 val settings =
                     http3Settings {
                         enableConnectProtocol = true
-                        webTransport = true
+                        webTransport { enabled = true }
                     }
                 val c = ep.connect(InetSocketAddress("127.0.0.1", port), ServerFixtures.clientTls(alpn = listOf("h3")), settings = settings)
                 try {

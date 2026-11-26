@@ -1,10 +1,11 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+@file:OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class, InternalKuicksilverApi::class)
 
 package io.kuicksilver.http3.runtime
 
 import io.ktor.utils.io.ByteChannel
+import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers

@@ -779,7 +779,7 @@ internal class H3Pool(
             .toBuilder()
             .apply {
                 enableConnectProtocol = true
-                webTransport = true
+                webTransport { enabled = true }
             }.build()
 
     /**

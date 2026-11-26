@@ -92,7 +92,7 @@ Header compression uses the static table always and the dynamic table only when 
 
 ```kotlin
 // guide:http3:qpack
-val settings = http3Settings { enableQpackDynamicTable() }   // advertise 4096 bytes / 16 blocked streams
+val settings = http3Settings { qpack { enableDynamicTable() } }   // advertise 4096 bytes / 16 blocked streams
 val client = Http3Connection.client(quicConnection, settings)
 ```
 

@@ -671,7 +671,11 @@ class ConnectUdpTest {
         h3Test {
             val rig =
                 rig { f ->
-                    UdpProxyConfig(targetFilter = UdpTargetFilter.AllowAll, packetRate = 1, packetBurst = 3, socketFactory = f)
+                    UdpProxyConfig(
+                        targetFilter = UdpTargetFilter.AllowAll,
+                        packets = io.kuicksilver.config.RateLimit(1, 3),
+                        socketFactory = f,
+                    )
                 }
             rig.proxy.impl.clock = TestTimeSource()
             rig.use { r ->
@@ -2134,7 +2138,11 @@ class ConnectUdpTest {
         h3Test {
             val rig =
                 rig { f ->
-                    UdpProxyConfig(targetFilter = UdpTargetFilter.AllowAll, clientPacketRate = 1, clientPacketBurst = 3, socketFactory = f)
+                    UdpProxyConfig(
+                        targetFilter = UdpTargetFilter.AllowAll,
+                        clientPackets = io.kuicksilver.config.RateLimit(1, 3),
+                        socketFactory = f,
+                    )
                 }
             rig.proxy.impl.clock = TestTimeSource()
             rig.use { r ->

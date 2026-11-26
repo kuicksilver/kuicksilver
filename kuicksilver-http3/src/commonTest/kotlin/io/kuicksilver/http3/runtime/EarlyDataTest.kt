@@ -567,14 +567,14 @@ class EarlyDataTest {
         runBlocking {
             withTimeout(30.seconds) {
                 val seen = AtomicInt(0)
-                val dynamic = http3Settings { enableQpackDynamicTable() }
+                val dynamic = http3Settings { qpack { enableDynamicTable() } }
                 val headers = Http3Headers.of("x-session-detail" to "a value worth putting into the dynamic table")
                 val accepted =
                     earlyAcceptedAfterResuming(
-                        issuer = http3Settings { enableQpackDynamicTable() },
+                        issuer = http3Settings { qpack { enableDynamicTable() } },
                         resumer =
                             http3Settings {
-                                enableQpackDynamicTable()
+                                qpack { enableDynamicTable() }
                                 h3Datagram = false
                             },
                         earlyRequest = true,
@@ -946,7 +946,7 @@ class EarlyDataTest {
                     { l -> l.filter { it.first != capacity } },
                 )
             for (change in changes) {
-                Fixture(Http3EarlyDataPolicy.WaitForHandshake()) { enableQpackDynamicTable() }.use { f ->
+                Fixture(Http3EarlyDataPolicy.WaitForHandshake()) { qpack { enableDynamicTable() } }.use { f ->
                     withTimeout(20.seconds) {
                         f.start()
                         f.warmUp()
@@ -1000,7 +1000,7 @@ class EarlyDataTest {
             for (change in changes) {
                 Fixture(Http3EarlyDataPolicy.WaitForHandshake()) {
                     enableConnectProtocol = true
-                    webTransport = true
+                    webTransport { enabled = true }
                 }.use { f ->
                     withTimeout(20.seconds) {
                         f.start()
@@ -1050,7 +1050,7 @@ class EarlyDataTest {
             for ((change, expected) in changes) {
                 Fixture(Http3EarlyDataPolicy.WaitForHandshake()) {
                     enableConnectProtocol = true
-                    webTransport = true
+                    webTransport { enabled = true }
                 }.use { f ->
                     withTimeout(20.seconds) {
                         f.start()
@@ -1087,10 +1087,10 @@ class EarlyDataTest {
                 val issuer = io.kuicksilver.http3.webtransport.wtOn
                 val changed =
                     listOf<Http3Settings.Builder.() -> Unit>(
-                        { webTransportInitialMaxData = 1000 },
-                        { webTransportInitialMaxStreamsBidi = 3 },
-                        { webTransportInitialMaxStreamsUni = 3 },
-                        { webTransportMaxSessions = 2 },
+                        { webTransport { initialMaxData = 1000 } },
+                        { webTransport { initialMaxStreamsBidi = 3 } },
+                        { webTransport { initialMaxStreamsUni = 3 } },
+                        { webTransport { maxSessions = 2 } },
                     )
                 for (change in changed) {
                     assertEquals(false, earlyAcceptedAfterResuming(issuer = issuer, resumer = issuer.toBuilder().apply(change).build()))
@@ -1311,13 +1311,15 @@ class EarlyDataTest {
 
     private val wtServer: Http3Settings.Builder.() -> Unit = {
         enableConnectProtocol = true
-        webTransport = true
-        webTransportMaxSessions = 1
+        webTransport {
+            enabled = true
+            maxSessions = 1
+        }
     }
     private val wtClient =
         io.kuicksilver.http3.http3Settings {
             enableConnectProtocol = true
-            webTransport = true
+            webTransport { enabled = true }
         }
 
     /** The server's WebTransport sessions are all gone and nothing waits in its fair queues. */
@@ -1443,13 +1445,13 @@ class EarlyDataTest {
                         issuer =
                             io.kuicksilver.http3.http3Settings {
                                 enableConnectProtocol = true
-                                webTransport = true
+                                webTransport { enabled = true }
                             },
                         resumer =
                             io.kuicksilver.http3.http3Settings {
                                 enableConnectProtocol = true
-                                webTransport = true
-                                webTransportInitialMaxData = 2_000_000
+                                webTransport { enabled = true }
+                                webTransport { initialMaxData = 2_000_000 }
                             },
                         resumerRequests = seen,
                         clientSettings = wtClient,

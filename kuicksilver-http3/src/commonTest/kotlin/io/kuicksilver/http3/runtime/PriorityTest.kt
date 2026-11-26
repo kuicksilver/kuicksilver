@@ -409,7 +409,7 @@ class PriorityTest {
         h3Test {
             QuicPair.open().use { q ->
                 val (c, s) = q.connect()
-                val server = Http3Connection.server(s, http3Settings { enableQpackDynamicTable() })
+                val server = Http3Connection.server(s, http3Settings { qpack { enableDynamicTable() } })
                 val raw = RawPeer(c)
                 raw.openControl(listOf(SettingsId.QPACK_MAX_TABLE_CAPACITY to 4096L, SettingsId.QPACK_BLOCKED_STREAMS to 16L))
                 // encoder stream bytes so far

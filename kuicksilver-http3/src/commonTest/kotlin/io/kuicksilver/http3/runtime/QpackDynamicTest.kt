@@ -62,7 +62,7 @@ import kotlin.time.Duration.Companion.seconds
 class QpackDynamicTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
-    private val dyn = http3Settings { enableQpackDynamicTable() }
+    private val dyn = http3Settings { qpack { enableDynamicTable() } }
     private val headers =
         Http3Headers.of(
             "user-agent" to "kuicksilver-test/1.0 (dynamic table)",
@@ -542,9 +542,9 @@ class QpackDynamicTest {
                     Http3Connection.server(
                         s,
                         http3Settings {
-                            enableQpackDynamicTable()
+                            qpack { enableDynamicTable() }
                             enableConnectProtocol = true
-                            webTransport = true
+                            webTransport { enabled = true }
                         },
                     )
                 val dc = DynClient(c)

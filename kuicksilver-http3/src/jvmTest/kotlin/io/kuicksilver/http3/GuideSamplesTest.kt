@@ -110,12 +110,12 @@ class GuideSamplesTest {
                 val q = QuicPair.open()
                 val (quicConnection, serverQuic) = q.connect()
                 // guide:http3:qpack
-                val settings = http3Settings { enableQpackDynamicTable() } // advertise 4096 bytes / 16 blocked streams
+                val settings = http3Settings { qpack { enableDynamicTable() } } // advertise 4096 bytes / 16 blocked streams
                 val serverConnection =
                     Http3Connection.server(
                         serverQuic,
                         http3Settings {
-                            enableQpackDynamicTable()
+                            qpack { enableDynamicTable() }
                             enableConnectProtocol =
                                 true
                         },
@@ -283,7 +283,7 @@ class GuideSamplesTest {
                 val wt =
                     http3Settings {
                         enableConnectProtocol = true
-                        webTransport = true
+                        webTransport { enabled = true }
                     }
                 val serverConnection = Http3Connection.server(serverQuic, wt)
                 val client = Http3Connection.client(quicConnection, wt)
@@ -322,7 +322,7 @@ class GuideSamplesTest {
                 val wt =
                     http3Settings {
                         enableConnectProtocol = true
-                        webTransport = true
+                        webTransport { enabled = true }
                     }
                 val serverConnection = Http3Connection.server(serverQuic, wt)
                 val client = Http3Connection.client(quicConnection, wt)

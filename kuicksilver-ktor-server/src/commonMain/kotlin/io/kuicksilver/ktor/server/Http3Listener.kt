@@ -98,7 +98,7 @@ private fun KuicksilverApplicationEngine.http3Settings(): Http3Settings {
         .toBuilder()
         .apply {
             if (connect) enableConnectProtocol = true
-            if (wt) webTransport = true
+            if (wt) webTransport { enabled = true }
         }.build()
 }
 

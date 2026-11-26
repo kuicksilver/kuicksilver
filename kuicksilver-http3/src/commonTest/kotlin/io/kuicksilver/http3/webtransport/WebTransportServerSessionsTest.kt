@@ -151,7 +151,7 @@ class WebTransportServerSessionsTest {
 
     /** Section 5.2 (draft-14 section 5.2): beyond webTransportMaxSessions a CONNECT is refused; a freed slot takes one again. */
     @Test fun negative_sessionBeyondTheLimitIsRefused() =
-        serverTest(serverSettings = wtOn.toBuilder().apply { webTransportMaxSessions = 2 }.build()) { r ->
+        serverTest(serverSettings = wtOn.toBuilder().apply { webTransport { maxSessions = 2 } }.build()) { r ->
             val (a, sa) = rawSession(r.c, r.server, r.raw)
             val (b, sb) = rawSession(r.c, r.server, r.raw)
             r.refusedConnect()
@@ -322,7 +322,7 @@ class WebTransportServerSessionsTest {
 
     /** Two CONNECTs racing for the last slot: exactly one is admitted, the other refused. */
     @Test fun negative_connectsRacingForTheLastSlotAdmitOne() =
-        serverTest(serverSettings = wtOn.toBuilder().apply { webTransportMaxSessions = 2 }.build()) { r ->
+        serverTest(serverSettings = wtOn.toBuilder().apply { webTransport { maxSessions = 2 } }.build()) { r ->
             rawSession(r.c, r.server, r.raw)
             launch { runCatching { r.server.acceptRequest().acceptWebTransport() } }
             val x = r.c.openBidi()

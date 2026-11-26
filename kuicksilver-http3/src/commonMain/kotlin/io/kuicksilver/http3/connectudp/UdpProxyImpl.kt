@@ -1,10 +1,11 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(ExperimentalKuicksilverApi::class, ExperimentalAtomicApi::class, InternalKuicksilverApi::class)
+@file:OptIn(ExperimentalKuicksilverApi::class, ExperimentalAtomicApi::class, InternalKuicksilverApi::class, DelicateKuicksilverApi::class)
 
 package io.kuicksilver.http3.connectudp
 
 import io.ktor.network.sockets.InetSocketAddress
+import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.http3.CapsuleProtocol
@@ -631,7 +632,10 @@ internal class UdpProxyImpl(
             val st =
                 clients.getOrPut(client) {
                     ClientState(
-                        SharedTokenBucket(config.clientPacketRate, config.clientPacketBurst) { clockStart.elapsedNow().inWholeNanoseconds },
+                        SharedTokenBucket(
+                            config.clientPackets.perSecond,
+                            config.clientPackets.burst,
+                        ) { clockStart.elapsedNow().inWholeNanoseconds },
                     )
                 }
             if (st.tunnels >= config.maxTunnelsPerClient) return@withLock 429
@@ -715,7 +719,7 @@ private class ProxyTunnel(
 
     // one byte more than the link carries: a datagram that fills the slot was larger, and is dropped, not forwarded cut
     private val receiveSlot = linkMtu + 1
-    private val bucket = TokenBucket(config.packetRate, config.packetBurst) { start.elapsedNow().inWholeNanoseconds }
+    private val bucket = TokenBucket(config.packets.perSecond, config.packets.burst) { start.elapsedNow().inWholeNanoseconds }
 
     // what was sent lately, for the check of an ICMP unreachable; only on a socket that reports them
     private val sent: SentPrefixes? = if (io.io is UnreachableReports) SentPrefixes() else null

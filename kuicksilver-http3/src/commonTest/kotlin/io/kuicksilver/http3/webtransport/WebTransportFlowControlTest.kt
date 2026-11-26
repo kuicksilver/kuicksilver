@@ -63,9 +63,9 @@ internal fun wtLimits(
     wtOn
         .toBuilder()
         .apply {
-            webTransportInitialMaxStreamsBidi = bidi
-            webTransportInitialMaxStreamsUni = uni
-            webTransportInitialMaxData = data
+            webTransport { initialMaxStreamsBidi = bidi }
+            webTransport { initialMaxStreamsUni = uni }
+            webTransport { initialMaxData = data }
         }.build()
 
 /** The settings of a raw WebTransport client that declares flow control (draft-16 section 5.1) with these limits. */
@@ -428,8 +428,8 @@ class WebTransportFlowControlTest {
                     expert { resetStreamAt = true }
                     expert { maxUniStreams = 4 }
                 }
-            val server = wtLimits(uni = 2).toBuilder().apply { grease = false }.build()
-            val client = wtOn.toBuilder().apply { grease = false }.build()
+            val server = wtLimits(uni = 2).toBuilder().apply { expert { grease = false } }.build()
+            val client = wtOn.toBuilder().apply { expert { grease = false } }.build()
             H3Pair.open(clientSettings = client, serverSettings = server, serverQuic = quic).useScoped { p ->
                 val serverSide = CompletableDeferred<WebTransportSession>()
                 launch { serverSide.complete(p.server.acceptRequest().acceptWebTransport()) }
@@ -472,8 +472,8 @@ class WebTransportFlowControlTest {
                     expert { resetStreamAt = true }
                     if (waitsForQuic) expert { maxUniStreams = 4 }
                 }
-            val server = wtLimits(uni = if (waitsForQuic) 5 else 1).toBuilder().apply { grease = false }.build()
-            val client = wtOn.toBuilder().apply { grease = false }.build()
+            val server = wtLimits(uni = if (waitsForQuic) 5 else 1).toBuilder().apply { expert { grease = false } }.build()
+            val client = wtOn.toBuilder().apply { expert { grease = false } }.build()
             H3Pair.open(clientSettings = client, serverSettings = server, serverQuic = quic).useScoped { p ->
                 val serverSide = CompletableDeferred<WebTransportSession>()
                 launch { serverSide.complete(p.server.acceptRequest().acceptWebTransport()) }
@@ -1034,7 +1034,7 @@ class WebTransportFlowControlTest {
     /** The client's own webTransportMaxSessions caps the sessions it puts on one connection. */
     @Test fun negative_clientBeyondItsOwnLimitIsRefused() =
         h3Test {
-            val client = wtOn.toBuilder().apply { webTransportMaxSessions = 2 }.build()
+            val client = wtOn.toBuilder().apply { webTransport { maxSessions = 2 } }.build()
             H3Pair.open(clientSettings = client, serverSettings = wtOn).useScoped { p ->
                 launch { repeat(2) { p.server.acceptRequest().acceptWebTransport() } }
                 repeat(2) { p.client.webTransport(wtReq()) }
@@ -1045,7 +1045,7 @@ class WebTransportFlowControlTest {
     /** Section 5.2: a server at its limit refuses with H3_REQUEST_REJECTED, which reaches the client as not processed. */
     @Test fun negative_serverAtItsLimitRefusesUnprocessed() =
         h3Test {
-            val server = wtOn.toBuilder().apply { webTransportMaxSessions = 1 }.build()
+            val server = wtOn.toBuilder().apply { webTransport { maxSessions = 1 } }.build()
             H3Pair.open(clientSettings = wtOn, serverSettings = server).useScoped { p ->
                 launch { p.server.acceptRequest().acceptWebTransport() }
                 p.client.webTransport(wtReq())
@@ -1260,7 +1260,7 @@ class WebTransportFlowControlTest {
             ctx.contentEquals(
                 wtOn
                     .toBuilder()
-                    .apply { webTransportMaxSessions = 2 }
+                    .apply { webTransport { maxSessions = 2 } }
                     .build()
                     .earlyDataContext(),
             ),

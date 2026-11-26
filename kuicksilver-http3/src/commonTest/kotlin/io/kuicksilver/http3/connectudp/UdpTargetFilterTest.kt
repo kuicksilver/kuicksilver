@@ -122,7 +122,7 @@ class UdpTargetFilterTest {
         assertFailsWith<IllegalArgumentException> { UdpProxyConfig(idleTimeout = 119.seconds) }
         assertFailsWith<IllegalArgumentException> { UdpProxyConfig(socketOpenTimeout = kotlin.time.Duration.ZERO) }
         assertFailsWith<IllegalArgumentException> { UdpProxyConfig(linkMtu = 1279) }
-        assertFailsWith<IllegalArgumentException> { UdpProxyConfig(packetRate = 0) }
+        assertFailsWith<IllegalArgumentException> { UdpProxyConfig(packets = io.kuicksilver.config.RateLimit(0, 1)) }
         assertFailsWith<IllegalArgumentException> { UdpProxyConfig(proxyName = "bad name") }
         assertFailsWith<IllegalArgumentException> { UdpProxyConfig(proxyName = "1abc") }
         assertFailsWith<IllegalArgumentException> { UdpProxyConfig(pathTemplate = "/m/{target_host}{target_port}") }

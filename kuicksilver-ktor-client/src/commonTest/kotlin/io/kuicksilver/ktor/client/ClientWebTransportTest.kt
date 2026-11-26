@@ -180,8 +180,8 @@ class ClientWebTransportTest {
                     http3Settings =
                         http3Settings {
                             enableConnectProtocol = true
-                            webTransport = true
-                            webTransportMaxSessions = 1
+                            webTransport { enabled = true }
+                            webTransport { maxSessions = 1 }
                         }
                 }) { routing { webTransport("/wt") { echo(it) } } }
             try {
@@ -235,8 +235,8 @@ class ClientWebTransportTest {
         http3Settings =
             http3Settings {
                 enableConnectProtocol = true
-                webTransport = true
-                webTransportMaxSessions = 1
+                webTransport { enabled = true }
+                webTransport { maxSessions = 1 }
             }
     }
 
@@ -319,7 +319,7 @@ class ClientWebTransportTest {
                         }.build(),
                     http3Settings {
                         enableConnectProtocol = true
-                        webTransport = true
+                        webTransport { enabled = true }
                     },
                 )
             val accepted = kotlinx.coroutines.flow.MutableStateFlow(0)
@@ -358,10 +358,10 @@ class ClientWebTransportTest {
                     http3Settings =
                         http3Settings {
                             enableConnectProtocol = true
-                            webTransport = true
-                            webTransportInitialMaxStreamsBidi = 0
-                            webTransportInitialMaxStreamsUni = 0
-                            webTransportInitialMaxData = 0
+                            webTransport { enabled = true }
+                            webTransport { initialMaxStreamsBidi = 0 }
+                            webTransport { initialMaxStreamsUni = 0 }
+                            webTransport { initialMaxData = 0 }
                         }
                 }) { routing { webTransport("/wt") { echo(it) } } }
             try {
@@ -527,7 +527,7 @@ class ClientWebTransportTest {
                         }.build(),
                     http3Settings {
                         enableConnectProtocol = true
-                        webTransport = true
+                        webTransport { enabled = true }
                     },
                 )
             try {

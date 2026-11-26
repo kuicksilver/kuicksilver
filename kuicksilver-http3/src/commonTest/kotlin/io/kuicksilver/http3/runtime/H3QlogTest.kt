@@ -322,7 +322,7 @@ class H3QlogTest {
             val sink = MemoryQlogSink()
             QuicPair.open(serverQlog = sink).use { q ->
                 val (c, s) = q.connect()
-                val server = Http3Connection.server(s, http3Settings { enableQpackDynamicTable() })
+                val server = Http3Connection.server(s, http3Settings { qpack { enableDynamicTable() } })
                 val raw = RawPeer(c)
                 raw.openControl()
                 val encoderStream = raw.uni(StreamType.QPACK_ENCODER)

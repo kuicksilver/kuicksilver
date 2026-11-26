@@ -94,8 +94,8 @@ class WebTransportStreamsTest {
             val dyn =
                 http3Settings {
                     enableConnectProtocol = true
-                    webTransport = true
-                    enableQpackDynamicTable()
+                    webTransport { enabled = true }
+                    qpack { enableDynamicTable() }
                 }
             H3Pair.open(clientSettings = dyn, serverSettings = dyn).useScoped { p ->
                 val (client, server) = sessions(p)

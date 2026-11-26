@@ -272,16 +272,16 @@ class WtSessionFlowPropertyTest {
         assertFailsWith<IllegalArgumentException> {
             wtOn
                 .toBuilder()
-                .apply { webTransportMaxSessions = 5 }
+                .apply { webTransport { maxSessions = 5 } }
                 .build()
                 .requireWebTransportFits(quic)
         }
         // without flow control (one session per connection) or without WebTransport nothing is checked
         wtLimits(0, 0, 0)
             .toBuilder()
-            .apply { webTransportMaxSessions = 1000 }
+            .apply { webTransport { maxSessions = 1000 } }
             .build()
             .requireWebTransportFits(quic)
-        http3Settings { webTransportInitialMaxStreamsBidi = 1L shl 60 }.requireWebTransportFits(quic)
+        http3Settings { webTransport { initialMaxStreamsBidi = 1L shl 60 } }.requireWebTransportFits(quic)
     }
 }
