@@ -380,6 +380,36 @@ void run_key(void) {
         END();
     }
 
+    /* One identity per context: OpenSSL would keep an RSA certificate beside an ECDSA one (one slot per key type) and let the
+       suite choose between them, unseen by h2_allowed, which reads the key in use (RFC 9113 section 9.2.2). A second identity,
+       of the other key type or the same, is refused and the first one stays. */
+    {
+        SECTION("one_identity_per_context");
+        ksl_ctx *sc = server_ctx("server"); /* ECDSA */
+        blob ch = chain_of(1, "weak/leaf-rsa2048");
+        size_t kl;
+        uint8_t *k = key_of("weak/leaf-rsa2048", &kl);
+        CHECK(ksl_ctx_set_identity(sc, ch.buf, ch.len, k, kl) == KSL_ERROR,
+              "negative: an RSA identity beside the ECDSA one");
+        uint32_t code = 0;
+        char m[256] = {0};
+        ksl_ctx_last_error(sc, &code, m, sizeof m);
+        CHECK(strstr(m, "has an identity already") != NULL, "the refusal says why");
+        blob ec = chain_of(1, "server");
+        size_t el;
+        uint8_t *ek = key_of("server", &el);
+        CHECK(ksl_ctx_set_identity(sc, ec.buf, ec.len, ek, el) == KSL_ERROR, "negative: the same identity twice");
+        ksl_ctx *rsa = ksl_ctx_new(KSL_SERVER);
+        CHECK(ksl_ctx_set_identity(rsa, ch.buf, ch.len, k, kl) == KSL_OK, "control: the RSA identity alone");
+        free(ch.buf);
+        free(k);
+        free(ec.buf);
+        free(ek);
+        ksl_ctx_free(rsa);
+        ksl_ctx_free(sc);
+        END();
+    }
+
     /* QUIC-LB connection IDs (draft-ietf-quic-load-balancers-21 section 5.4): one AES-128-ECB block per call, the key copied in */
     {
         SECTION("lb_key_fips197");

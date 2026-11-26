@@ -28,7 +28,10 @@
    [TLS-ECDHE] with the P-256 elliptic curve [RFC8422]". A TLS 1.2 handshake whose context cannot (its certificate has no
    rsaEncryption key, or P-256 is not among its groups) does not get h2; TLS 1.3 is unaffected. In TLS 1.2 OpenSSL selects
    ALPN after the version, the certificate (SNI) and the cipher suite (tls_post_process_client_hello), and calls this with the
-   session's current context: an SNI override's, with its own groups. */
+   session's current context: an SNI override's, with its own groups. OpenSSL could hold one certificate per key type in a
+   context (RSA and ECDSA side by side, the suite choosing between them); ksl holds one: ksl_ctx_set_identity_pkey refuses a
+   second identity, so the key in use is the context's only one and an RSA certificate cannot sit unseen beside it. A resumed
+   TLS 1.2 session gets the same answer: OpenSSL calls the ALPN callback on resumption too, with the same context. */
 static int ctx_has_p256(const ksl_ctx *c);
 static int h2_allowed(SSL *ssl, const ksl_ctx *c) {
     if (SSL_version(ssl) != TLS1_2_VERSION)
@@ -906,6 +909,12 @@ int ksl_ctx_set_identity_pkey(ksl_ctx *c, const uint8_t *chain, size_t chain_len
     ERR_clear_error();
     if (!key) {
         ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: no private key");
+        return KSL_ERROR;
+    }
+    /* one identity per context (h2_allowed relies on it): a second, of another key type, would sit beside the first in
+       OpenSSL's per-type slots and be chosen by the suite, unseen by the checks made on the first */
+    if (SSL_CTX_get0_certificate(c->ctx) != NULL) {
+        ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: the context has an identity already (one per context)");
         return KSL_ERROR;
     }
     STACK_OF(X509) *sk = NULL;

@@ -278,3 +278,10 @@ The design left these cases open or met them only in the code; each was decided 
   options an engine derives or raises); set explicitly, it is kept, and a misfit is refused in the engine's terms: at the
   start by the server, at the first `webTransport()` call by the client (which has no WebTransport switch, as for the
   stream limits). A product above 2^62-1 fails the server's start; the client caps it there.
+- **One certificate per TLS context, so `h2_allowed` sees the one that decides.** OpenSSL can hold one certificate per key
+  type in a context (RSA and ECDSA side by side, the cipher suite choosing between them), and `h2_allowed` reads only the
+  key in use. Nothing in the library installs two (`TlsConfig` has one identity, an `sniSelector` answer is a context of
+  its own), so rather than check every slot, `ksl_ctx_set_identity_pkey` now refuses a second identity: the invariant is
+  enforced, not assumed. A resumed TLS 1.2 session is held to the same rule, as OpenSSL calls the ALPN callback on
+  resumption too (tested with both key types). The client-visible effects are documented: a TLS 1.2 client of an ECDSA
+  certificate gets HTTP/1.1 when it offers both protocols and `no_application_protocol` when it offers `h2` alone.

@@ -58,17 +58,24 @@ class ServerTls12Test {
         val ems: Boolean,
         /** Everything the server sent after the request, until it closed. */
         val response: String,
+        /** The server resumed the session offered. */
+        val reused: Boolean = false,
+        /** The session to resume, when asked for ([Ksl.sessionFree] by the caller); 0 otherwise. */
+        val session: Long = 0L,
     )
 
     /**
      * Connects to [port] with a TLS 1.2 client offering [alpn], sends [request] (null: none) when the handshake completes and
      * reads the answer until the server closes. [identity] is the client certificate and key (DER) the client presents when asked.
+     * [resume] is a session to offer (0: none); with [keepSession] the outcome carries the session to resume later.
      */
     private suspend fun tls12(
         port: Int,
         alpn: List<String>,
         request: String? = get,
         identity: Pair<ByteArray, ByteArray>? = null,
+        resume: Long = 0L,
+        keepSession: Boolean = false,
     ): Outcome {
         val selector = SelectorManager(Dispatchers.IO)
         val ctx = Ksl.ctxNew(KslConst.CLIENT)
@@ -83,6 +90,7 @@ class ServerTls12Test {
             Ksl.ctxFreeze(ctx)
             ssl = Ksl.sslNew(ctx, KslConst.MODE_TCP)
             Ksl.sslSet(ssl, KslConst.SET_SNI, "server.test".encodeToByteArray())
+            if (resume != 0L) Ksl.sslSetSession(ssl, resume)
             val tcp =
                 io.kuicksilver.ktor.network
                     .connectTcp(selector, InetSocketAddress("127.0.0.1", port))
@@ -100,8 +108,10 @@ class ServerTls12Test {
                 val version = Ksl.sslGet(ssl, KslConst.GET_VERSION).toList()
                 val chosen = Ksl.sslGet(ssl, KslConst.GET_ALPN).takeIf { it.isNotEmpty() }?.decodeToString()
                 val ems = Ksl.sslGet(ssl, KslConst.GET_EMS)[0].toInt() == 1
+                val reused = Ksl.sslGet(ssl, KslConst.GET_SESSION_REUSED)[0].toInt() == 1
+                val session = if (keepSession) Ksl.sslGet1Session(ssl) else 0L
                 val response = request?.let { withTimeout(20.seconds) { exchange(ssl, it.encodeToByteArray(), r, w) } }.orEmpty()
-                return Outcome(null, 0, version, chosen, ems, response)
+                return Outcome(null, 0, version, chosen, ems, response, reused, session)
             } finally {
                 tcp.close()
             }
@@ -452,6 +462,53 @@ class ServerTls12Test {
             }) {}.first.stop(100, 500)
             // TLS 1.3 only (the default): no HTTP/2 over TLS 1.2 to hold to it
             tlsServer(configure = { http3 { enabled = false } }, connector = { tls { keyExchangeGroups = noP256 } }) {}.first.stop(100, 500)
+        }
+
+    /**
+     * A resumed TLS 1.2 session gets `h2` only where a full handshake would: OpenSSL calls the ALPN callback on resumption too
+     * (with the session's context, whose one certificate decides), so a session first made without `h2` cannot be resumed into
+     * it, and one made with it keeps it. Both identities, RSA (h2) and ECDSA (no h2: its client offering `h2` alone gets
+     * `no_application_protocol` on resumption as on a full handshake).
+     */
+    @Test fun negative_resumedTls12SessionGetsH2OnlyWhereAFullHandshakeWould() =
+        serverTest {
+            for ((identity, expected) in listOf(rsaIdentity() to "h2", ServerFixtures.identity() to "http/1.1")) {
+                val (server, port) =
+                    tlsServer(configure = { http3 { enabled = false } }, connector = {
+                        tls {
+                            this.identity = identity
+                            versions = TlsVersions.Tls12And13
+                        }
+                    }) { routing { get("/") { call.respondText("resumed") } } }
+                var session = 0L
+                try {
+                    val full = tls12(port, listOf("h2", "http/1.1"), request = null, keepSession = true)
+                    assertNull(full.failure, "${full.failure}")
+                    assertEquals(expected, full.alpn, "full handshake")
+                    session = full.session
+                    assertTrue(session != 0L, "the server issued a TLS 1.2 session to resume")
+                    val again = tls12(port, listOf("h2", "http/1.1"), request = null, resume = session, keepSession = true)
+                    assertNull(again.failure, "${again.failure}")
+                    assertTrue(again.reused, "$expected: the session was resumed")
+                    assertEquals(listOf<Byte>(3, 3), again.version)
+                    assertEquals(expected, again.alpn, "resumed handshake")
+                    // the server renews a resumed session's ticket: the next attempt offers the renewed one
+                    Ksl.sessionFree(session)
+                    session = again.session
+                    val h2Only = tls12(port, listOf("h2"), request = null, resume = session)
+                    if (expected == "h2") {
+                        assertNull(h2Only.failure, "${h2Only.failure}")
+                        assertTrue(h2Only.reused, "the renewed session was resumed")
+                        assertEquals("h2", h2Only.alpn)
+                    } else {
+                        assertTrue(h2Only.failure != null, "a resumed ECDSA session must not get h2")
+                        assertEquals(120 or 0x100, h2Only.receivedAlert, "no_application_protocol (120): ${h2Only.failure}")
+                    }
+                } finally {
+                    if (session != 0L) Ksl.sessionFree(session)
+                    server.stop(100, 500)
+                }
+            }
         }
 
     @Test fun certificateKeyTypeIsRead() {

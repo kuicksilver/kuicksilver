@@ -1241,7 +1241,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   Over TLS 1.2 (`tls { versions = TlsVersions.Tls12And13 }`) `h2` goes only to a handshake that can support
   `TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256` with P-256 (RFC 9113 section 9.2.2 MUST): one whose certificate has no
   rsaEncryption key or whose groups leave P-256 out gets `http/1.1` (in every TLS server, `ksl`'s ALPN selection), and the
-  engine refuses to start a connector serving HTTP/2 over TLS 1.2 whose `keyExchangeGroups` leave `secp256r1` out.
+  engine refuses to start a connector serving HTTP/2 over TLS 1.2 whose `keyExchangeGroups` leave `secp256r1` out. What a
+  TLS 1.2 client of an ECDSA (or RSA-PSS) certificate sees: offering `h2` and `http/1.1`, it gets HTTP/1.1 where it
+  could expect HTTP/2; offering `h2` alone, its handshake fails with `no_application_protocol`. A resumed TLS 1.2
+  session is held to the same rule. A TLS context holds one certificate (`ksl` refuses a second identity), so the
+  certificate that decides is the one the handshake uses.
 - Logging: `KuicksilverLogger.Default` is the platform's logger at warnings and up, and every QUIC endpoint and the Ktor
   client start with it: SLF4J on the JVM (logger `io.kuicksilver`; standard error when no SLF4J provider is on the
   classpath, or no `slf4j-api` at all: the module compiles against it, Ktor brings it), Logcat on Android (tag `Kuicksilver`), `NSLog` on Apple platforms, standard error on Linux and Windows.

@@ -3702,6 +3702,7 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerTls12Tes
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerTls12Test.h2OverTls12WhenHttp2On
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerTls12Test.negative_defaultConnectorRefusesTls12WithProtocolVersion
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerTls12Test.negative_http2OverTls12WithoutP256IsRefusedAtStart
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerTls12Test.negative_resumedTls12SessionGetsH2OnlyWhereAFullHandshakeWould
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerTls12Test.negative_tls12SniIdentityWithoutRsaOrP256GetsNoH2
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerTls12Test.negative_tls12WithoutRsaCertificateGetsNoH2
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerTls12Test.tls12And13ConnectorStillServesHttp3

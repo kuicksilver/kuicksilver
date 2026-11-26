@@ -389,7 +389,10 @@ proxies and scanners): any client can then end up on TLS 1.2.
   support `TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256` with P-256, the suite section 9.2.2 makes mandatory for such
   deployments: with an rsaEncryption certificate and `secp256r1` among the key-exchange groups. A TLS 1.2 handshake
   whose certificate has no rsaEncryption key (an EC or an RSA-PSS key, an `sniSelector`'s answer included) or whose
-  groups leave P-256 out gets `http/1.1` instead (a client that offers `h2` alone gets `no_application_protocol`); the
+  groups leave P-256 out gets `http/1.1` instead (a client that offers `h2` alone gets `no_application_protocol`, so a
+  TLS 1.2 client that speaks only HTTP/2 needs an RSA certificate, or TLS 1.3); a resumed TLS 1.2 session gets the same
+  answer as its full handshake. A connector holds one certificate (no RSA and ECDSA pair side by side), so serve such
+  clients from a connector, or an `sniSelector` answer, with an RSA one. The
   start says so at Info for the connector's own certificate, and fails for a connector whose `keyExchangeGroups` leave
   `secp256r1` out. TLS 1.3 clients get HTTP/2 either way. A client's attempt to renegotiate ends an HTTP/2 connection
   with GOAWAY PROTOCOL_ERROR, an HTTP/1.1 one goes on with the renegotiation refused.
