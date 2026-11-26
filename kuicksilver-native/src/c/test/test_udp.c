@@ -21,6 +21,8 @@
 #endif
 #if defined(__linux__) || defined(__APPLE__)
 #include <sys/resource.h> /* RLIMIT_NOFILE for udp_open_without_wake_pipe */
+#include <sys/utsname.h>  /* uname: the Darwin release of udp_df_mapped_check */
+#include <poll.h>         /* poll: whether a split socket's descriptor holds a datagram */
 #include <fcntl.h>        /* F_GETFD: a descriptor the sender clones keep open */
 #include <sched.h>        /* sched_yield: a clone sender waits out a full kernel queue */
 #endif
@@ -257,10 +259,16 @@ static int queued_now(ksl_udp *u) {
     if (!got_fd)
         return -1;
     int fd = (int)(((uint32_t)fd8[0] << 24) | ((uint32_t)fd8[1] << 16) | ((uint32_t)fd8[2] << 8) | fd8[3]);
-    int queued = 0;
+    int queued = 0, q4 = 0;
     socklen_t ql = sizeof queued;
     int counted = getsockopt(fd, SOL_SOCKET, SO_NUMRCVPKT, &queued, &ql) == 0;
     CHECK(counted, "SO_NUMRCVPKT");
+    /* a split socket (KSL_UDP_SPLIT): its AF_INET descriptor's queue too */
+    if (counted && ksl_udp_get(u, KSL_UDP_GET_FD2, fd8, 4, &k) == KSL_OK && k == 4 && rd32(fd8) != 0xffffffffu) {
+        ql = sizeof q4;
+        counted = getsockopt((int)rd32(fd8), SOL_SOCKET, SO_NUMRCVPKT, &q4, &ql) == 0;
+        queued += q4;
+    }
     return counted ? queued : -1;
 #else
     (void)u;
@@ -1371,6 +1379,697 @@ static void udp_sender_cases(void) {
         ksl_udp_close(peer);
     }
 }
+#ifdef __APPLE__
+int ksl_udp_mapped_df_check_for_test(void); /* 1 IPV6_DONTFRAG covers v4-mapped traffic, 0 not, -1 unknown */
+int ksl_udp_release_maps_df_for_test(const char *release); /* the Darwin-version rule used when the check cannot tell */
+#endif
+/* the descriptor of u, -1 when it cannot be read */
+static int fd_of(ksl_udp *u) {
+    uint8_t fd8[4];
+    size_t n = 0;
+    if (ksl_udp_get(u, KSL_UDP_GET_FD, fd8, 4, &n) != KSL_OK || n != 4)
+        return -1;
+    return (int)rd32(fd8);
+}
+/* the address family of descriptor fd (getsockname), -1 when unreadable */
+static int family_of(int fd) {
+    struct sockaddr_storage ss;
+    socklen_t l = sizeof ss;
+    memset(&ss, 0, sizeof ss);
+    if (fd < 0 || getsockname(fd, (struct sockaddr *)&ss, &l) != 0)
+        return -1;
+    return ss.ss_family;
+}
+/* a 0.0.0.0 address on [port] */
+static void any4_on(uint8_t a[KSL_UDP_ADDR_LEN], uint16_t port) {
+    v4(a, port);
+    memset(a + 3, 0, 4);
+}
+/* a port free on both families: the one a dual-stack 0.0.0.0 socket was just given (0 when none opened) */
+static uint16_t free_dual_port(void) {
+    uint8_t any4[KSL_UDP_ADDR_LEN], l[KSL_UDP_ADDR_LEN];
+    any4_on(any4, 0);
+    uint32_t err = 0;
+    char msg[128] = {0};
+    ksl_udp *t = ksl_udp_open(any4, 0, &err, msg, sizeof msg);
+    size_t n = 0;
+    if (!t || ksl_udp_get(t, KSL_UDP_GET_LOCAL, l, KSL_UDP_ADDR_LEN, &n) != KSL_OK) {
+        if (t)
+            ksl_udp_close(t);
+        return 0;
+    }
+    ksl_udp_close(t);
+    return port_of(l);
+}
+/* whether the IPv4 half of fd has DF as ksl sets it: Linux IP_MTU_DISCOVER in probe mode, Darwin IP_DONTFRAG (AF_INET) */
+static int v4_df_set(int fd) {
+#ifdef __APPLE__
+    return ksl_udp_df_mode_for_test(fd) == 1;
+#else
+    return ksl_udp_df_mode_for_test(fd) == 3;
+#endif
+}
+/* whether the IPv6 half of AF_INET6 fd has DF as ksl sets it: Linux IPV6_MTU_DISCOVER in probe mode, Darwin IPV6_DONTFRAG */
+static int v6_df_set(int fd) {
+#ifdef __APPLE__
+    int v = 0;
+    socklen_t l = sizeof v;
+    return getsockopt(fd, IPPROTO_IPV6, 62 /* IPV6_DONTFRAG, RFC 3542 */, &v, &l) == 0 && v == 1;
+#else
+    return ksl_udp_fd_df_mode(fd, 6) == 3;
+#endif
+}
+static int is_zero(const uint8_t *p, size_t n) {
+    for (size_t i = 0; i < n; i++)
+        if (p[i])
+            return 0;
+    return 1;
+}
+/* IPV6_V6ONLY of fd: 1, 0, or -1 when unreadable */
+static int v6only_of(int fd) {
+    int v = -1;
+    socklen_t l = sizeof v;
+    return getsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &v, &l) == 0 ? (v != 0) : -1;
+}
+/* the AF_INET descriptor of a split socket (KSL_UDP_GET_FD2), -1 when it has none */
+static int fd2_of(ksl_udp *u) {
+    uint8_t fd8[4];
+    size_t n = 0;
+    if (ksl_udp_get(u, KSL_UDP_GET_FD2, fd8, 4, &n) != KSL_OK || n != 4)
+        return -2;
+    uint32_t v = rd32(fd8);
+    return v == 0xffffffffu ? -1 : (int)v;
+}
+/* the port of descriptor fd, 0 when unreadable */
+static uint16_t port_of_fd_t(int fd) {
+    struct sockaddr_storage ss;
+    socklen_t l = sizeof ss;
+    if (fd < 0 || getsockname(fd, (struct sockaddr *)&ss, &l) != 0)
+        return 0;
+    return ntohs(ss.ss_family == AF_INET ? ((struct sockaddr_in *)&ss)->sin_port
+                                         : ((struct sockaddr_in6 *)&ss)->sin6_port);
+}
+/* opens [family]'s wildcard on [port] with [flags] under the seams set in [seams] (bit 0 v4-mapped, 1 IPv6 half, 2 AF_INET refused
+   for good, 3 AF_INET refused transiently, 4 socket(AF_INET) failing: with EAFNOSUPPORT, or with the errno in bits 5 and up), all
+   cleared afterwards */
+static ksl_udp *open_seamed(int family, uint16_t port, int flags, int seams, uint32_t *err, char *msg, size_t msglen) {
+    uint8_t at[KSL_UDP_ADDR_LEN];
+    if (family == 4)
+        any4_on(at, port);
+    else {
+        memset(at, 0, sizeof at);
+        at[0] = 6;
+        at[1] = (uint8_t)(port >> 8);
+        at[2] = (uint8_t)port;
+    }
+    ksl_udp_no_df_v4_mapped_for_test(seams & 1);
+    ksl_udp_no_df_v6_for_test((seams >> 1) & 1);
+    ksl_udp_no_df_inet_for_test((seams >> 2) & 1);
+    ksl_udp_transient_df_inet_for_test((seams >> 3) & 1);
+    ksl_udp_no_inet_for_test((seams >> 4) & 1 ? ((seams >> 5) ? (seams >> 5) : 1) : 0); /* bits 5 on: that errno */
+    ksl_udp *w = ksl_udp_open(at, flags, err, msg, msglen);
+    ksl_udp_no_df_v4_mapped_for_test(0);
+    ksl_udp_no_df_v6_for_test(0);
+    ksl_udp_no_df_inet_for_test(0);
+    ksl_udp_transient_df_inet_for_test(0);
+    ksl_udp_no_inet_for_test(0);
+    return w;
+}
+/* open_seamed on an explicit port free on both families (free_dual_port): another process may take it before the open, which
+   then fails with KSL_E_BIND and is tried again on a new one, up to 8 times; *port is the one used (0: none could be had) */
+static ksl_udp *open_seamed_explicit(int family, int flags, int seams, uint16_t *port, uint32_t *err, char *msg,
+                                     size_t msglen) {
+    for (int i = 0; i < 8; i++) {
+        *port = free_dual_port();
+        if (!*port)
+            return NULL;
+        ksl_udp *w = open_seamed(family, *port, flags, seams, err, msg, msglen);
+        if (w || *err != KSL_E_BIND)
+            return w;
+    }
+    return NULL;
+}
+/* waits up to 2 s until descriptor fd has a datagram queued (poll), 1 when it has */
+static int readable(int fd) {
+    struct pollfd pf = {fd, POLLIN, 0};
+    return poll(&pf, 1, 2000) == 1 && (pf.revents & POLLIN);
+}
+/* raises the soft RLIMIT_NOFILE towards 8192 (as udp_wildcard_port_free_on_ipv4_side) into *old's copy; how many descriptors a
+   test may hold, 300 below the limit */
+static int raise_nofile(struct rlimit *old) {
+    getrlimit(RLIMIT_NOFILE, old);
+    struct rlimit more = *old;
+    if (more.rlim_cur < 8192)
+        more.rlim_cur = more.rlim_max < 8192 ? more.rlim_max : 8192;
+    setrlimit(RLIMIT_NOFILE, &more);
+    getrlimit(RLIMIT_NOFILE, &more);
+    return more.rlim_cur > 300 ? (int)more.rlim_cur - 300 : 0;
+}
+/* udp_df_fallback_*: a wildcard whose dual-stack socket gets no DF on a half for a lasting reason (RFC 9000 section 14: "In IPv4,
+   the Don't Fragment (DF) bit MUST be set if possible"). Owner decision on bind defaults: all interfaces, IPv6 and IPv4, two
+   sockets where one dual-stack socket is impossible. So: IPV6_V6ONLY on :: plus AF_INET on 0.0.0.0, one port (KSL_UDP_SPLIT);
+   the IPv6 one alone where AF_INET gets no DF (KSL_UDP_V6_ONLY); AF_INET alone where the IPv6 one gets none (KSL_UDP_V4_ONLY);
+   the dual-stack socket without DF where neither; a transient refusal fails the open. The refusals come from the KSL_TEST seams
+   (no host here refuses them); a is an IPv4 peer on 127.0.0.1 */
+static void udp_df_fallback_cases(void) {
+    uint8_t l6[KSL_UDP_ADDR_LEN] = {6};
+    l6[18] = 1;
+    uint32_t err = 0;
+    char msg[128] = {0};
+    ksl_udp *p6 =
+        ksl_udp_open(l6, KSL_UDP_ECN, &err, msg, sizeof msg); /* an IPv6 peer on ::1, NULL without IPv6 loopback */
+    uint8_t lp6[KSL_UDP_ADDR_LEN], la[KSL_UDP_ADDR_LEN];
+    size_t n = 0;
+    if (p6)
+        ksl_udp_get(p6, KSL_UDP_GET_LOCAL, lp6, KSL_UDP_ADDR_LEN, &n);
+    ksl_udp *a =
+        open_lo(KSL_UDP_ECN, la); /* a fresh IPv4 peer on 127.0.0.1: the section's own sockets hold earlier backlogs */
+    if (!a) {
+        if (p6)
+            ksl_udp_close(p6);
+        return;
+    }
+    /* udp_df_fallback_positive_control: no seam, 0.0.0.0 is the dual-stack socket, DF on, none of the fallback flags. A host whose
+       kernel has no IPv6 sockets (0.0.0.0 is AF_INET there anyway) skips the fallback cases */
+    int dual = 0;
+    {
+        ksl_udp *w = open_seamed(4, 0, KSL_UDP_ECN | KSL_UDP_DF, 0, &err, msg, sizeof msg);
+        CHECK(w != NULL, "udp_df_fallback_positive_control: 0.0.0.0 opens");
+        if (w) {
+            uint32_t c = caps_of(w, NULL);
+            dual = family_of(fd_of(w)) == AF_INET6 && v6only_of(fd_of(w)) == 0;
+            CHECK((c & KSL_UDP_DF) && !(c & (KSL_UDP_V4_ONLY | KSL_UDP_V6_ONLY | KSL_UDP_SPLIT)) && fd2_of(w) == -1 &&
+                      (!p6 || dual),
+                  "udp_df_fallback_positive_control: one dual-stack socket with DF");
+            ksl_udp_close(w);
+        }
+    }
+    if (!dual)
+        printf("udp: 0.0.0.0 is not dual-stack here (no IPv6 sockets), DF fallback cases skipped\n");
+    /* udp_df_fallback_splits: the v4-mapped half refuses DF for good: two sockets on one port, each with DF; for 0.0.0.0 and ::, on
+       port 0 and on an explicit port (which the dual-stack socket never bound: DF is decided before the bind). IPv4 and IPv6 both
+       arrive, with their marks and destinations, and the replies leave from the port asked for, each through its own socket */
+    for (int k = 0; dual && k < 4; k++) {
+        int fam = k & 1 ? 6 : 4, explicit_port = k >> 1, fl = KSL_UDP_ECN | KSL_UDP_DF | KSL_UDP_PKTINFO;
+        uint16_t port = 0;
+        ksl_udp *w = explicit_port ? open_seamed_explicit(fam, fl, 1, &port, &err, msg, sizeof msg)
+                                   : open_seamed(fam, 0, fl, 1, &err, msg, sizeof msg);
+        if (!w)
+            printf("udp: split open (%d, port %u): %u %s\n", fam, port, err, msg);
+        CHECK(w != NULL, "udp_df_fallback_splits: opens");
+        if (!w)
+            continue;
+        uint32_t c = caps_of(w, NULL);
+        int f6 = fd_of(w), f4 = fd2_of(w);
+        CHECK((c & KSL_UDP_DF) && (c & KSL_UDP_SPLIT) && !(c & (KSL_UDP_V4_ONLY | KSL_UDP_V6_ONLY)),
+              "udp_df_fallback_splits: DF and KSL_UDP_SPLIT granted");
+        CHECK((c & KSL_UDP_ECN) && (c & KSL_UDP_PKTINFO), "udp_df_fallback_splits: ECN and PKTINFO as asked");
+        CHECK(family_of(f6) == AF_INET6 && v6only_of(f6) == 1, "udp_df_fallback_splits: the first is IPV6_V6ONLY");
+        CHECK(family_of(f4) == AF_INET, "udp_df_fallback_splits: KSL_UDP_GET_FD2 is AF_INET");
+        CHECK(port_of_fd_t(f6) != 0 && port_of_fd_t(f6) == port_of_fd_t(f4) && (!port || port_of_fd_t(f6) == port),
+              "udp_df_fallback_splits: one port, the one asked for");
+        CHECK(v6_df_set(f6) && v4_df_set(f4), "udp_df_fallback_splits: DF reads back set on both");
+        uint8_t lw[KSL_UDP_ADDR_LEN], to4[KSL_UDP_ADDR_LEN], re[1] = {0}, dst[KSL_UDP_ADDR_LEN];
+        ksl_udp_get(w, KSL_UDP_GET_LOCAL, lw, KSL_UDP_ADDR_LEN, &n);
+        CHECK(lw[0] == fam && port_of(lw) == port_of_fd_t(f6) && is_zero(lw + 3, 16),
+              "udp_df_fallback_splits: the wildcard asked for reported, with the port");
+        v4(to4, port_of(lw));
+        CHECK(xfer(a, w, to4, NULL, 2, 1, 100, NULL, dst, re) == 1 && re[0] == 2 && dst[0] == 4 && dst[3] == 127,
+              "udp_df_fallback_splits: IPv4 arrives with its mark, destination 127.0.0.1");
+        CHECK(xfer(w, a, la, NULL, 1, 1, 100, NULL, NULL, re) == 1 && re[0] == 1,
+              "udp_df_fallback_splits: a reply to IPv4 arrives");
+        if (p6) {
+            uint8_t to6[KSL_UDP_ADDR_LEN], from[KSL_UDP_ADDR_LEN];
+            memcpy(to6, l6, KSL_UDP_ADDR_LEN);
+            to6[1] = lw[1];
+            to6[2] = lw[2];
+            CHECK(xfer(p6, w, to6, NULL, 3, 1, 100, from, dst, re) == 1 && re[0] == 3 && from[0] == 6 && dst[0] == 6,
+                  "udp_df_fallback_splits: IPv6 arrives with its mark, from and to ::1");
+            CHECK(xfer(w, p6, lp6, NULL, 2, 1, 100, from, NULL, re) == 1 && port_of(from) == port_of(lw),
+                  "udp_df_fallback_splits: a reply to IPv6 arrives from the same port");
+            /* both families in one receive call: once a datagram waits on each descriptor, one call that may not wait takes both */
+            CHECK(send1(a, to4, 100) == 1 && send1(p6, to6, 100) == 1, "udp_df_fallback_splits: two senders");
+            CHECK(readable(f6) && readable(f4), "udp_df_fallback_splits: a datagram on each descriptor");
+            {
+                uint8_t b0[200], b1[200], b2[200], ra[3 * KSL_UDP_ADDR_LEN], re3[3];
+                uint8_t *rb[3] = {b0, b1, b2};
+                uint32_t rc[3] = {200, 200, 200}, rl[3], got = 0;
+                CHECK(ksl_udp_recv(w, rb, rc, rl, ra, re3, 3, &got, 0) == KSL_OK && got == 2 &&
+                          ra[0] != ra[KSL_UDP_ADDR_LEN],
+                      "udp_df_fallback_splits: one receive call takes the datagram of each family");
+            }
+            /* the sender clone sends to both families */
+            ksl_udp *clone = ksl_udp_sender(w, &err, msg, sizeof msg);
+            CHECK(clone && send1(clone, la, 100) == 1 && send1(clone, lp6, 100) == 1 && recv1(a, 1000) == 100 &&
+                      recv1(p6, 1000) == 100,
+                  "udp_df_fallback_splits: a sender clone reaches both families");
+            if (clone)
+                ksl_udp_close(clone);
+        }
+        ksl_udp_close(w);
+    }
+    /* udp_df_fallback_split_wakes: a receive blocked on both descriptors ends at shutdown */
+    if (dual) {
+        ksl_udp *w = open_seamed(6, 0, KSL_UDP_DF, 1, &err, msg, sizeof msg);
+        CHECK(w && (caps_of(w, NULL) & KSL_UDP_SPLIT), "udp_df_fallback_split_wakes: split");
+        if (w) {
+            int ms = ksl_udp_close_wakes_for_test(w);
+            CHECK(ms < 1000, "udp_df_fallback_split_wakes: a blocked receive ends at shutdown");
+        }
+    }
+    /* udp_df_fallback_split_asked: KSL_UDP_SPLIT asked, no seam: two sockets with DF, without trying the dual-stack one */
+    if (dual) {
+        ksl_udp *w = open_seamed(4, 0, KSL_UDP_DF | KSL_UDP_SPLIT, 0, &err, msg, sizeof msg);
+        CHECK(w && (caps_of(w, NULL) & (KSL_UDP_SPLIT | KSL_UDP_DF)) == (KSL_UDP_SPLIT | KSL_UDP_DF) &&
+                  v6only_of(fd_of(w)) == 1 && fd2_of(w) >= 0,
+              "udp_df_fallback_split_asked: two sockets with DF");
+        if (w)
+            ksl_udp_close(w);
+        /* a socket of a specific address is never split */
+        uint8_t lo4[KSL_UDP_ADDR_LEN];
+        v4(lo4, 0);
+        ksl_udp *s4 = ksl_udp_open(lo4, KSL_UDP_SPLIT, &err, msg, sizeof msg);
+        CHECK(s4 && !(caps_of(s4, NULL) & KSL_UDP_SPLIT) && fd2_of(s4) == -1,
+              "negative_udp_df_fallback_split_asked: 127.0.0.1 is one socket");
+        if (s4)
+            ksl_udp_close(s4);
+    }
+    /* udp_df_fallback_split_port_retry: port 0 picks a port the IPv6-only socket got and IPv4 has free: with 2000 IPv4 ports held on
+       127.0.0.1 (Darwin hands an IPv6 socket such ports; Linux as well, IPV6_V6ONLY ignores IPv4 sockets) every split open succeeds */
+    if (dual) {
+        struct rlimit old;
+        int cap = raise_nofile(&old), want = cap < 2000 ? cap : 2000, held = 0, opened = 0;
+        int *fds = calloc(2000, sizeof(int));
+        for (; held < want; held++) {
+            int f = socket(AF_INET, SOCK_DGRAM, 0);
+            struct sockaddr_in sa;
+            memset(&sa, 0, sizeof sa);
+            sa.sin_family = AF_INET;
+            sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+            if (f < 0 || bind(f, (struct sockaddr *)&sa, sizeof sa) != 0) {
+                if (f >= 0)
+                    close(f);
+                break;
+            }
+            fds[held] = f;
+        }
+        for (int i = 0; i < 32; i++) {
+            ksl_udp *w = open_seamed(4, 0, KSL_UDP_DF | KSL_UDP_SPLIT, 0, &err, msg, sizeof msg);
+            if (w && fd2_of(w) >= 0 && port_of_fd_t(fd_of(w)) == port_of_fd_t(fd2_of(w)))
+                opened++;
+            else
+                printf("udp: split open beside held IPv4 ports: %u %s\n", err, msg);
+            if (w)
+                ksl_udp_close(w);
+        }
+        printf("udp: %d split opens beside %d held IPv4 ports, %u ports given up\n", opened, held,
+               ksl_udp_split_retries_for_test());
+        CHECK(opened == 32, "udp_df_fallback_split_port_retry: every split open gets a port free on both sides");
+        for (int i = 0; i < held; i++)
+            close(fds[i]);
+        free(fds);
+        setrlimit(RLIMIT_NOFILE, &old);
+        /* the retry itself: the first try takes a port an IPv4 socket holds (seam), which is given up for another */
+        int f = socket(AF_INET, SOCK_DGRAM, 0);
+        struct sockaddr_in sa;
+        memset(&sa, 0, sizeof sa);
+        sa.sin_family = AF_INET;
+        socklen_t l = sizeof sa;
+        if (f >= 0 && bind(f, (struct sockaddr *)&sa, sizeof sa) == 0 &&
+            getsockname(f, (struct sockaddr *)&sa, &l) == 0) {
+            uint32_t r0 = ksl_udp_split_retries_for_test();
+            ksl_udp_split_port_for_test(ntohs(sa.sin_port));
+            ksl_udp *w = open_seamed(4, 0, KSL_UDP_DF | KSL_UDP_SPLIT, 0, &err, msg, sizeof msg);
+            ksl_udp_split_port_for_test(0);
+            CHECK(w && ksl_udp_split_retries_for_test() == r0 + 1 && port_of_fd_t(fd_of(w)) != ntohs(sa.sin_port) &&
+                      port_of_fd_t(fd_of(w)) == port_of_fd_t(fd2_of(w)),
+                  "udp_df_fallback_split_port_retry: the port IPv4 holds given up once, another one taken");
+            if (w)
+                ksl_udp_close(w);
+        }
+        if (f >= 0)
+            close(f);
+    }
+#ifdef __linux__
+    /* negative_udp_df_fallback_split_joins_no_reuse_group: with KSL_UDP_REUSEPORT (loops > 1), a port-0 split whose IPv6 half got a
+       port another socket of this user holds for IPv4 with SO_REUSEPORT gives it up: its AF_INET half would join that socket's
+       reuse group and take part of its datagrams (inet_port_free) */
+    if (dual) {
+        int f = socket(AF_INET, SOCK_DGRAM, 0), one = 1;
+        struct sockaddr_in sa;
+        memset(&sa, 0, sizeof sa);
+        sa.sin_family = AF_INET;
+        socklen_t l = sizeof sa;
+        if (f >= 0 && setsockopt(f, SOL_SOCKET, SO_REUSEPORT, &one, sizeof one) == 0 &&
+            bind(f, (struct sockaddr *)&sa, sizeof sa) == 0 && getsockname(f, (struct sockaddr *)&sa, &l) == 0) {
+            uint32_t r0 = ksl_udp_split_retries_for_test();
+            ksl_udp_split_port_for_test(ntohs(sa.sin_port));
+            ksl_udp *w = open_seamed(4, 0, KSL_UDP_DF | KSL_UDP_SPLIT | KSL_UDP_REUSEPORT, 0, &err, msg, sizeof msg);
+            ksl_udp_split_port_for_test(0);
+            CHECK(w && (caps_of(w, NULL) & KSL_UDP_REUSEPORT) && port_of_fd_t(fd2_of(w)) != ntohs(sa.sin_port) &&
+                      ksl_udp_split_retries_for_test() == r0 + 1,
+                  "negative_udp_df_fallback_split_joins_no_reuse_group: another port, not the reuse group");
+            if (w)
+                ksl_udp_close(w);
+        }
+        if (f >= 0)
+            close(f);
+    }
+    /* udp_df_fallback_split_icmp_on_ipv4: the AF_INET descriptor's error queue: a datagram to a closed IPv4 port draws a port
+       unreachable there (IP_RECVERR with DF); the receive drains it (no socket error, no spin on POLLERR) and reports it */
+    if (dual) {
+        uint8_t lc[KSL_UDP_ADDR_LEN];
+        ksl_udp *c = open_lo(0, lc);
+        ksl_udp *w = open_seamed(4, 0, KSL_UDP_DF | KSL_UDP_SPLIT, 0, &err, msg, sizeof msg);
+        if (c && w) {
+            ksl_udp_close(c);
+            c = NULL;
+            CHECK(send1(w, lc, 100) == 1, "udp_df_fallback_split_icmp_on_ipv4: datagram to the closed port");
+            uint32_t s0 = ksl_udp_recv_syscalls_for_test(w);
+            CHECK(recv1(w, 200) == 0, "udp_df_fallback_split_icmp_on_ipv4: a queued ICMP error is a timeout");
+            CHECK(ksl_udp_recv_syscalls_for_test(w) - s0 < 64,
+                  "udp_df_fallback_split_icmp_on_ipv4: no spin on POLLERR");
+            uint8_t ud[KSL_UDP_ADDR_LEN], q[KSL_UDP_PTB_QUOTE];
+            uint32_t ql = 0, kind = 0;
+            CHECK(ksl_udp_take_unreachable(w, ud, q, sizeof q, &ql, &kind) == 1 && kind == KSL_UNREACH_PORT &&
+                      ud[0] == 4 && port_of(ud) == port_of(lc),
+                  "udp_df_fallback_split_icmp_on_ipv4: the port unreachable reported, IPv4");
+            CHECK(ksl_udp_errqueue_reads_for_test(w) > 0,
+                  "udp_df_fallback_split_icmp_on_ipv4: the error queue drained");
+        }
+        if (c)
+            ksl_udp_close(c);
+        if (w)
+            ksl_udp_close(w);
+    }
+#endif
+    /* udp_df_fallback_split_fair: under a flood on one descriptor the other's datagram is taken within two calls: each call
+       starts on the other descriptor than the last ended on */
+    if (dual && p6) {
+        ksl_udp *w = open_seamed(6, 0, KSL_UDP_DF | KSL_UDP_SPLIT, 0, &err, msg, sizeof msg);
+        uint8_t lw[KSL_UDP_ADDR_LEN], to4[KSL_UDP_ADDR_LEN], to6[KSL_UDP_ADDR_LEN];
+        if (w) {
+            ksl_udp_get(w, KSL_UDP_GET_LOCAL, lw, KSL_UDP_ADDR_LEN, &n);
+            v4(to4, port_of(lw));
+            memcpy(to6, l6, KSL_UDP_ADDR_LEN);
+            to6[1] = lw[1];
+            to6[2] = lw[2];
+            /* a flood on the IPv4 descriptor and one datagram on the IPv6 one, then the other way round, each twice: whichever
+               descriptor the first call starts on */
+            for (int round = 0; round < 4; round++) {
+                int flood4 = round < 2;
+                for (int i = 0; i < 48; i++)
+                    send1(flood4 ? a : p6, flood4 ? to4 : to6, 100);
+                send1(flood4 ? p6 : a, flood4 ? to6 : to4, 100);
+                CHECK(readable(fd_of(w)) && readable(fd2_of(w)), "udp_df_fallback_split_fair: both queues hold some");
+                wait_queued(w, 49,
+                            2000); /* Darwin: the whole flood queued; Linux cannot count (it all arrives on lo) */
+                int call = 0, seen = 0;
+                for (; call < 16 && !seen; call++) {
+                    uint8_t bufs[8][128], ra[8 * KSL_UDP_ADDR_LEN], re8[8];
+                    uint8_t *rb[8];
+                    uint32_t rc[8], rl[8], got = 0;
+                    for (int i = 0; i < 8; i++) {
+                        rb[i] = bufs[i];
+                        rc[i] = sizeof bufs[i];
+                    }
+                    ksl_udp_recv(w, rb, rc, rl, ra, re8, 8, &got, 0);
+                    for (uint32_t i = 0; i < got; i++)
+                        seen |= ra[i * KSL_UDP_ADDR_LEN] == (flood4 ? 6 : 4);
+                }
+                CHECK(seen && call <= 2, flood4
+                                             ? "udp_df_fallback_split_fair: the IPv6 datagram within two calls of 8"
+                                             : "udp_df_fallback_split_fair: the IPv4 datagram within two calls of 8");
+                while (recv1(w, 50) > 0) {
+                } /* the rest of the flood */
+            }
+            ksl_udp_close(w);
+        }
+    }
+    /* udp_df_fallback_split_socket_resources: socket(AF_INET) refused for want of a resource (EMFILE) is no lasting refusal: the
+       open fails (KSL_E_NO_MEMORY) and leaves nothing open; any other refusal lasts (a missing family, EAFNOSUPPORT; a policy,
+       EACCES from AppArmor, SELinux or seccomp) and gives the IPv6-only socket. socket(AF_INET6) alike: EACCES gives IPv4 alone,
+       as before 0.3.0, EMFILE fails the open */
+    if (dual) {
+        int before = dup(0);
+        close(before);
+        ksl_udp *w = open_seamed(6, 0, KSL_UDP_DF, 1 | 16 | (EMFILE << 5), &err, msg, sizeof msg);
+        CHECK(w == NULL && err == KSL_E_NO_MEMORY, "udp_df_fallback_split_socket_resources: EMFILE fails the split");
+        if (w)
+            ksl_udp_close(w);
+        /* the IPv6 half without DF as well: AF_INET alone would be next, and EMFILE there fails the open too, no dual-stack socket
+           without DF in its place */
+        w = open_seamed(4, 0, KSL_UDP_DF, 1 | 2 | 16 | (EMFILE << 5), &err, msg, sizeof msg);
+        CHECK(w == NULL && err == KSL_E_NO_MEMORY,
+              "udp_df_fallback_split_socket_resources: EMFILE fails AF_INET alone");
+        if (w)
+            ksl_udp_close(w);
+        /* a missing family (the default seam value) keeps the IPv6-only socket */
+        w = open_seamed(6, 0, KSL_UDP_DF, 1 | 16, &err, msg, sizeof msg);
+        CHECK(w && (caps_of(w, NULL) & KSL_UDP_V6_ONLY),
+              "udp_df_fallback_split_socket_resources: EAFNOSUPPORT, IPv6 alone");
+        if (w)
+            ksl_udp_close(w);
+        w = open_seamed(6, 0, KSL_UDP_DF, 1 | 16 | (EACCES << 5), &err, msg, sizeof msg);
+        CHECK(w && (caps_of(w, NULL) & KSL_UDP_V6_ONLY),
+              "udp_df_fallback_split_socket_resources: EACCES (a policy), IPv6 alone");
+        if (w)
+            ksl_udp_close(w);
+        uint8_t any4[KSL_UDP_ADDR_LEN];
+        any4_on(any4, 0);
+        ksl_udp_no_ipv6_for_test(EACCES);
+        w = ksl_udp_open(any4, KSL_UDP_DF, &err, msg, sizeof msg);
+        ksl_udp_no_ipv6_for_test(0);
+        CHECK(w && family_of(fd_of(w)) == AF_INET && (caps_of(w, NULL) & KSL_UDP_DF),
+              "udp_df_fallback_split_socket_resources: socket(AF_INET6) EACCES, 0.0.0.0 on AF_INET");
+        if (w)
+            ksl_udp_close(w);
+        ksl_udp_no_ipv6_for_test(EMFILE);
+        w = ksl_udp_open(any4, KSL_UDP_DF, &err, msg, sizeof msg);
+        ksl_udp_no_ipv6_for_test(0);
+        CHECK(w == NULL && err == KSL_E_NO_MEMORY,
+              "udp_df_fallback_split_socket_resources: socket(AF_INET6) EMFILE fails the open");
+        if (w)
+            ksl_udp_close(w);
+        w = NULL;
+        int after = dup(0);
+        CHECK(after == before, "udp_df_fallback_split_socket_resources: no descriptor left open");
+        if (after >= 0)
+            close(after);
+        if (w)
+            ksl_udp_close(w);
+    }
+    /* udp_df_fallback_split_without_wake_pipe: the split's two sockets open but the wake pipe cannot (two free descriptors below
+       RLIMIT_NOFILE): Darwin fails the open and leaks neither socket, Linux goes on without the pipe */
+    if (dual) {
+        struct rlimit old;
+        getrlimit(RLIMIT_NOFILE, &old);
+        int lowest = dup(0);
+        close(lowest);
+        struct rlimit low = old;
+        low.rlim_cur = (rlim_t)lowest + 2;
+        uint8_t any4[KSL_UDP_ADDR_LEN];
+        any4_on(any4, 0);
+        CHECK(setrlimit(RLIMIT_NOFILE, &low) == 0, "setrlimit");
+        ksl_udp *w = ksl_udp_open(any4, KSL_UDP_SPLIT, &err, msg, sizeof msg);
+        setrlimit(RLIMIT_NOFILE, &old);
+#ifdef __APPLE__
+        CHECK(w == NULL && err == KSL_E_NO_MEMORY,
+              "udp_df_fallback_split_without_wake_pipe: Darwin: no wake pipe, no socket");
+#else
+        CHECK(w != NULL && fd2_of(w) >= 0,
+              "udp_df_fallback_split_without_wake_pipe: Linux: split without the wake pipe");
+#endif
+        if (w)
+            ksl_udp_close(w);
+        int again = dup(0);
+        CHECK(again == lowest, "udp_df_fallback_split_without_wake_pipe: no descriptor leaked");
+        if (again >= 0)
+            close(again);
+    }
+    /* negative_udp_df_fallback_split_explicit_port_held: an explicit port an IPv4 socket holds is refused as KSL_E_BIND, and the
+       IPv6-only socket opened first is not left behind */
+    if (dual) {
+        int f = socket(AF_INET, SOCK_DGRAM, 0);
+        struct sockaddr_in sa;
+        memset(&sa, 0, sizeof sa);
+        sa.sin_family = AF_INET;
+        socklen_t l = sizeof sa;
+        CHECK(f >= 0 && bind(f, (struct sockaddr *)&sa, sizeof sa) == 0 &&
+                  getsockname(f, (struct sockaddr *)&sa, &l) == 0,
+              "an IPv4 socket on 0.0.0.0");
+        uint16_t port = ntohs(sa.sin_port);
+        ksl_udp *w = open_seamed(6, port, KSL_UDP_DF, 1, &err, msg, sizeof msg);
+        CHECK(w == NULL && err == KSL_E_BIND, "negative_udp_df_fallback_split_explicit_port_held: KSL_E_BIND");
+        if (w)
+            ksl_udp_close(w);
+        int g = socket(AF_INET6, SOCK_DGRAM, 0), one = 1;
+        struct sockaddr_in6 s6;
+        memset(&s6, 0, sizeof s6);
+        s6.sin6_family = AF_INET6;
+        s6.sin6_port = htons(port);
+        CHECK(g >= 0 && setsockopt(g, IPPROTO_IPV6, IPV6_V6ONLY, &one, sizeof one) == 0 &&
+                  bind(g, (struct sockaddr *)&s6, sizeof s6) == 0,
+              "negative_udp_df_fallback_split_explicit_port_held: the IPv6-only socket was closed");
+        if (g >= 0)
+            close(g);
+        if (f >= 0)
+            close(f);
+    }
+    /* udp_df_fallback_v6_only: AF_INET gets no DF for good, or does not open: the IPv6-only socket alone, with DF, KSL_UDP_V6_ONLY;
+       an IPv4 destination is a lost slot */
+    for (int k = 0; dual && k < 2; k++) {
+        ksl_udp *w = open_seamed(6, 0, KSL_UDP_DF, k ? (1 | 16) : (1 | 4), &err, msg, sizeof msg);
+        CHECK(w != NULL, "udp_df_fallback_v6_only: opens");
+        if (!w)
+            continue;
+        uint32_t c = caps_of(w, NULL);
+        CHECK((c & KSL_UDP_DF) && (c & KSL_UDP_V6_ONLY) && !(c & (KSL_UDP_SPLIT | KSL_UDP_V4_ONLY)) &&
+                  fd2_of(w) == -1 && v6only_of(fd_of(w)) == 1,
+              "udp_df_fallback_v6_only: one IPV6_V6ONLY socket with DF, KSL_UDP_V6_ONLY");
+        uint8_t lw[KSL_UDP_ADDR_LEN];
+        ksl_udp_get(w, KSL_UDP_GET_LOCAL, lw, KSL_UDP_ADDR_LEN, &n);
+        CHECK(send1(w, la, 100) == 1 && recv1(a, 200) == 0,
+              "negative_udp_df_fallback_v6_only: an IPv4 destination is unreachable");
+        if (p6) {
+            uint8_t to6[KSL_UDP_ADDR_LEN], re[1];
+            memcpy(to6, l6, KSL_UDP_ADDR_LEN);
+            to6[1] = lw[1];
+            to6[2] = lw[2];
+            CHECK(xfer(p6, w, to6, NULL, 0, 1, 100, NULL, NULL, re) == 1, "udp_df_fallback_v6_only: IPv6 arrives");
+        }
+        ksl_udp_close(w);
+    }
+    /* udp_df_fallback_v4_only: the IPv6 half refuses DF too: AF_INET alone with DF, KSL_UDP_V4_ONLY, on port 0 and an explicit port;
+       an IPv6 destination is a lost slot */
+    for (int k = 0; dual && k < 4; k++) {
+        int fam = k & 1 ? 6 : 4;
+        uint16_t port = 0;
+        ksl_udp *w = k >> 1 ? open_seamed_explicit(fam, KSL_UDP_ECN | KSL_UDP_DF, 1 | 2, &port, &err, msg, sizeof msg)
+                            : open_seamed(fam, 0, KSL_UDP_ECN | KSL_UDP_DF, 1 | 2, &err, msg, sizeof msg);
+        CHECK(w != NULL, "udp_df_fallback_v4_only: opens");
+        if (!w)
+            continue;
+        uint32_t c = caps_of(w, NULL);
+        CHECK((c & KSL_UDP_DF) && (c & KSL_UDP_V4_ONLY) && !(c & (KSL_UDP_SPLIT | KSL_UDP_V6_ONLY)) &&
+                  family_of(fd_of(w)) == AF_INET && v4_df_set(fd_of(w)),
+              "udp_df_fallback_v4_only: AF_INET with DF, KSL_UDP_V4_ONLY");
+        uint8_t lw[KSL_UDP_ADDR_LEN], to4[KSL_UDP_ADDR_LEN], re[1] = {0};
+        ksl_udp_get(w, KSL_UDP_GET_LOCAL, lw, KSL_UDP_ADDR_LEN, &n);
+        CHECK(lw[0] == fam && (!port || port_of(lw) == port),
+              "udp_df_fallback_v4_only: the wildcard and port asked for");
+        v4(to4, port_of(lw));
+        CHECK(xfer(a, w, to4, NULL, 2, 1, 100, NULL, NULL, re) == 1 && re[0] == 2,
+              "udp_df_fallback_v4_only: IPv4 arrives with its mark");
+        if (p6)
+            CHECK(send1(w, lp6, 100) == 1 && recv1(p6, 200) == 0,
+                  "negative_udp_df_fallback_v4_only: an IPv6 destination is unreachable");
+        ksl_udp_close(w);
+    }
+    /* udp_df_fallback_none: neither family gets DF anywhere: the dual-stack socket again, without DF and none of the flags, on the
+       port asked for, IPv4 still arriving (the caller does not use it) */
+    for (int k = 0; dual && k < 2; k++) {
+        uint16_t port = 0;
+        ksl_udp *w = k ? open_seamed_explicit(4, KSL_UDP_DF, 1 | 2 | 4, &port, &err, msg, sizeof msg)
+                       : open_seamed(4, 0, KSL_UDP_DF, 1 | 2 | 4, &err, msg, sizeof msg);
+        CHECK(w != NULL, "udp_df_fallback_none: opens");
+        if (!w)
+            continue;
+        uint32_t c = caps_of(w, NULL);
+        CHECK(!(c & (KSL_UDP_DF | KSL_UDP_V4_ONLY | KSL_UDP_V6_ONLY | KSL_UDP_SPLIT)) && v6only_of(fd_of(w)) == 0,
+              "udp_df_fallback_none: the dual-stack socket without DF");
+        uint8_t lw[KSL_UDP_ADDR_LEN], to4[KSL_UDP_ADDR_LEN], re[1] = {0};
+        ksl_udp_get(w, KSL_UDP_GET_LOCAL, lw, KSL_UDP_ADDR_LEN, &n);
+        CHECK(!port || port_of(lw) == port, "udp_df_fallback_none: the port asked for");
+        v4(to4, port_of(lw));
+        CHECK(xfer(a, w, to4, NULL, 0, 1, 100, NULL, NULL, re) == 1, "udp_df_fallback_none: IPv4 arrives");
+        ksl_udp_close(w);
+    }
+    /* negative_udp_df_fallback_transient: a transient refusal on the AF_INET socket fails the open as KSL_E_NO_MEMORY, leaves
+       nothing open and the explicit port free */
+    if (dual) {
+        int before = dup(0);
+        close(before);
+        uint16_t port = 0;
+        ksl_udp *w = open_seamed_explicit(4, KSL_UDP_DF, 1 | 8, &port, &err, msg, sizeof msg);
+        CHECK(w == NULL && err == KSL_E_NO_MEMORY && strncmp(msg, "Don't Fragment", 14) == 0,
+              "negative_udp_df_fallback_transient: the open fails as KSL_E_NO_MEMORY at the DF step");
+        if (w)
+            ksl_udp_close(w);
+        int after = dup(0);
+        CHECK(after == before, "negative_udp_df_fallback_transient: nothing left open, so the explicit port is free");
+        if (after >= 0)
+            close(after);
+    }
+    /* udp_df_fallback_halves_carried: the v4-mapped refusal touches only sockets carrying v4-mapped traffic: ::1 (IPv6 alone) and
+       127.0.0.1 (AF_INET) keep DF and stay one socket; an AF_INET refusal on 127.0.0.1 is no DF, with nothing to fall back to */
+    {
+        ksl_udp_no_df_v4_mapped_for_test(1);
+        if (p6) {
+            ksl_udp *q = ksl_udp_open(l6, KSL_UDP_DF, &err, msg, sizeof msg);
+            CHECK(q && (caps_of(q, NULL) & KSL_UDP_DF) &&
+                      !(caps_of(q, NULL) & (KSL_UDP_V4_ONLY | KSL_UDP_V6_ONLY | KSL_UDP_SPLIT)),
+                  "udp_df_fallback_halves_carried: ::1 keeps DF");
+            if (q)
+                ksl_udp_close(q);
+        }
+        uint8_t lq[KSL_UDP_ADDR_LEN];
+        ksl_udp *q4 = open_lo(KSL_UDP_DF, lq);
+        CHECK(q4 && (caps_of(q4, NULL) & KSL_UDP_DF) &&
+                  !(caps_of(q4, NULL) & (KSL_UDP_V4_ONLY | KSL_UDP_V6_ONLY | KSL_UDP_SPLIT)),
+              "udp_df_fallback_halves_carried: 127.0.0.1 keeps DF");
+        if (q4)
+            ksl_udp_close(q4);
+        ksl_udp_no_df_v4_mapped_for_test(0);
+        ksl_udp_no_df_inet_for_test(1);
+        q4 = open_lo(KSL_UDP_DF, lq);
+        ksl_udp_no_df_inet_for_test(0);
+        CHECK(q4 && !(caps_of(q4, NULL) & (KSL_UDP_DF | KSL_UDP_V4_ONLY | KSL_UDP_V6_ONLY | KSL_UDP_SPLIT)),
+              "negative_udp_df_fallback_halves_carried: 127.0.0.1 refused DF: no DF, no fallback");
+        if (q4)
+            ksl_udp_close(q4);
+    }
+    /* udp_df_fallback_without_df_asked: a wildcard without KSL_UDP_DF stays one dual-stack socket whatever the seams say */
+    {
+        ksl_udp *w = open_seamed(4, 0, KSL_UDP_ECN, 1 | 2, &err, msg, sizeof msg);
+        CHECK(w && !(caps_of(w, NULL) & (KSL_UDP_V4_ONLY | KSL_UDP_V6_ONLY | KSL_UDP_SPLIT)) &&
+                  (!dual || v6only_of(fd_of(w)) == 0),
+              "udp_df_fallback_without_df_asked: dual-stack, no fallback flags");
+        if (w)
+            ksl_udp_close(w);
+    }
+#ifdef __APPLE__
+    /* udp_df_mapped_check: Darwin applies IPV6_DONTFRAG to v4-mapped traffic from Darwin 24 (macOS 15) on: the loopback check says
+       so on this host, and agrees with the version rule used when it cannot tell; the rule's edges */
+    {
+        struct utsname un;
+        int check = ksl_udp_mapped_df_check_for_test();
+        CHECK(uname(&un) == 0, "uname");
+        printf("udp: Darwin %s: IPV6_DONTFRAG on v4-mapped traffic: %d\n", un.release, check);
+        CHECK(check == ksl_udp_release_maps_df_for_test(un.release),
+              "udp_df_mapped_check: the loopback check agrees with the Darwin-version rule on this host");
+        CHECK(ksl_udp_release_maps_df_for_test("24.0.0") && ksl_udp_release_maps_df_for_test("25.6.0") &&
+                  !ksl_udp_release_maps_df_for_test("23.6.0") && !ksl_udp_release_maps_df_for_test("21.6.0") &&
+                  !ksl_udp_release_maps_df_for_test("") && !ksl_udp_release_maps_df_for_test("x24") &&
+                  ksl_udp_release_maps_df_for_test("100.1"),
+              "udp_df_mapped_check: Darwin 24 and later only");
+        /* negative_udp_fd_df_probe_mapped: ksl_udp_fd_df_probe on the JDK's dual-stack socket reports no DF on the v4-mapped half
+           where Darwin does not apply it (seam), so NioDatagramIo does without that half */
+        int s6 = socket(AF_INET6, SOCK_DGRAM, 0), off = 0;
+        if (s6 >= 0) {
+            setsockopt(s6, IPPROTO_IPV6, IPV6_V6ONLY, &off, sizeof off);
+            ksl_udp_no_df_v4_mapped_for_test(1);
+            CHECK(ksl_udp_fd_df_probe(s6) == (KSL_FD_DF_INET6 | KSL_FD_DF_V6_DO),
+                  "negative_udp_fd_df_probe_mapped: the IPv6 half alone");
+            ksl_udp_no_df_v4_mapped_for_test(0);
+            close(s6);
+        }
+    }
+#endif
+    if (p6)
+        ksl_udp_close(p6);
+    ksl_udp_close(a);
+}
 /* udp_waits_are_counted_before_the_wait: KSL_UDP_GET_WAITS counts each wait a receive begins for a datagram, before it blocks:
    none for a receive that does not wait (timeout 0), at least one for one that waits out its timeout; Windows has its own
    (udp_win_waits_are_counted_before_the_wait, test_udp_win.c) */
@@ -1673,11 +2372,18 @@ void run_udp(void) {
             CHECK(ksl_udp_fd_df_probe(s4) == KSL_FD_DF_V4_DO && ksl_udp_fd_df_mode(s4, 4) == -1,
                   "Darwin: IP_DONTFRAG, no modes");
             if (s6 >= 0) {
-                int off = 0;
+                int off = 0, buf = 65536, ctl = socket(AF_INET6, SOCK_DGRAM, 0);
                 setsockopt(s6, IPPROTO_IPV6, IPV6_V6ONLY, &off, sizeof off);
                 CHECK(ksl_udp_fd_df_probe(s6) == (KSL_FD_DF_INET6 | KSL_FD_DF_V4_DO | KSL_FD_DF_V6_DO),
                       "Darwin AF_INET6: IPV6_DONTFRAG, which covers v4-mapped traffic");
-                /* the coverage itself: a v4-mapped datagram above lo0's 16384-byte MTU is refused, not fragmented */
+                /* the coverage itself: a v4-mapped datagram above lo0's 16384-byte MTU is refused, not fragmented. Both sockets
+                   get room for it first: net.inet.udp.maxdgram (9216) refuses a larger send as EMSGSIZE whatever DF says, and
+                   the control (the same socket without DF) shows that the size alone is no refusal */
+                setsockopt(s6, SOL_SOCKET, SO_SNDBUF, &buf, sizeof buf);
+                if (ctl >= 0) {
+                    setsockopt(ctl, IPPROTO_IPV6, IPV6_V6ONLY, &off, sizeof off);
+                    setsockopt(ctl, SOL_SOCKET, SO_SNDBUF, &buf, sizeof buf);
+                }
                 struct sockaddr_in6 m;
                 memset(&m, 0, sizeof m);
                 m.sin6_family = AF_INET6;
@@ -1687,9 +2393,14 @@ void run_udp(void) {
                 m.sin6_addr.s6_addr[12] = 127;
                 m.sin6_addr.s6_addr[15] = 1;
                 static uint8_t big[20000];
+                CHECK(ctl >= 0 &&
+                          sendto(ctl, big, sizeof big, 0, (struct sockaddr *)&m, sizeof m) == (ssize_t)sizeof big,
+                      "Darwin AF_INET6 without DF (control): 20000 bytes to ::ffff:127.0.0.1 go out fragmented");
                 CHECK(
                     sendto(s6, big, sizeof big, 0, (struct sockaddr *)&m, sizeof m) < 0 && errno == EMSGSIZE,
                     "Darwin AF_INET6 with IPV6_DONTFRAG: 20000 bytes to ::ffff:127.0.0.1 refused (DF), not fragmented");
+                if (ctl >= 0)
+                    close(ctl);
             }
 #else
             int dmode = IP_PMTUDISC_DO;
@@ -2356,7 +3067,8 @@ void run_udp(void) {
                 ksl_udp_close(w6);
         }
         /* udp_open_without_wake_pipe: with one free descriptor below RLIMIT_NOFILE the socket opens but the wake pipe cannot.
-           Darwin: the pipe is the only way to wake a blocked receive, so open fails (KSL_E_NOT_SUPPORTED) and leaks no descriptor;
+           Darwin: the pipe is the only way to wake a blocked receive, so open fails (KSL_E_NO_MEMORY, as any open out of descriptors)
+           and leaks no descriptor;
            Linux: open goes on without the pipe */
         {
             struct rlimit old;
@@ -2374,7 +3086,8 @@ void run_udp(void) {
             ksl_udp *p = ksl_udp_open(a4, 0, &err, msg, sizeof msg);
             setrlimit(RLIMIT_NOFILE, &old);
 #ifdef __APPLE__
-            CHECK(p == NULL && err == KSL_E_NOT_SUPPORTED, "Darwin: no wake pipe, no socket");
+            CHECK(p == NULL && err == KSL_E_NO_MEMORY,
+                  "Darwin: no wake pipe, no socket (out of descriptors: KSL_E_NO_MEMORY)");
 #else
             CHECK(p != NULL, "Linux: the socket opens without the wake pipe");
 #endif
@@ -2724,6 +3437,7 @@ void run_udp(void) {
         udp_sender_cases();
         udp_close_waits_for_a_slow_receiver();
         udp_waits_are_counted_before_the_wait();
+        udp_df_fallback_cases();
         ksl_udp_close(a);
         ksl_udp_close(b);
     }

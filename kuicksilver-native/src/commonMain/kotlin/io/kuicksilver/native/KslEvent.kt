@@ -245,6 +245,26 @@ public object KslConst {
 
     /** `KSL_UDP_DF_DO` (granted only, ABI 7): a half of the socket refused probe mode and has DF in DO mode. */
     public const val UDP_DF_DO: Int = 64
+
+    /**
+     * `KSL_UDP_V4_ONLY` (granted only, additive in ABI 7): a wildcard was asked with [UDP_DF], its dual-stack socket got no DF
+     * for a lasting reason and no IPv6-only socket with DF could be had, so the socket is AF_INET with DF: it reaches no IPv6
+     * destination.
+     */
+    public const val UDP_V4_ONLY: Int = 128
+
+    /**
+     * `KSL_UDP_SPLIT` (additive in ABI 7): asked with a wildcard, two sockets on one port (IPV6_V6ONLY on `::`, AF_INET on
+     * 0.0.0.0) in one `ksl_udp`; granted, also unasked where a wildcard asked with [UDP_DF] got no DF on the IPv4 half of its
+     * dual-stack socket for a lasting reason. [UDP_GET_FD2] is the AF_INET descriptor.
+     */
+    public const val UDP_SPLIT: Int = 256
+
+    /**
+     * `KSL_UDP_V6_ONLY` (granted only, additive in ABI 7): as [UDP_SPLIT], but the AF_INET socket got no DF or did not open,
+     * so the socket is IPV6_V6ONLY alone: it reaches no IPv4 destination.
+     */
+    public const val UDP_V6_ONLY: Int = 512
     public const val UDP_ADDR_LEN: Int = 20
 
     /** `Ksl.dnsQuery` answer kind: a whole DNS message follows (`KSL_DNS_MESSAGE`). */
@@ -288,6 +308,9 @@ public object KslConst {
 
     /** `ksl_udp_get`: the waits a receive began for a datagram (4 bytes BE), counted before each one on every platform (ABI 7). */
     public const val UDP_GET_WAITS: Int = 6
+
+    /** `ksl_udp_get`: the AF_INET descriptor of a [UDP_SPLIT] socket (4 bytes BE), 0xffffffff when it has none (ABI 7, additive). */
+    public const val UDP_GET_FD2: Int = 7
     public const val UDP_MAX_BATCH: Int = 64
 
     /** The largest ICMP Packet Too Big `ksl_icmp_ptb_build` writes (`KSL_ICMP_PTB_MAX`, ABI 7, additive). */

@@ -14,6 +14,7 @@ import io.ktor.network.sockets.InetSocketAddress
 internal actual suspend fun openPortableDatagramIo(
     local: InetSocketAddress,
     acceleratedRefusal: Throwable?,
+    logger: KuicksilverLogger,
 ): DatagramIo {
     // a refused bind (the port in use, an address not on this host; KslException is not an IOException) would refuse any
     // socket: that failure, as the JVM's portable socket reports it, so a caller trying another port for a taken one can tell

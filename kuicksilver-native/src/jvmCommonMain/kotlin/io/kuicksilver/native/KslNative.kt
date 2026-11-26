@@ -479,6 +479,9 @@ internal object KslNative {
     /** strerror(EMSGSIZE) in the process's locale; null on Windows */
     @JvmStatic external fun udpEmsgsizeText(): String?
 
+    /** ksl_udp_fd_v6only: IPV6_V6ONLY on an AF_INET6 socket; 1 set, 0 refused, negative when it is none */
+    @JvmStatic external fun udpFdV6Only(fd: Long): Int
+
     /** ksl_udp_fd_df_mode: IP_MTU_DISCOVER (family 4) or IPV6_MTU_DISCOVER (6), -1 unreadable */
     @JvmStatic external fun udpFdDfMode(
         fd: Long,

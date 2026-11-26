@@ -528,6 +528,181 @@ class NioDatagramIoTest {
         }
 
     /**
+     * A wildcard whose dual-stack channel has DF on its IPv6 half only (the dual-stack seam; the IPV6_V6ONLY channel and the
+     * AF_INET one get theirs, through `ksl` here) is two channels on one port, IPV6_V6ONLY and AF_INET, for 0.0.0.0 and `::`
+     * alike (owner decision: every interface of both families; two sockets where one dual-stack socket cannot be had): no
+     * family without DF, the wildcard asked for reported, and an IPv4 and an IPv6 peer both reached and answered from the port.
+     */
+    @Test fun aWildcardWithoutDfOnTheDualStackIpv4HalfIsTwoChannels() =
+        runBlocking {
+            val peer4 = one()
+            val peer6 = runCatching { DatagramIo.open(InetSocketAddress("::1", 0), IoPreference.Portable) }.getOrNull()
+            try {
+                for (host in listOf("0.0.0.0", "::")) {
+                    val w = openSplit(host, 0)
+                    try {
+                        assertTrue(w.splitForTest, host)
+                        assertEquals(null, w.noDfFamily, host)
+                        assertEquals(NioDatagramIo.DF_ALL, w.noDf, host)
+                        assertContentEquals(ByteArray(if (host == "::") 16 else 4), w.localAddress.ipBytesNoDns(), "$host reported")
+                        for (p in listOfNotNull(peer4, peer6)) {
+                            val ip = if (p === peer4) "127.0.0.1" else "::1"
+                            assertEquals(1, p.send(batchOf(ByteArray(100) { 5 }, to = InetSocketAddress(ip, w.localAddress.port))))
+                            val inb = PacketBatch(1)
+                            withTimeout(5.seconds) { while (w.receive(inb) == 0) continue }
+                            assertEquals(100, inb.length(0), "$host from $ip")
+                            assertEquals(1, w.send(batchOf(ByteArray(60), to = inb.address(0)!!)))
+                            assertEquals(emptyList(), w.takeDfRefusals())
+                            val back = PacketBatch(1)
+                            withTimeout(5.seconds) { while (p.receive(back) == 0) continue }
+                            assertEquals(w.localAddress.port, back.address(0)!!.port, "$host answered $ip from the port")
+                            inb.close()
+                            back.close()
+                        }
+                    } finally {
+                        w.close()
+                    }
+                }
+            } finally {
+                peer4.close()
+                peer6?.close()
+            }
+        }
+
+    /** A split socket on an explicit port binds both channels to it; port 0 gets a port free on both sides beside held IPv4 ports. */
+    @Test fun aSplitSocketTakesOnePortForBothChannels() =
+        runBlocking {
+            // an explicit port free on both families when taken; another process may bind it before the split does: another port
+            var explicit: NioDatagramIo? = null
+            var free = 0
+            for (attempt in 0 until 8) {
+                free = java.net.DatagramSocket(java.net.InetSocketAddress("0.0.0.0", 0)).use { it.localPort }
+                explicit =
+                    try {
+                        openSplit("::", free)
+                    } catch (_: java.net.BindException) {
+                        null
+                    }
+                if (explicit != null) break
+            }
+            checkNotNull(explicit) { "no explicit port could be had in 8 tries" }.use { assertEquals(free, it.localAddress.port) }
+            val held = mutableListOf<java.net.DatagramSocket>()
+            try {
+                repeat(2000) { held += java.net.DatagramSocket(java.net.InetSocketAddress("127.0.0.1", 0)) }
+                repeat(16) { openSplit("0.0.0.0", 0).use { w -> assertTrue(w.splitForTest) } }
+            } finally {
+                held.forEach { it.close() }
+            }
+        }
+
+    /**
+     * negative: no split where it cannot be had: IPV6_V6ONLY not set (the JVM without `ksl`), or the IPv6-only channel or the
+     * AF_INET one without DF. 0.0.0.0 then takes the AF_INET channel (IPv6 without DF), `::` keeps the dual-stack one (IPv4
+     * without DF), as before; a specific address never splits.
+     */
+    @Test fun negative_noSplitWhereItCannotBeHad() =
+        runBlocking {
+            NioDatagramIo.v6OnlyForTest = { false } // IPV6_V6ONLY not set: the JVM without ksl
+            try {
+                assertNoSplit("no IPV6_V6ONLY")
+            } finally {
+                NioDatagramIo.v6OnlyForTest = null
+            }
+            NioDatagramIo.dfV6OnlyForTest = { DF_INET6 to false }
+            try {
+                assertNoSplit("IPv6-only channel without DF")
+            } finally {
+                NioDatagramIo.dfV6OnlyForTest = null
+            }
+            // the AF_INET channel of the split without DF: no split either, and no channel left open
+            val opened = java.util.Collections.synchronizedList(mutableListOf<java.nio.channels.DatagramChannel>())
+            NioDatagramIo.channelOpenedForTest = { opened += it }
+            NioDatagramIo.dfV6OnlyForTest = { (DF_INET6 or DF_V6) to false }
+            NioDatagramIo.dfForTest = { inet -> if (inet) 0 to false else (DF_INET6 or DF_V6) to false }
+            try {
+                DatagramIo.open(InetSocketAddress("::", 0), IoPreference.Portable).use {
+                    assertFalse((it as NioDatagramIo).splitForTest)
+                    assertEquals(IpFamily.V4, it.noDfFamily)
+                }
+            } finally {
+                NioDatagramIo.dfForTest = null
+                NioDatagramIo.dfV6OnlyForTest = null
+                NioDatagramIo.channelOpenedForTest = null
+            }
+            assertTrue(opened.none { it.isOpen }, "no channel left open")
+            openDualWithoutV4Df("::1").use { assertFalse(it.splitForTest, "::1 is one channel") }
+        }
+
+    /**
+     * Apple: the JDK's `IPV6_DONTFRAG` covers a dual-stack channel's v4-mapped traffic from macOS 15 (Darwin 24) on only
+     * (quic-go `sys_conn_df_darwin.go`; `ksl_udp.c`'s check). Without `ksl` (the seam) an IPv4 bind keeps the dual-stack
+     * channel where it does and takes the AF_INET one where it does not; the rule's edges; the loopback check agrees with the
+     * release rule on this host.
+     */
+    @Test fun appleJdkOptionCoversV4MappedTrafficFromMacOs15Only() =
+        runBlocking {
+            assertTrue(NioDatagramIo.macOsMapsDf("15.0") && NioDatagramIo.macOsMapsDf("26.7.3"))
+            assertFalse(NioDatagramIo.macOsMapsDf("14.6.1") || NioDatagramIo.macOsMapsDf("12.0") || NioDatagramIo.macOsMapsDf("10.16"))
+            assertFalse(NioDatagramIo.macOsMapsDf("") || NioDatagramIo.macOsMapsDf("x"))
+            if (!onDarwin || !NioDatagramIo.hasJdkDontFragmentForTest()) return@runBlocking
+            val check = NioDatagramIo.appleMapsDfCheck()
+            assertEquals(if (NioDatagramIo.macOsMapsDf(System.getProperty("os.version"))) 1 else 0, check, "the loopback check")
+            for (maps in listOf(true, false)) {
+                NioDatagramIo.appleMapsDfForTest = maps
+                NioDatagramIo.dfForTest = { -1 to true } // no ksl, the JDK's option takes
+                try {
+                    DatagramIo.open(InetSocketAddress("127.0.0.1", 0), IoPreference.Portable).use {
+                        assertEquals(if (maps) null else IpFamily.V6, (it as NioDatagramIo).noDfFamily, "maps $maps")
+                    }
+                    assertEquals(
+                        maps,
+                        NioDatagramIo.noDfFamily(-1, true, inet = false, onApple = NioDatagramIo.appleJdkMapsDf()) == NioDatagramIo.DF_ALL,
+                    )
+                } finally {
+                    NioDatagramIo.dfForTest = null
+                    NioDatagramIo.appleMapsDfForTest = null
+                }
+            }
+        }
+
+    /** A NIO socket on [host] whose dual-stack channel has DF on its IPv6 half only (seam), the rest as the system sets it. */
+    private suspend fun openDualWithoutV4Df(host: String): NioDatagramIo {
+        NioDatagramIo.dfForTest = { inet -> (if (inet) DF_V4 else DF_INET6 or DF_V6) to false }
+        try {
+            return DatagramIo.open(InetSocketAddress(host, 0), IoPreference.Portable) as NioDatagramIo
+        } finally {
+            NioDatagramIo.dfForTest = null
+        }
+    }
+
+    /** [negative_noSplitWhereItCannotBeHad]: 0.0.0.0 takes the AF_INET channel, `::` keeps the dual-stack one, neither splits. */
+    private suspend fun assertNoSplit(name: String) {
+        openDualWithoutV4Df("0.0.0.0").use {
+            assertFalse(it.splitForTest, name)
+            assertEquals(IpFamily.V6, it.noDfFamily, "$name: 0.0.0.0 on AF_INET")
+        }
+        openDualWithoutV4Df("::").use {
+            assertFalse(it.splitForTest, name)
+            assertEquals(IpFamily.V4, it.noDfFamily, "$name: :: on the dual-stack channel")
+        }
+    }
+
+    /** [openDualWithoutV4Df] where the split's channels get DF (the IPv6-only one through the seam): a split socket on [port]. */
+    private suspend fun openSplit(
+        host: String,
+        port: Int,
+    ): NioDatagramIo {
+        NioDatagramIo.dfV6OnlyForTest = { (DF_INET6 or DF_V6) to false }
+        NioDatagramIo.dfForTest = { inet -> (if (inet) DF_V4 else DF_INET6 or DF_V6) to false }
+        try {
+            return DatagramIo.open(InetSocketAddress(host, port), IoPreference.Portable) as NioDatagramIo
+        } finally {
+            NioDatagramIo.dfForTest = null
+            NioDatagramIo.dfV6OnlyForTest = null
+        }
+    }
+
+    /**
      * A failure to open the AF_INET channel closes the dual-stack one too, and both are closed when it fails after opening.
      * Where the runtime has no IPv6 the first channel is already AF_INET and fails alone.
      */

@@ -577,6 +577,21 @@ int ksl_key_ecb16(
 /* clang-format on */
 #define KSL_UDP_REUSEPORT 16
 /* clang-format off */
+#define KSL_UDP_V4_ONLY 128 /* granted only, never asked, with KSL_UDP_DF: a wildcard was asked with KSL_UDP_DF, its dual-stack socket got no DF for
+                                        a lasting reason and no IPv6-only socket with DF could be had either,
+                                        so the socket is AF_INET with DF: it reaches no IPv6 destination (the caller reports IPv6 as the family without
+                                        DF). Additive in ABI 7 */
+#define KSL_UDP_SPLIT 256 /* asked with a wildcard (0.0.0.0, ::): two sockets on one port, IPV6_V6ONLY on :: and AF_INET on 0.0.0.0, in one ksl_udp;
+                                        granted: the socket is so. Granted without being asked when a wildcard was asked with KSL_UDP_DF and its
+                                        dual-stack socket got no DF on its IPv4 half for a lasting reason (Linux: IP_MTU_DISCOVER refused on its
+                                        v4-mapped half; Apple: IPV6_DONTFRAG not applied to v4-mapped traffic before Darwin 24): both families keep
+                                        DF (RFC 9000 section 14). IPv4 traffic goes through the AF_INET socket, IPv6 through the other; a receive
+                                        takes from both in turn. KSL_UDP_GET_FD2 is the AF_INET one. Linux, Apple and Windows. Additive in ABI 7 */
+#define KSL_UDP_V6_ONLY 512 /* granted only, never asked, with KSL_UDP_DF: as KSL_UDP_SPLIT, but the AF_INET socket got no DF for a lasting reason or
+                                        did not open, so the socket is IPV6_V6ONLY alone: it reaches no IPv4 destination (the caller reports IPv4 as
+                                        the family without DF). Additive in ABI 7 */
+/* clang-format on */
+/* clang-format off */
 #define KSL_UDP_PKTINFO 32 /* a wildcard bind (0.0.0.0, ::) only: each received datagram's destination address (IP_PKTINFO, IPV6_RECVPKTINFO;
                                         IP_RECVPKTINFO on Apple; WSARecvMsg IP_PKTINFO / IPV6_PKTINFO on Windows) comes back from ksl_udp_recv_dst, and
                                         ksl_udp_send_src sends from a named source address (IP_PKTINFO / IPV6_PKTINFO cmsg): a reply leaves from the
@@ -592,6 +607,8 @@ int ksl_key_ecb16(
 #define KSL_UDP_GET_WAITS                                                                                              \
     6 /* 4 bytes BE: waits a receive began for a datagram (each poll / WSAPoll, counted before it blocks);
                                 the same on every platform. Additive in ABI 7 */
+#define KSL_UDP_GET_FD2                                                                                                \
+    7 /* 4 bytes BE: the AF_INET descriptor of a KSL_UDP_SPLIT socket, 0xffffffff when it has none. Additive in ABI 7 */
 #define KSL_UDP_MAX_BATCH 64 /* slots per ksl_udp_send / ksl_udp_recv call */
 typedef struct ksl_udp ksl_udp;
 ksl_udp *ksl_udp_open(
@@ -679,12 +696,16 @@ int ksl_udp_fd_df_probe(int64_t fd);
             EMSGSIZE / WSAEMSGSIZE: the caller treats that as a failed path). It replaces a mode set before (the JDK's IP_DONTFRAGMENT is
             DO). Returns the KSL_FD_DF_* bits of the result: KSL_FD_DF_INET6 for an AF_INET6 socket, and per half V4 or V4_DO, V6 or
             V6_DO; a half with neither bit has no DF (the system refused both modes). Apple has no modes: IP_DONTFRAG (AF_INET) or
-            IPV6_DONTFRAG (AF_INET6, which covers v4-mapped traffic there), reported as DO; 0 on other platforms; KSL_ERROR when fd is
+            IPV6_DONTFRAG (AF_INET6, which covers v4-mapped traffic there from Darwin 24 on, KSL_FD_DF_V4_DO only then), reported as DO; 0 on other platforms; KSL_ERROR when fd is
             no IPv4 or IPv6 socket */
 int ksl_udp_fd_df_mode(int64_t fd, int family);
 /* IP_MTU_DISCOVER (family 4) or IPV6_MTU_DISCOVER (family 6) of fd (3 = PROBE everywhere; Linux 0 = DONT, 1 = WANT, 2 = DO;
             Windows 0 = NOT_SET, 1 = DO, 2 = DONT); -1 when it cannot be read or on Apple (no PMTUDISC modes). For tests and
             diagnostics; fd must be open */
+int ksl_udp_fd_v6only(int64_t fd);
+/* IPV6_V6ONLY on the unbound AF_INET6 socket fd (a POSIX descriptor; a SOCKET on Windows), which the JDK cannot set: the IPv6 half
+            of two sockets on one port, beside an AF_INET one (KSL_UDP_SPLIT, for the JVM's portable socket). 1 when set, 0 when the
+            system refused it, KSL_ERROR when fd is no AF_INET6 socket. Additive in ABI 7 */
 /* A send-only clone of a socket ksl_udp_open made (one sender thread per object: each has its own send scratch, so N threads
    send on one port through N clones; the clone of a clone is a clone of its socket). It shares the descriptor and copies the
    granted flags (GSO, ECN, DF, PKTINFO) and the local address as they stand: create clones before the socket sends, or from its

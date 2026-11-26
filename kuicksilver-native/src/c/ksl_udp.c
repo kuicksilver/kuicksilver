@@ -3,7 +3,8 @@
 /* Accelerated UDP for Linux and Apple (ADR-0006; threat-model 3.12, 3.16): one socket, batched sendmsg with UDP_SEGMENT,
  * recvmsg with UDP_GRO split into the caller's slots inside C, ECN through IP_TOS / IP_RECVTOS, DF in PROBE mode (never DO),
  * SO_REUSEPORT. A wildcard address (0.0.0.0 or ::) opens one dual-stack AF_INET6 socket on :: (IPV6_V6ONLY off), v4-mapped peers
- * reported as IPv4, as NIO and ksl_udp_win.c do; a specific address keeps its own family. Apple: the same socket without GSO/GRO (a batch is a loop of sendmsg), DF through IP_DONTFRAG/IPV6_DONTFRAG
+ * reported as IPv4, as NIO and ksl_udp_win.c do; a specific address keeps its own family; 0.0.0.0 whose dual-stack socket gets no
+ * DF for a lasting reason is an AF_INET socket with DF instead (KSL_UDP_V4_ONLY). Apple: the same socket without GSO/GRO (a batch is a loop of sendmsg), DF through IP_DONTFRAG/IPV6_DONTFRAG
  * (Darwin has no PMTUDISC modes), pipe + fcntl instead of pipe2. No allocation after open; errors stay in the object.
  * Other platforms (Windows): KSL_E_NOT_SUPPORTED.
  * The socket's life (open, get, shutdown, close) lives here, sending in ksl_udp_send.c, receiving in ksl_udp_recv.c. */
@@ -31,9 +32,43 @@ static void be16(uint8_t *p, uint16_t v) {
 }
 
 #ifdef KSL_TEST
-static int no_ipv6_for_test; /* simulates a host without IPv6: socket(AF_INET6) fails */
+static int
+    no_ipv6_for_test; /* simulates a host without IPv6: socket(AF_INET6) fails, 1 with EAFNOSUPPORT, else with that errno */
 void ksl_udp_no_ipv6_for_test(int on) {
     no_ipv6_for_test = on;
+}
+/* the seams of the 0.0.0.0 DF fallback, as ksl_udp_win.c has them: */
+/* the system refuses DF on the v4-mapped half of a dual-stack socket, for good (Linux: IP_MTU_DISCOVER refused there; Darwin:
+   IPV6_DONTFRAG not applied to v4-mapped traffic) */
+static int no_df_v4_mapped_for_test;
+void ksl_udp_no_df_v4_mapped_for_test(int on) {
+    no_df_v4_mapped_for_test = on;
+}
+static int no_df_v6_for_test; /* the system refuses DF on the IPv6 half of any AF_INET6 socket, for good */
+void ksl_udp_no_df_v6_for_test(int on) {
+    no_df_v6_for_test = on;
+}
+static int no_df_inet_for_test; /* the system refuses DF on an AF_INET socket, for good */
+void ksl_udp_no_df_inet_for_test(int on) {
+    no_df_inet_for_test = on;
+}
+static int transient_df_inet_for_test; /* a transient refusal (ENOBUFS) of DF on an AF_INET socket */
+void ksl_udp_transient_df_inet_for_test(int on) {
+    transient_df_inet_for_test = on;
+}
+static int
+    no_inet_for_test; /* socket(AF_INET) fails: 1 with EAFNOSUPPORT (no IPv4 here), another value with that errno */
+void ksl_udp_no_inet_for_test(int on) {
+    no_inet_for_test = on;
+}
+static int
+    split_port_for_test; /* the port the first try of a port-0 split takes, as if the kernel had given it to the IPv6 half */
+void ksl_udp_split_port_for_test(int port) {
+    split_port_for_test = port;
+}
+static uint32_t split_retries_for_test; /* port-0 splits that gave a port up because IPv4 holds it (open_split) */
+uint32_t ksl_udp_split_retries_for_test(void) {
+    return __atomic_load_n(&split_retries_for_test, __ATOMIC_RELAXED);
 }
 #endif
 #ifdef __APPLE__
@@ -91,13 +126,195 @@ static int is_wildcard(const uint8_t *a) {
             return 0;
     return 1;
 }
-/* socket, the options bind needs first, bind; -1 with errno and the failed step. dual: AF_INET6 bound to :: with IPV6_V6ONLY off */
-static int bind_socket(ksl_udp *u, const uint8_t addr[KSL_UDP_ADDR_LEN], int dual, int flags, const char **step) {
+/* setsockopt for Don't Fragment failed with errno e: a refusal that says nothing about the system's DF support (ENOBUFS, ENOMEM: no
+   memory for the option's state, which Darwin's IPV6_DONTFRAG allocates) is transient, as ksl_udp_win.c's df_opt counts WSAENOBUFS,
+   so the open fails as that error instead of reporting a socket without DF, which callers take as lasting. Every other refusal
+   is lasting: an option or level the system does not have (ENOPROTOOPT; Darwin's IP_DONTFRAG on AF_INET6, EINVAL; a value it
+   does not know, EINVAL), or one a policy forbids (a seccomp filter's errno, an LSM's EACCES, gVisor) */
+static void df_refused(int e, int *transient) {
+    if (e == ENOBUFS || e == ENOMEM)
+        *transient = e;
+}
+#define DF_STEP "Don't Fragment setsockopt"
+/* bind_socket with need_df: the socket got no DF for good and was closed unbound */
+#define NO_DF_STEP "no Don't Fragment"
+#if !defined(__APPLE__)
+#ifdef KSL_TEST
+static int
+    refuse_probe; /* tests: the system refuses probe mode (a seccomp filter, gVisor), as ksl_udp_refuse_probe_for_test sets */
+void ksl_udp_refuse_probe_for_test(int on) {
+    refuse_probe = on;
+}
+#else
+#define refuse_probe 0
+#endif
+/* DF on one half of fd ([family] 4: IP_MTU_DISCOVER, on AF_INET6 the v4-mapped half; 6: IPV6_MTU_DISCOVER): probe mode where the
+   system takes it (1), else DO mode (2), else 0 (*transient set where the refusal of DO is transient, df_refused). The kernel
+   (do_ip_setsockopt, reached for SOL_IP from an AF_INET6 UDP socket through ipv6_setsockopt) refuses IP_MTU_DISCOVER only for a
+   value it does not know (EINVAL: PROBE before Linux 2.6.22) and allocates nothing for it: a refusal of both modes comes from a
+   policy (seccomp, an LSM) or from a kernel that is not Linux's (gVisor), and lasts */
+static int set_df_mode(int fd, int family, int *transient) {
+    int probe = family == 6 ? IPV6_PMTUDISC_PROBE : IP_PMTUDISC_PROBE,
+        d = family == 6 ? IPV6_PMTUDISC_DO : IP_PMTUDISC_DO;
+    int level = family == 6 ? IPPROTO_IPV6 : IPPROTO_IP, opt = family == 6 ? IPV6_MTU_DISCOVER : IP_MTU_DISCOVER;
+    if (!refuse_probe && setsockopt(fd, level, opt, &probe, sizeof probe) == 0)
+        return 1;
+    if (setsockopt(fd, level, opt, &d, sizeof d) == 0)
+        return 2;
+    df_refused(errno, transient);
+    return 0;
+}
+#else
+#include <sys/utsname.h>
+/* Whether a Darwin kernel release (uname's "24.1.0") applies IPV6_DONTFRAG to the v4-mapped traffic of a dual-stack socket: from
+   Darwin 24 (macOS 15, iOS 18) on. Before, the option takes on such a socket but v4-mapped datagrams leave without DF and are
+   fragmented (quic-go sys_conn_df_darwin.go, which therefore sets no DF on a dual-stack socket before macOS 15). Only where the
+   loopback check below cannot tell */
+static int release_maps_df(const char *release) {
+    int major = 0;
+    for (const char *c = release; *c >= '0' && *c <= '9' && major < 1000; c++)
+        major = major * 10 + (*c - '0');
+    return major >= 24;
+}
+/* Whether this Darwin applies IPV6_DONTFRAG to v4-mapped traffic, tried on the loopback: on two dual-stack sockets with room for
+   the datagram (SO_SNDBUF above net.inet.udp.maxdgram, 9216, which refuses a larger send as EMSGSIZE whatever DF says), 20000
+   bytes (above lo0's 16384-byte MTU) to ::ffff:127.0.0.1 must go out fragmented without the option and be refused with EMSGSIZE
+   with it, while 100 bytes still go: 1 yes, 0 no (fragmented, or v4-mapped sends refused), -1 when the loopback cannot tell
+   (the control refused too, no socket). The datagrams go to an AF_INET socket of its own on 127.0.0.1, closed unread */
+static int mapped_df_check(void) {
+    int r = socket(AF_INET, SOCK_DGRAM, 0), c = socket(AF_INET6, SOCK_DGRAM, 0), d = socket(AF_INET6, SOCK_DGRAM, 0);
+    int verdict = -1, off = 0, one = 1, buf = 65536;
+    struct sockaddr_in a;
+    memset(&a, 0, sizeof a);
+    a.sin_len = sizeof a;
+    a.sin_family = AF_INET;
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    socklen_t al = sizeof a;
+    static const uint8_t big[20000];
+    if (r >= 0 && c >= 0 && d >= 0 && bind(r, (struct sockaddr *)&a, sizeof a) == 0 &&
+        getsockname(r, (struct sockaddr *)&a, &al) == 0 &&
+        setsockopt(c, IPPROTO_IPV6, IPV6_V6ONLY, &off, sizeof off) == 0 &&
+        setsockopt(d, IPPROTO_IPV6, IPV6_V6ONLY, &off, sizeof off) == 0 &&
+        setsockopt(c, SOL_SOCKET, SO_SNDBUF, &buf, sizeof buf) == 0 &&
+        setsockopt(d, SOL_SOCKET, SO_SNDBUF, &buf, sizeof buf) == 0 &&
+        setsockopt(d, IPPROTO_IPV6, IPV6_DONTFRAG, &one, sizeof one) == 0) {
+        struct sockaddr_in6 m;
+        memset(&m, 0, sizeof m);
+        m.sin6_len = sizeof m;
+        m.sin6_family = AF_INET6;
+        m.sin6_port = a.sin_port;
+        m.sin6_addr.s6_addr[10] = m.sin6_addr.s6_addr[11] = 0xff;
+        memcpy(&m.sin6_addr.s6_addr[12], &a.sin_addr, 4);
+        if (sendto(c, big, sizeof big, 0, (struct sockaddr *)&m, sizeof m) == (ssize_t)sizeof big) {
+            ssize_t small = sendto(d, big, 100, 0, (struct sockaddr *)&m, sizeof m);
+            int small_errno = errno;
+            ssize_t large = sendto(d, big, sizeof big, 0, (struct sockaddr *)&m, sizeof m);
+            if (small != 100)
+                verdict = small_errno == ENOBUFS || small_errno == EAGAIN ? -1 : 0; /* DF breaks v4-mapped sends */
+            else if (large == (ssize_t)sizeof big)
+                verdict = 0; /* fragmented: no DF on the v4-mapped half */
+            else
+                verdict = errno == EMSGSIZE ? 1 : -1;
+        }
+    }
+    if (r >= 0)
+        close(r);
+    if (c >= 0)
+        close(c);
+    if (d >= 0)
+        close(d);
+    return verdict;
+}
+static int mapped_df; /* 0 not known yet, 1 yes, 2 no: learned once per process (a race only checks twice) */
+static int mapped_df_honoured(void) {
+    int v = __atomic_load_n(&mapped_df, __ATOMIC_ACQUIRE);
+    if (v == 0) {
+        int c = mapped_df_check();
+        struct utsname un;
+        if (c < 0)
+            c = uname(&un) == 0 && release_maps_df(un.release);
+        v = c ? 1 : 2;
+        __atomic_store_n(&mapped_df, v, __ATOMIC_RELEASE);
+    }
+    return v == 1;
+}
+#endif
+/* DF on the halves fd carries (u->family, u->dual: the IPv4 half on AF_INET or a dual-stack socket, the IPv6 half on AF_INET6), set
+   before bind as ksl_udp_win.c does; probe mode where the system takes it: the kernel's path MTU cache must not drive sizes (an
+   attacker's ICMP would shrink it: quic-go CVE-2024-53259); DO mode on a half that refuses it (a seccomp filter, gVisor): DF all
+   the same, reported as KSL_UDP_DF_DO. KSL_UDP_DF is granted only when every half the socket carries has DF. 0 on a transient
+   refusal (*transient, df_refused): not a verdict on DF, the open fails as that error */
+static int set_df(ksl_udp *u, int fd, int *transient) {
+    int one = 1, v4 = u->family == AF_INET || u->dual, v6 = u->family == AF_INET6, ok4 = 1, ok6 = 1, in_do = 0;
+    u->granted &= ~(uint32_t)(KSL_UDP_DF | KSL_UDP_DF_DO); /* nothing left from an attempt that failed */
+    u->recverr = 0;
+#ifdef __APPLE__ /* Darwin has only the DF bit, as in quic-go sys_conn_df_darwin.go: IP_DONTFRAG on AF_INET (macOS 11 and later;
+                    ENOPROTOOPT before), IPV6_DONTFRAG on AF_INET6, which covers the v4-mapped half only from Darwin 24 on
+                    (mapped_df_honoured; IP_DONTFRAG is EINVAL there). It does cache a path MTU from an ICMPv6 Packet Too Big
+                    (clamped to >= 1280): a larger datagram then fails with EMSGSIZE, a lost slot, and QUIC's 1248-byte IPv6 floor
+                    (1200 + headers) still fits, so a forged PTB cannot stop sending */
+    if (v6) {
+        ok6 = setsockopt(fd, IPPROTO_IPV6, IPV6_DONTFRAG, &one, sizeof one) == 0;
+        if (!ok6)
+            df_refused(errno, transient);
+        ok4 = !v4 || (ok6 && mapped_df_honoured());
+    } else if (!(ok4 = setsockopt(fd, IPPROTO_IP, IP_DONTFRAG, &one, sizeof one) == 0))
+        df_refused(errno, transient);
+    in_do = 1; /* the DF bit alone works as DO mode */
+#else
+    if (v4) { /* on AF_INET6: the v4-mapped half */
+        int m = set_df_mode(fd, 4, transient);
+        ok4 = m > 0;
+        in_do |= m == 2;
+    }
+    if (v6) {
+        int m = set_df_mode(fd, 6, transient);
+        ok6 = m > 0;
+        in_do |= m == 2;
+        if (ok6)
+            setsockopt(fd, IPPROTO_IPV6, IPV6_DONTFRAG, &one, sizeof one);
+    }
+#endif
+#ifdef KSL_TEST
+    if (v4 && ((u->family == AF_INET6 && no_df_v4_mapped_for_test) || (u->family == AF_INET && no_df_inet_for_test)))
+        ok4 = 0;
+    if (v6 && no_df_v6_for_test)
+        ok6 = 0;
+    if (u->family == AF_INET && transient_df_inet_for_test) {
+        ok4 = 0;
+        *transient = ENOBUFS;
+    }
+#endif
+    int ok = ok4 && ok6;
+    if (!ok && *transient)
+        return 0;
+#ifndef __APPLE__
+    /* ICMP errors into the error queue (ADR-0006): Packet Too Big as a DPLPMTUD hint (RFC 8899 section 4.6), validated by the caller.
+       The queue also takes port and host unreachable, which set sk_err: ksl_udp_recv drains it and never fails on such an error */
+    if (ok) {
+        int rv = 1;
+        if (v4)
+            rv = rv && setsockopt(fd, IPPROTO_IP, IP_RECVERR, &one, sizeof one) == 0;
+        if (v6)
+            rv = rv && setsockopt(fd, IPPROTO_IPV6, IPV6_RECVERR, &one, sizeof one) == 0;
+        u->recverr = rv;
+    }
+#endif
+    if (ok)
+        u->granted |= KSL_UDP_DF | (in_do ? KSL_UDP_DF_DO : 0);
+    return 1;
+}
+/* socket, the options bind needs first (DF among them, with KSL_UDP_DF), bind; -1 with errno and the failed step. dual: AF_INET6
+   bound to :: with IPV6_V6ONLY off. need_df: a socket that gets no DF for a lasting reason is closed before its bind, step
+   NO_DF_STEP (so its port was never taken); a transient DF refusal fails as DF_STEP with that errno */
+static int bind_socket(ksl_udp *u, const uint8_t addr[KSL_UDP_ADDR_LEN], int dual, int flags, int need_df,
+                       const char **step) {
     int family = dual || addr[0] == 6 ? AF_INET6 : AF_INET, fd = -1;
     *step = "socket";
 #ifdef KSL_TEST
-    if (family == AF_INET6 && no_ipv6_for_test) {
-        errno = EAFNOSUPPORT;
+    if ((family == AF_INET6 && no_ipv6_for_test) || (family == AF_INET && no_inet_for_test)) {
+        int v = family == AF_INET6 ? no_ipv6_for_test : no_inet_for_test;
+        errno = v != 1 ? v : EAFNOSUPPORT;
         return -1;
     }
 #endif
@@ -114,7 +331,9 @@ static int bind_socket(ksl_udp *u, const uint8_t addr[KSL_UDP_ADDR_LEN], int dua
 #endif
     if (fd < 0)
         return -1;
-    int one = 1, v6only = !dual;
+    u->family = family;
+    u->dual = dual;
+    int one = 1, v6only = !dual, transient = 0;
 #ifdef __APPLE__
     int r;
 #endif
@@ -127,30 +346,30 @@ static int bind_socket(ksl_udp *u, const uint8_t addr[KSL_UDP_ADDR_LEN], int dua
         if (setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof one) == 0)
             u->granted |= KSL_UDP_REUSEPORT;
     }
-#else
-    (void)flags;
 #endif
     uint8_t any[KSL_UDP_ADDR_LEN] = {6};
     any[1] = addr[1];
     any[2] = addr[2];
     struct sockaddr_storage ss;
     socklen_t sl = to_sockaddr(dual ? any : addr, &ss);
-    if (family == AF_INET6 && setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &v6only, sizeof v6only) != 0 && dual) {
+    if (family == AF_INET6 && setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &v6only, sizeof v6only) != 0 &&
+        (dual || u->v6only_needed)) { /* the IPv6 half of a split must not take IPv4 (open_split) */
         *step = "IPV6_V6ONLY";
+    } else if ((flags & KSL_UDP_DF) && !set_df(u, fd, &transient)) {
+        *step = DF_STEP;
+        errno = transient;
+    } else if (need_df && (flags & KSL_UDP_DF) && !(u->granted & KSL_UDP_DF)) {
+        *step = NO_DF_STEP;
+        errno = EOPNOTSUPP;
     }
 #ifdef __APPLE__ /* a port the IPv4 side has free too (bind_dual) */
     else if (dual && (r = bind_dual(fd, &ss, sl)) != -2) {
-        if (r == 0) {
-            u->family = family;
-            u->dual = dual;
+        if (r == 0)
             return fd;
-        }
         *step = "bind";
     }
 #endif
     else if (bind(fd, (struct sockaddr *)&ss, sl) == 0) {
-        u->family = family;
-        u->dual = dual;
         return fd;
     } else
         *step = "bind";
@@ -170,6 +389,8 @@ static ksl_udp *open_failed(ksl_udp *u, uint32_t code, const char *what, int e, 
     }
     if (u->fd >= 0)
         close(u->fd);
+    if (u->fd4 >= 0)
+        close(u->fd4);
     if (u->wake[0] >= 0)
         close(u->wake[0]);
     if (u->wake[1] >= 0)
@@ -181,28 +402,174 @@ static ksl_udp *open_failed(ksl_udp *u, uint32_t code, const char *what, int e, 
     free(u);
     return NULL;
 }
-
-#if !defined(__APPLE__)
+/* the wildcard of [family] (4: 0.0.0.0, 6: ::) on [port] */
+static void wildcard_on(uint8_t a[KSL_UDP_ADDR_LEN], int family, uint16_t port) {
+    memset(a, 0, KSL_UDP_ADDR_LEN);
+    a[0] = (uint8_t)family;
+    a[1] = (uint8_t)(port >> 8);
+    a[2] = (uint8_t)port;
+}
+static uint16_t port_of_fd(int fd) {
+    struct sockaddr_storage ss;
+    socklen_t sl = sizeof ss;
+    uint8_t a[KSL_UDP_ADDR_LEN];
+    if (getsockname(fd, (struct sockaddr *)&ss, &sl) != 0)
+        return 0;
+    from_sockaddr(&ss, a);
+    return (uint16_t)((a[1] << 8) | a[2]);
+}
+/* socket() refused with e for a lasting reason: anything but a resource running out (EMFILE, ENFILE, ENOBUFS, ENOMEM, which may
+   pass later: the open fails instead). The family missing (EAFNOSUPPORT, EPROTONOSUPPORT) and a policy denying it (EACCES,
+   EPERM from AppArmor, SELinux or a seccomp filter) last: that family is done without, as before 0.3.0 */
+static int socket_lasting(int e) {
+    return e != EMFILE && e != ENFILE && e != ENOBUFS && e != ENOMEM;
+}
+/* whether 0.0.0.0:[port] is free for an AF_INET socket without SO_REUSEPORT: a socket with SO_REUSEPORT binding it would join
+   the reuse group of another socket of this user on that port and take part of its datagrams, so a port-0 split checks before
+   its AF_INET half (which carries SO_REUSEPORT for loops > 1) takes a port the IPv6 half was given. A race with a bind in
+   between remains: a socket bound to the port that very moment with SO_REUSEPORT */
+static int inet_port_free(uint16_t port) {
+    int s = socket(AF_INET, SOCK_DGRAM, 0);
+    if (s < 0)
+        return 1; /* no socket to check with: the bind itself decides */
+    uint8_t a[KSL_UDP_ADDR_LEN];
+    wildcard_on(a, 4, port);
+    struct sockaddr_storage ss;
+    socklen_t sl = to_sockaddr(a, &ss);
+    int ok = bind(s, (struct sockaddr *)&ss, sl) == 0 || errno != EADDRINUSE;
+    close(s);
+    return ok;
+}
+/* KSL_UDP_SPLIT: an IPV6_V6ONLY socket on :: (u->fd), then an AF_INET one on 0.0.0.0 (u->fd4) on the port the first got, each with
+   DF where need_df (bind_socket). Port 0: a port an IPv4 socket holds (Darwin hands such ports to an IPv6 socket) is given up and
+   another taken, up to 16 times. 0 when the IPv6 socket opened: u->fd4 is -1 when the AF_INET one got no DF for a lasting reason
+   or does not open (need_df only); -1 with errno and *step otherwise (none left open). Afterwards u->granted holds what both took
+   of DF (DF when both have it, DF_DO when either is in DO mode) and REUSEPORT; family AF_INET6, not dual */
+static int open_split(ksl_udp *u, const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, int need_df, const char **step) {
+    uint16_t want = (uint16_t)((addr[1] << 8) | addr[2]);
+    for (int tries = 0; tries < 16; tries++) {
+        uint8_t a6[KSL_UDP_ADDR_LEN], a4[KSL_UDP_ADDR_LEN];
+        uint16_t first = want;
 #ifdef KSL_TEST
-static int
-    refuse_probe; /* tests: the system refuses probe mode (a seccomp filter, gVisor), as ksl_udp_refuse_probe_for_test sets */
-void ksl_udp_refuse_probe_for_test(int on) {
-    refuse_probe = on;
-}
-#else
-#define refuse_probe 0
+        if (!want && split_port_for_test) {
+            first = (uint16_t)split_port_for_test; /* once: as if the kernel had given that port to the IPv6 half */
+            split_port_for_test = 0;
+        }
 #endif
-/* DF on one half of fd ([family] 4: IP_MTU_DISCOVER, on AF_INET6 the v4-mapped half; 6: IPV6_MTU_DISCOVER): probe mode where the
-   system takes it (1), else DO mode (2), else 0 */
-static int set_df_mode(int fd, int family) {
-    int probe = family == 6 ? IPV6_PMTUDISC_PROBE : IP_PMTUDISC_PROBE,
-        d = family == 6 ? IPV6_PMTUDISC_DO : IP_PMTUDISC_DO;
-    int level = family == 6 ? IPPROTO_IPV6 : IPPROTO_IP, opt = family == 6 ? IPV6_MTU_DISCOVER : IP_MTU_DISCOVER;
-    if (!refuse_probe && setsockopt(fd, level, opt, &probe, sizeof probe) == 0)
-        return 1;
-    return setsockopt(fd, level, opt, &d, sizeof d) == 0 ? 2 : 0;
-}
+        wildcard_on(a6, 6, first);
+        u->granted = 0;
+        u->v6only_needed = 1;
+        int fd6 = bind_socket(u, a6, 0, flags, need_df, step);
+        u->v6only_needed = 0;
+        if (fd6 < 0)
+            return -1;
+        uint32_t g6 = u->granted;
+        int r6 = u->recverr;
+        uint16_t port = port_of_fd(fd6);
+        wildcard_on(a4, 4, port);
+        int fd4 = -1, e;
+        u->granted = 0;
+        if (!want && (g6 & KSL_UDP_REUSEPORT) && !inet_port_free(port)) {
+            *step = "bind"; /* held for IPv4, maybe in a reuse group our socket would join */
+            e = EADDRINUSE;
+        } else {
+            fd4 = bind_socket(u, a4, 0, flags, need_df, step);
+            e = errno;
+        }
+        uint32_t g4 = u->granted;
+        int r4 = u->recverr;
+        u->family = AF_INET6;
+        u->dual = 0;
+        if (fd4 < 0 && strcmp(*step, "bind") == 0 && e == EADDRINUSE && !want) {
+            close(fd6); /* that port is held for IPv4: another one */
+#ifdef KSL_TEST
+            __atomic_add_fetch(&split_retries_for_test, 1, __ATOMIC_RELAXED);
 #endif
+            continue;
+        }
+        /* the AF_INET half cannot be had for a lasting reason (no DF for good; no IPv4 here): the IPv6 one alone, where DF is what
+           was asked for. A transient refusal, a resource running out, a port held for IPv4, or two sockets asked for that cannot be
+           had fail the open */
+        if (fd4 < 0 &&
+            (!need_df || (strcmp(*step, NO_DF_STEP) != 0 && !(strcmp(*step, "socket") == 0 && socket_lasting(e))))) {
+            close(fd6);
+            errno = e;
+            return -1;
+        }
+        u->fd = fd6;
+        u->fd4 = fd4;
+        uint32_t df = fd4 < 0 ? g6 : g6 & g4;
+        u->granted = ((g6 | (fd4 < 0 ? 0 : g4)) & KSL_UDP_DF_DO) | (df & (KSL_UDP_DF | KSL_UDP_REUSEPORT));
+        if (!(u->granted & KSL_UDP_DF))
+            u->granted &= ~(uint32_t)KSL_UDP_DF_DO;
+        u->recverr = r6 && (fd4 < 0 || r4);
+        return 0;
+    }
+    *step = "bind";
+    errno = EADDRINUSE;
+    return -1;
+}
+/* the options of one descriptor of the socket (v4 / v6: the halves it carries, wildcard: a wildcard was asked): the flags it took of
+   ECN, PKTINFO, GSO and GRO; on a split socket ksl_udp_open grants what both took */
+static uint32_t sock_options(ksl_udp *u, int fd, int v4, int v6, int flags, int wildcard) {
+    int one = 1;
+    uint32_t g = 0;
+    /* RFC 9000 section 9.7: "Endpoints that send data using IPv6 SHOULD apply an IPv6 flow label in compliance with [RFC6437]". Neither
+       system lets an unconnected socket choose the label of one datagram without more state (Darwin not at all; Linux only through
+       IPV6_FLOWINFO_SEND, which kernels before 5.6 refuse without a lease per label), but both label on their own once asked: Linux
+       with a keyed hash of each datagram's addresses and ports (a new path, a new label), Darwin with one random label per socket.
+       A host may leave that off by default (Linux net.ipv6.auto_flowlabels = 2, since 4.3; Darwin net.inet6.ip6.auto_flowlabel = 0):
+       ask for it. Best effort: a kernel before 3.17 has neither the option nor automatic labels */
+    if (v6)
+        u->autoflowlabel = setsockopt(fd, IPPROTO_IPV6, IPV6_AUTOFLOWLABEL, &one, sizeof one) == 0;
+    /* 7 MB; Darwin refuses more than kern.ipc.maxsockbuf (8 MB less overhead by default), so halve until the kernel takes it */
+    for (int rcv = 7 * 1024 * 1024; rcv >= 256 * 1024 && setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rcv, sizeof rcv) != 0;
+         rcv /= 2) {
+    }
+    for (int snd = 7 * 1024 * 1024; snd >= 256 * 1024 && setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &snd, sizeof snd) != 0;
+         snd /= 2) {
+    }
+    if (flags & KSL_UDP_ECN) { /* read marks on the way in; marks on the way out travel as a per-message cmsg */
+        int ok = 1;
+        if (v6)
+            ok = ok && setsockopt(fd, IPPROTO_IPV6, IPV6_RECVTCLASS, &one, sizeof one) == 0;
+#ifdef __APPLE__ /* Darwin refuses IP_RECVTOS on an AF_INET6 socket (EINVAL) and reports v4-mapped marks through IPV6_TCLASS */
+        if (!v6)
+#endif
+            if (v4)
+                ok = ok && setsockopt(fd, IPPROTO_IP, IP_RECVTOS, &one, sizeof one) ==
+                               0; /* Linux: on AF_INET6 it covers v4-mapped traffic */
+        if (ok)
+            g |= KSL_UDP_ECN;
+    }
+    /* the destination of each datagram, so a reply leaves from the address it arrived on (RFC 9000 section 9): only a wildcard bind
+       needs it, as quic-go sys_conn_oob.go (newConn: IsUnspecified). AF_INET: IP_PKTINFO (IP_RECVPKTINFO, the same option, on Darwin: quic-go
+       sys_conn_helper_darwin.go). AF_INET6, dual-stack too: IPV6_RECVPKTINFO, which reports v4-mapped traffic as a v4-mapped
+       IPV6_PKTINFO, as msquic datapath_epoll.c (CxPlatSocketContextInitialize); Linux also takes IP_PKTINFO on the dual-stack socket
+       for its ipi_spec_dst, which tells a subnet-directed broadcast destination from an address of this host */
+    if ((flags & KSL_UDP_PKTINFO) && wildcard) {
+        int ok = v6 ? setsockopt(fd, IPPROTO_IPV6, IPV6_RECVPKTINFO, &one, sizeof one) == 0
+                    : setsockopt(fd, IPPROTO_IP, IP_PKTINFO, &one, sizeof one) ==
+                          0; /* Darwin: IP_RECVPKTINFO is IP_PKTINFO */
+#ifdef __linux__
+        if (v4)
+            u->v4_spec = ok && (!v6 || setsockopt(fd, IPPROTO_IP, IP_PKTINFO, &one, sizeof one) == 0);
+#endif
+        if (ok)
+            g |= KSL_UDP_PKTINFO;
+    }
+#ifdef __linux__ /* Darwin has no UDP_SEGMENT/UDP_GRO: the caps never grant them and every datagram is its own sendmsg/recvmsg */
+    if (flags & KSL_UDP_GSO) {
+        int zero = 0;
+        if (setsockopt(fd, SOL_UDP, UDP_SEGMENT, &zero, sizeof zero) == 0)
+            g |= KSL_UDP_GSO;
+    }
+    if ((flags & KSL_UDP_GRO) && setsockopt(fd, SOL_UDP, UDP_GRO, &one, sizeof one) == 0)
+        g |= KSL_UDP_GRO;
+#endif
+    return g;
+}
+
 ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t *err, char *msg, size_t msglen) {
     if (!addr || (addr[0] != 4 && addr[0] != 6)) {
         if (err)
@@ -232,123 +599,69 @@ ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t 
     }
     u->requested = (uint32_t)flags;
     u->wake[0] = u->wake[1] = -1;
-    u->fd = -1;
+    u->fd = u->fd4 = -1;
     /* a wildcard (0.0.0.0 or ::) takes both families on one dual-stack socket, as NIO's DatagramChannel: a client bound to 0.0.0.0
-       reaches IPv6 servers and a server on 0.0.0.0 answers IPv6 clients. Without IPv6 (or with :: taken) the requested family alone. */
+       reaches IPv6 servers and a server on 0.0.0.0 answers IPv6 clients. Without IPv6 (or with :: taken) the requested family alone.
+       A wildcard asked with KSL_UDP_DF whose dual-stack socket gets no DF for a lasting reason (RFC 9000 section 14: "In IPv4, the
+       Don't Fragment (DF) bit MUST be set if possible") is two sockets on one port instead (KSL_UDP_SPLIT, open_split): IPV6_V6ONLY on
+       :: and AF_INET on 0.0.0.0, each with DF, so neither family is lost. Where the AF_INET one gets no DF for good, the IPv6 one
+       alone (KSL_UDP_V6_ONLY: IPv4 is the family without DF); where the IPv6 one gets none, AF_INET alone with DF (KSL_UDP_V4_ONLY,
+       as NioDatagramIo's AF_INET channel); where neither, the dual-stack socket again, reported without DF, so the caller does not
+       use it. DF is set before bind, so a socket that lacks it never held the port. A transient refusal (df_refused) fails the open
+       as that error, with no fallback (it is no missing IPv6). KSL_UDP_SPLIT asked goes to the two sockets without trying the
+       dual-stack one, as if it had no DF */
     const char *step = "socket";
-    if (is_wildcard(addr))
-        u->fd = bind_socket(u, addr, 1, flags, &step);
-    if (u->fd < 0) {
+    int wildcard = is_wildcard(addr), need_df = (flags & KSL_UDP_DF) != 0;
+    if (wildcard && !(flags & KSL_UDP_SPLIT))
+        u->fd = bind_socket(u, addr, 1, flags, need_df, &step);
+    else if (wildcard)
+        step = NO_DF_STEP;
+    if (u->fd < 0 && strcmp(step, NO_DF_STEP) == 0) {
+        if (open_split(u, addr, flags, need_df, &step) == 0) {
+            if (u->fd4 >= 0)
+                u->granted |= KSL_UDP_SPLIT;
+            else
+                u->granted |= KSL_UDP_V6_ONLY;
+        } else if (need_df &&
+                   (strcmp(step, NO_DF_STEP) == 0 || (strcmp(step, "socket") == 0 && socket_lasting(errno)))) {
+            uint8_t a4[KSL_UDP_ADDR_LEN];
+            wildcard_on(a4, 4, (uint16_t)((addr[1] << 8) | addr[2]));
+            u->granted = 0;
+            u->fd = bind_socket(u, a4, 0, flags, 1, &step);
+            if (u->fd >= 0)
+                u->granted |= KSL_UDP_V4_ONLY;
+            else if (strcmp(step, NO_DF_STEP) == 0 || (strcmp(step, "socket") == 0 && socket_lasting(errno))) {
+                /* no DF anywhere for good: the dual-stack socket again, reported without DF; a transient refusal, a resource
+                   running out or a port held for IPv4 fail the open instead */
+                u->granted = 0;
+                u->fd = bind_socket(u, addr, 1, flags, 0, &step);
+            }
+        }
+    } else if (u->fd < 0 && strcmp(step, DF_STEP) != 0 &&
+               (!wildcard || strcmp(step, "socket") != 0 || socket_lasting(errno))) {
+        /* the requested family alone: a specific address, or no dual-stack socket to be had (no IPv6 here, :: taken); a dual-stack
+           socket() refused for want of a resource (EMFILE, ENFILE, ENOBUFS, ENOMEM) fails the open instead of losing IPv6 */
         u->granted = 0;
-        u->fd = bind_socket(u, addr, 0, flags, &step);
+        u->fd = bind_socket(u, addr, 0, flags, 0, &step);
     }
     if (u->fd < 0)
         return open_failed(u,
-                           step[0] == 's'              ? KSL_E_NOT_SUPPORTED
+                           step[0] == 's'              ? (socket_lasting(errno) ? KSL_E_NOT_SUPPORTED : KSL_E_NO_MEMORY)
                            : strcmp(step, "bind") == 0 ? KSL_E_BIND
-                                                       : KSL_E_BAD_ARG,
+                           : strcmp(step, DF_STEP) == 0
+                               ? (errno == ENOBUFS || errno == ENOMEM ? KSL_E_NO_MEMORY : KSL_E_NOT_SUPPORTED)
+                               : KSL_E_BAD_ARG,
                            step, errno, err, msg, msglen);
-    int one = 1, v4 = u->family == AF_INET || u->dual, v6 = u->family == AF_INET6;
-    /* RFC 9000 section 9.7: "Endpoints that send data using IPv6 SHOULD apply an IPv6 flow label in compliance with [RFC6437]". Neither
-       system lets an unconnected socket choose the label of one datagram without more state (Darwin not at all; Linux only through
-       IPV6_FLOWINFO_SEND, which kernels before 5.6 refuse without a lease per label), but both label on their own once asked: Linux
-       with a keyed hash of each datagram's addresses and ports (a new path, a new label), Darwin with one random label per socket.
-       A host may leave that off by default (Linux net.ipv6.auto_flowlabels = 2, since 4.3; Darwin net.inet6.ip6.auto_flowlabel = 0):
-       ask for it. Best effort: a kernel before 3.17 has neither the option nor automatic labels */
-    if (v6)
-        u->autoflowlabel = setsockopt(u->fd, IPPROTO_IPV6, IPV6_AUTOFLOWLABEL, &one, sizeof one) == 0;
-    /* 7 MB; Darwin refuses more than kern.ipc.maxsockbuf (8 MB less overhead by default), so halve until the kernel takes it */
-    for (int rcv = 7 * 1024 * 1024;
-         rcv >= 256 * 1024 && setsockopt(u->fd, SOL_SOCKET, SO_RCVBUF, &rcv, sizeof rcv) != 0; rcv /= 2) {
+    uint32_t opts = sock_options(u, u->fd, u->family == AF_INET || u->dual, u->family == AF_INET6, flags, wildcard);
+    if (u->fd4 >= 0) /* a split socket has what both descriptors took */
+        opts &= sock_options(u, u->fd4, 1, 0, flags, wildcard);
+    u->granted |= opts;
+    u->tos_cmsg_on = (opts & KSL_UDP_ECN) != 0;
+    u->pktinfo = (opts & KSL_UDP_PKTINFO) != 0;
+    if (opts & KSL_UDP_GSO) {
+        u->gso_on = 1;
+        u->gso_max = GSO_SEGMENTS;
     }
-    for (int snd = 7 * 1024 * 1024;
-         snd >= 256 * 1024 && setsockopt(u->fd, SOL_SOCKET, SO_SNDBUF, &snd, sizeof snd) != 0; snd /= 2) {
-    }
-    if (flags & KSL_UDP_ECN) { /* read marks on the way in; marks on the way out travel as a per-message cmsg */
-        int ok = 1;
-        if (v6)
-            ok = ok && setsockopt(u->fd, IPPROTO_IPV6, IPV6_RECVTCLASS, &one, sizeof one) == 0;
-#ifdef __APPLE__ /* Darwin refuses IP_RECVTOS on an AF_INET6 socket (EINVAL) and reports v4-mapped marks through IPV6_TCLASS */
-        if (!v6)
-#endif
-            if (v4)
-                ok = ok && setsockopt(u->fd, IPPROTO_IP, IP_RECVTOS, &one, sizeof one) ==
-                               0; /* Linux: on AF_INET6 it covers v4-mapped traffic */
-        if (ok) {
-            u->granted |= KSL_UDP_ECN;
-            u->tos_cmsg_on = 1;
-        }
-    }
-    if (flags &
-        KSL_UDP_DF) { /* DF set; probe mode where the system takes it: the kernel's path MTU cache must not drive sizes (an attacker's ICMP
-                         would shrink it: quic-go CVE-2024-53259); DO mode on a half that refuses it (a seccomp filter, gVisor): DF all the same,
-                         reported as KSL_UDP_DF_DO */
-        int ok = 1, in_do = 0;
-#ifdef __APPLE__ /* Darwin has only the DF bit, as in quic-go sys_conn_df_darwin.go; on AF_INET6 IPV6_DONTFRAG covers v4-mapped traffic too (IP_DONTFRAG: EINVAL).
-                      It does cache a path MTU from an ICMPv6 Packet Too Big (clamped to >= 1280): a larger datagram then fails with EMSGSIZE,
-                      a lost slot, and QUIC's 1248-byte IPv6 floor (1200 + headers) still fits, so a forged PTB cannot stop sending */
-        ok = v6 ? setsockopt(u->fd, IPPROTO_IPV6, IPV6_DONTFRAG, &one, sizeof one) == 0
-                : setsockopt(u->fd, IPPROTO_IP, IP_DONTFRAG, &one, sizeof one) == 0;
-        in_do = 1; /* the DF bit alone works as DO mode */
-#else
-        if (v4) { /* on AF_INET6: the v4-mapped half */
-            int m = set_df_mode(u->fd, 4);
-            ok = ok && m > 0;
-            in_do |= m == 2;
-        }
-        if (v6) {
-            int m = set_df_mode(u->fd, 6);
-            ok = ok && m > 0;
-            in_do |= m == 2;
-            if (ok)
-                setsockopt(u->fd, IPPROTO_IPV6, IPV6_DONTFRAG, &one, sizeof one);
-        }
-        /* ICMP errors into the error queue (ADR-0006): Packet Too Big as a DPLPMTUD hint (RFC 8899 section 4.6), validated by the caller.
-           The queue also takes port and host unreachable, which set sk_err: ksl_udp_recv drains it and never fails on such an error */
-        if (ok) {
-            int rv = 1;
-            if (v4)
-                rv = rv && setsockopt(u->fd, IPPROTO_IP, IP_RECVERR, &one, sizeof one) == 0;
-            if (v6)
-                rv = rv && setsockopt(u->fd, IPPROTO_IPV6, IPV6_RECVERR, &one, sizeof one) == 0;
-            u->recverr = rv;
-        }
-#endif
-        if (ok)
-            u->granted |= KSL_UDP_DF | (in_do ? KSL_UDP_DF_DO : 0);
-    }
-    /* the destination of each datagram, so a reply leaves from the address it arrived on (RFC 9000 section 9): only a wildcard bind
-       needs it, as quic-go sys_conn_oob.go (newConn: IsUnspecified). AF_INET: IP_PKTINFO (IP_RECVPKTINFO, the same option, on Darwin: quic-go
-       sys_conn_helper_darwin.go). AF_INET6, dual-stack too: IPV6_RECVPKTINFO, which reports v4-mapped traffic as a v4-mapped
-       IPV6_PKTINFO, as msquic datapath_epoll.c (CxPlatSocketContextInitialize); Linux also takes IP_PKTINFO on the dual-stack socket
-       for its ipi_spec_dst, which tells a subnet-directed broadcast destination from an address of this host */
-    if ((flags & KSL_UDP_PKTINFO) && is_wildcard(addr)) {
-        int ok = u->family == AF_INET6 ? setsockopt(u->fd, IPPROTO_IPV6, IPV6_RECVPKTINFO, &one, sizeof one) == 0
-                                       : setsockopt(u->fd, IPPROTO_IP, IP_PKTINFO, &one, sizeof one) ==
-                                             0; /* Darwin: IP_RECVPKTINFO is IP_PKTINFO */
-#ifdef __linux__
-        u->v4_spec = ok && (u->family == AF_INET ||
-                            (u->dual && setsockopt(u->fd, IPPROTO_IP, IP_PKTINFO, &one, sizeof one) == 0));
-#endif
-        if (ok) {
-            u->granted |= KSL_UDP_PKTINFO;
-            u->pktinfo = 1;
-        }
-    }
-#ifdef __linux__ /* Darwin has no UDP_SEGMENT/UDP_GRO: the caps never grant them and every datagram is its own sendmsg/recvmsg */
-    if (flags & KSL_UDP_GSO) {
-        int zero = 0;
-        if (setsockopt(u->fd, SOL_UDP, UDP_SEGMENT, &zero, sizeof zero) == 0) {
-            u->granted |= KSL_UDP_GSO;
-            u->gso_on = 1;
-            u->gso_max = GSO_SEGMENTS;
-        }
-    }
-    if (flags & KSL_UDP_GRO) {
-        if (setsockopt(u->fd, SOL_UDP, UDP_GRO, &one, sizeof one) == 0)
-            u->granted |= KSL_UDP_GRO;
-    }
-#endif
     u->batch = 16;
 #ifdef __linux__
     if (pipe2(u->wake, O_CLOEXEC | O_NONBLOCK) != 0) {
@@ -356,7 +669,9 @@ ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t 
     }
 #else /* Darwin: shutdown(2) does not wake a poll on a UDP socket, the pipe is the only way to end a blocked receive: no pipe, no socket */
     if (pipe(u->wake) != 0 || cloexec_nonblock(u->wake[0]) != 0 || cloexec_nonblock(u->wake[1]) != 0)
-        return open_failed(u, KSL_E_NOT_SUPPORTED, "wake pipe", errno, err, msg, msglen);
+        return open_failed(u, socket_lasting(errno) ? KSL_E_NOT_SUPPORTED : KSL_E_NO_MEMORY, "wake pipe", errno, err,
+                           msg,
+                           msglen); /* out of descriptors: KSL_E_NO_MEMORY, as for a socket() that ran out of them */
 #endif
     u->scratch = malloc(GRO_MAX);
     u->tx = malloc(GRO_MAX);
@@ -366,10 +681,9 @@ ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t 
     socklen_t sl = sizeof ss;
     if (getsockname(u->fd, (struct sockaddr *)&ss, &sl) == 0)
         from_sockaddr(&ss, u->local);
-    if (u->dual && addr[0] == 4) {
-        memset(u->local + 3, 0, KSL_UDP_ADDR_LEN - 3);
-        u->local[0] = 4;
-    } /* 0.0.0.0 asked: 0.0.0.0 reported, the port the kernel chose */
+    if (wildcard)
+        wildcard_on(u->local, addr[0], (uint16_t)((u->local[1] << 8) | u->local[2]));
+    /* a wildcard asked: that wildcard reported (0.0.0.0 or ::, whatever the sockets are), with the port the kernel chose */
     u->refs = 1;
     ksl_live_add(KSL_LIVE_UDP, 1);
     ksl_live_add(KSL_LIVE_WAKE, (u->wake[0] >= 0) + (u->wake[1] >= 0));
@@ -406,6 +720,7 @@ ksl_udp *ksl_udp_sender(ksl_udp *base, uint32_t *err, char *msg, size_t msglen) 
     /* the sending state as it stands on the object cloned: a flag the kernel refused there stays off here */
     c->base = root;
     c->fd = root->fd;
+    c->fd4 = root->fd4;
     c->family = root->family;
     c->dual = root->dual;
     c->wake[0] = c->wake[1] = -1;
@@ -431,6 +746,12 @@ int ksl_udp_get(ksl_udp *u, int what, uint8_t *out, size_t cap, size_t *len) {
         if (cap < 4)
             return KSL_ERROR;
         be32(out, (uint32_t)u->fd);
+        *len = 4;
+        return KSL_OK;
+    case KSL_UDP_GET_FD2:
+        if (cap < 4)
+            return KSL_ERROR;
+        be32(out, (uint32_t)u->fd4);
         *len = 4;
         return KSL_OK;
     case KSL_UDP_GET_CAPS:
@@ -496,6 +817,8 @@ void ksl_udp_shutdown(ksl_udp *u) {
     if (u->fd >= 0) {
         shutdown(u->fd, SHUT_RDWR);
     }
+    if (u->fd4 >= 0)
+        shutdown(u->fd4, SHUT_RDWR);
 }
 /* drops one reference to the socket ksl_udp_open made; the last one closes the descriptor and the wake pair and frees it */
 static void udp_release(ksl_udp *u) {
@@ -504,6 +827,8 @@ static void udp_release(ksl_udp *u) {
     ksl_live_add(KSL_LIVE_WAKE, -((u->wake[0] >= 0) + (u->wake[1] >= 0)));
     if (u->fd >= 0)
         close(u->fd);
+    if (u->fd4 >= 0)
+        close(u->fd4);
     if (u->wake[0] >= 0)
         close(u->wake[0]);
     if (u->wake[1] >= 0)
@@ -633,27 +958,39 @@ int ksl_udp_fd_df_probe(int64_t fd64) {
     int fd = (int)fd64, family = fd64 < 0 || fd64 > INT32_MAX ? -1 : fd_family(fd);
     if (family < 0)
         return KSL_ERROR;
-#ifdef __APPLE__ /* Darwin has only the DF bit (ksl_udp_open), DO-like: on AF_INET6 IPV6_DONTFRAG covers v4-mapped traffic too (checked on macOS 26:
-                    a v4-mapped send above lo0's MTU is refused; IP_DONTFRAG is EINVAL on that socket) */
+#ifdef __APPLE__ /* Darwin has only the DF bit (set_df), DO-like: on AF_INET6 IPV6_DONTFRAG covers v4-mapped traffic too from Darwin 24 on
+                    (mapped_df_honoured; checked on macOS 26: a v4-mapped send above lo0's MTU is refused; IP_DONTFRAG is EINVAL on
+                    that socket), so before it the v4-mapped half is reported without DF and NioDatagramIo tries an AF_INET channel */
     int one = 1;
-    if (family == AF_INET6)
-        return setsockopt(fd, IPPROTO_IPV6, IPV6_DONTFRAG, &one, sizeof one) == 0
-                   ? KSL_FD_DF_INET6 | KSL_FD_DF_V4_DO | KSL_FD_DF_V6_DO
-                   : KSL_FD_DF_INET6;
+    if (family == AF_INET6) {
+        if (setsockopt(fd, IPPROTO_IPV6, IPV6_DONTFRAG, &one, sizeof one) != 0)
+            return KSL_FD_DF_INET6;
+        int v4 = mapped_df_honoured();
+#ifdef KSL_TEST
+        v4 = v4 && !no_df_v4_mapped_for_test;
+#endif
+        return KSL_FD_DF_INET6 | KSL_FD_DF_V6_DO | (v4 ? KSL_FD_DF_V4_DO : 0);
+    }
     return setsockopt(fd, IPPROTO_IP, IP_DONTFRAG, &one, sizeof one) == 0 ? KSL_FD_DF_V4_DO : 0;
 #else
-    int one = 1, granted = 0;
+    int one = 1, granted = 0, transient = 0;
     /* on AF_INET6: the v4-mapped half, which IPV6_MTU_DISCOVER does not cover; DO where probe mode is refused (DF always) */
-    int m4 = set_df_mode(fd, 4);
+    int m4 = set_df_mode(fd, 4, &transient);
     granted |= m4 == 1 ? KSL_FD_DF_V4 : m4 == 2 ? KSL_FD_DF_V4_DO : 0;
     if (family == AF_INET6) {
         granted |= KSL_FD_DF_INET6;
-        int m6 = set_df_mode(fd, 6);
+        int m6 = set_df_mode(fd, 6, &transient);
         granted |= m6 == 1 ? KSL_FD_DF_V6 : m6 == 2 ? KSL_FD_DF_V6_DO : 0;
         setsockopt(fd, IPPROTO_IPV6, IPV6_DONTFRAG, &one, sizeof one);
     }
     return granted;
 #endif
+}
+int ksl_udp_fd_v6only(int64_t fd64) {
+    int one = 1;
+    if (fd64 < 0 || fd64 > INT32_MAX || fd_family((int)fd64) != AF_INET6)
+        return KSL_ERROR;
+    return setsockopt((int)fd64, IPPROTO_IPV6, IPV6_V6ONLY, &one, sizeof one) == 0;
 }
 int ksl_udp_fd_df_mode(int64_t fd64, int family) {
 #ifdef __APPLE__
@@ -713,6 +1050,12 @@ int ksl_udp_autoflowlabel_for_test(int fd) {
     return getsockopt(fd, IPPROTO_IPV6, IPV6_AUTOFLOWLABEL, &v, &l) == 0 ? v : -1;
 }
 #ifdef __APPLE__
+int ksl_udp_mapped_df_check_for_test(void) {
+    return mapped_df_check();
+}
+int ksl_udp_release_maps_df_for_test(const char *release) {
+    return release_maps_df(release);
+}
 int ksl_udp_df_mode_for_test(int fd) {
     int v = -1;
     socklen_t l = sizeof v;
@@ -822,6 +1165,10 @@ int ksl_udp_fd_df_mode(int64_t fd, int family) {
     (void)family;
     return -1;
 }
+int ksl_udp_fd_v6only(int64_t fd) {
+    (void)fd;
+    return KSL_ERROR;
+}
 #ifdef KSL_TEST
 void ksl_udp_push_ptb_for_test(ksl_udp *u, const uint8_t *quote, uint32_t len, const uint8_t dst[KSL_UDP_ADDR_LEN],
                                uint32_t mtu) {
@@ -874,6 +1221,27 @@ int ksl_udp_close_wakes_for_test(ksl_udp *u) {
 }
 void ksl_udp_no_ipv6_for_test(int on) {
     (void)on;
+}
+void ksl_udp_no_df_v4_mapped_for_test(int on) {
+    (void)on;
+}
+void ksl_udp_no_df_inet_for_test(int on) {
+    (void)on;
+}
+void ksl_udp_no_df_v6_for_test(int on) {
+    (void)on;
+}
+void ksl_udp_transient_df_inet_for_test(int on) {
+    (void)on;
+}
+void ksl_udp_no_inet_for_test(int on) {
+    (void)on;
+}
+void ksl_udp_split_port_for_test(int port) {
+    (void)port;
+}
+uint32_t ksl_udp_split_retries_for_test(void) {
+    return 0;
 }
 #endif
 #endif

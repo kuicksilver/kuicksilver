@@ -962,6 +962,11 @@ static jint j_udp_fd_df_mode(JNIEnv *e, jclass c, jlong fd, jint family) {
     (void)c;
     return ksl_udp_fd_df_mode((int64_t)fd, family);
 }
+static jint j_udp_fd_v6only(JNIEnv *e, jclass c, jlong fd) {
+    (void)e;
+    (void)c;
+    return ksl_udp_fd_v6only((int64_t)fd);
+}
 static jlong j_udp_emsgsize(JNIEnv *e, jclass c, jlong h, jintArray last) {
     (void)c;
     uint32_t l = 0;
@@ -1173,6 +1178,7 @@ static const JNINativeMethod methods[] = {
     {"udpChannelFd", "(Ljava/lang/Object;)I", (void *)j_udp_channel_fd},
     {"udpFdDfProbe", "(J)I", (void *)j_udp_fd_df_probe},
     {"udpFdDfMode", "(JI)I", (void *)j_udp_fd_df_mode},
+    {"udpFdV6Only", "(J)I", (void *)j_udp_fd_v6only},
     {"udpEmsgsizeText", "()Ljava/lang/String;", (void *)j_udp_emsgsize_text},
     {"liveObjects", "([J)I", (void *)j_live_objects},
     {"dnsQuery", "(" S_STR "I[BI)[B", (void *)j_dns_query},

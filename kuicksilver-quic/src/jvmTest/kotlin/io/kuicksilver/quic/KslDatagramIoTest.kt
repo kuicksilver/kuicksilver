@@ -25,6 +25,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
@@ -142,6 +143,141 @@ class KslDatagramIoTest {
             } finally {
                 a.close()
                 b.close()
+            }
+        }
+
+    /**
+     * A 0.0.0.0 socket that `ksl` opened as AF_INET for want of DF on the dual-stack socket's IPv4 half ([KslUdpSocket.V4_ONLY],
+     * RFC 9000 section 14) reports IPv6 as the family without DF, as the JVM's AF_INET channel does (NioDatagramIo): a send to
+     * IPv6 is reported as refused for want of DF, the IPv4 slots of the batch arrive. The socket is a real AF_INET one, read as
+     * granted [KslUdpSocket.V4_ONLY] (no host here refuses that DF; the C tests force the refusal and check the grant).
+     */
+    @Test fun anAfInetSocketOpenedForDfReportsIpv6WithoutDf() =
+        runBlocking {
+            assumeTrue(ready(), "needs the accelerated socket (Linux, macOS, Windows)")
+            assertEquals(IpFamily.V6, KslDatagramIo.noDfFamilyOf(KslUdpSocket.DF or KslUdpSocket.V4_ONLY))
+            assertEquals(IpFamily.V6, KslDatagramIo.noDfFamilyOf(KslUdpSocket.DF or KslUdpSocket.DF_DO or KslUdpSocket.V4_ONLY))
+            assertNull(KslDatagramIo.noDfFamilyOf(KslUdpSocket.DF))
+            assertNull(KslDatagramIo.noDfFamilyOf(KslUdpSocket.DF or KslUdpSocket.DF_DO or KslUdpSocket.ECN or KslUdpSocket.PKTINFO))
+            assertNull(KslDatagramIo.noDfFamilyOf(0))
+            assertEquals(IpFamily.V4, KslDatagramIo.noDfFamilyOf(KslUdpSocket.DF or KslUdpSocket.V6_ONLY))
+            assertNull(KslDatagramIo.noDfFamilyOf(KslUdpSocket.DF or KslUdpSocket.SPLIT), "a split socket has DF on both families")
+            val raw = KslUdpSocket.open(KslUdpSocket.encodeAddress(byteArrayOf(127, 0, 0, 1), 0), KslUdpSocket.DF)
+            val io = KslDatagramIo.wrapForTest(raw, raw.grantedFlags or KslUdpSocket.V4_ONLY)
+            val peer = assertNotNull(KslDatagramIo.open(lo))
+            try {
+                assertTrue(io.capabilities.value.df, "DF granted")
+                assertEquals(IpFamily.V6, io.noDontFragmentFamily)
+                assertEquals(IpFamily.V6, io.noDfFamily)
+                val v6 = InetSocketAddress("::1", 9)
+                val out = PacketBatch(3)
+                for ((i, to) in listOf(v6, peer.localAddress, v6).withIndex()) {
+                    out.buffer(i).copyFrom(ByteArray(100) { i.toByte() }, 0, 0, 100)
+                    out.setLength(i, 100)
+                    out.setAddress(i, to)
+                }
+                assertEquals(3, io.send(out), "the whole batch is taken: the IPv6 slots are lost, not left for later")
+                assertEquals(listOf(v6, v6), io.takeDfRefusals(), "both IPv6 slots reported as refused for want of DF")
+                assertEquals(emptyList(), io.takeDfRefusals(), "taken once")
+                val inb = PacketBatch(1)
+                withTimeout(5.seconds) { while (inb.count < 1) peer.receive(inb) }
+                assertEquals(1.toByte(), inb.buffer(0).toByteArray(100)[0], "the IPv4 slot arrives")
+                out.close()
+                inb.close()
+            } finally {
+                io.close()
+                peer.close()
+            }
+        }
+
+    /**
+     * A wildcard whose dual-stack socket gets no DF on its IPv4 half (RFC 9000 section 14; [KslDatagramIo.splitForTest] takes
+     * that path, the C tests force the refusal itself) is two sockets on one port in `ksl` ([KslUdpSocket.SPLIT]): one socket
+     * here, DF and no family without DF, one Info line, and IPv4 and IPv6 peers both reached, each answered from the port.
+     * Linux, macOS and Windows.
+     */
+    @Test fun aSplitWildcardReachesBothFamiliesWithDf() =
+        runBlocking {
+            assumeTrue(ready() && !windows, "needs the accelerated socket of Linux or macOS")
+            val lines = mutableListOf<Pair<LogLevel, String>>()
+            val logger =
+                object : KuicksilverLogger {
+                    override fun isEnabled(level: LogLevel): Boolean = true
+
+                    override fun log(
+                        level: LogLevel,
+                        message: String,
+                        cause: Throwable?,
+                    ) {
+                        synchronized(lines) { lines += level to message }
+                    }
+                }
+            val v6 = runCatching { KslDatagramIo.open(InetSocketAddress("::1", 0)) }.getOrNull()
+            val v4 = assertNotNull(KslDatagramIo.open(lo))
+            datagramIoSplitForTest = true
+            val w =
+                try {
+                    assertNotNull(onUnshadowedWildcard { KslDatagramIo.open(it, logger = logger) })
+                } finally {
+                    datagramIoSplitForTest = false
+                }
+            try {
+                assertTrue(w.capabilities.value.df, "DF on both families")
+                assertNull(w.noDontFragmentFamily)
+                assertTrue(w.fdForTest >= 0)
+                assertEquals(
+                    listOf(
+                        LogLevel.Info to "UDP on 0.0.0.0:${w.localAddress.port} uses two sockets (IPv6-only and IPv4) on one port: " +
+                            "the IPv4 half of a dual-stack socket has no Don't Fragment here (RFC 9000 section 14)",
+                    ),
+                    lines,
+                )
+                for (peer in listOfNotNull(v4, v6)) {
+                    val ip = if (peer === v4) "127.0.0.1" else "::1"
+                    val out = PacketBatch(1)
+                    out.buffer(0).copyFrom(ByteArray(100) { 7 }, 0, 0, 100)
+                    out.setLength(0, 100)
+                    out.setAddress(0, InetSocketAddress(ip, w.localAddress.port))
+                    assertEquals(1, peer.send(out))
+                    val inb = PacketBatch(1)
+                    withTimeout(5.seconds) { while (inb.count < 1) w.receive(inb) }
+                    val from = assertNotNull(inb.address(0))
+                    val reply = PacketBatch(1)
+                    reply.buffer(0).copyFrom(ByteArray(50) { 9 }, 0, 0, 50)
+                    reply.setLength(0, 50)
+                    reply.setAddress(0, from)
+                    assertEquals(1, w.send(reply))
+                    assertEquals(emptyList(), w.takeDfRefusals(), ip)
+                    val back = PacketBatch(1)
+                    withTimeout(5.seconds) { while (back.count < 1) peer.receive(back) }
+                    assertEquals(w.localAddress.port, back.address(0)!!.port, "answered from the port over $ip")
+                    for (b in listOf(out, inb, reply, back)) b.close()
+                }
+            } finally {
+                w.close()
+                v4.close()
+                v6?.close()
+            }
+        }
+
+    /** negative: a dual-stack 0.0.0.0 socket with DF on both halves (any host here) reports no family without DF and refuses nothing. */
+    @Test fun negative_aDualStackSocketWithDfReportsNoFamilyWithoutDf() =
+        runBlocking {
+            assumeTrue(ready(), "needs the accelerated socket (Linux, macOS, Windows)")
+            val w = assertNotNull(onUnshadowedWildcard { KslDatagramIo.open(it) })
+            try {
+                assertTrue(w.capabilities.value.df)
+                assertNull(w.noDontFragmentFamily)
+                assertNull(w.noDfFamily)
+                val out = PacketBatch(1)
+                out.buffer(0).copyFrom(ByteArray(10), 0, 0, 10)
+                out.setLength(0, 10)
+                out.setAddress(0, InetSocketAddress("127.0.0.1", 9))
+                assertEquals(1, w.send(out))
+                assertEquals(emptyList(), w.takeDfRefusals())
+                out.close()
+            } finally {
+                w.close()
             }
         }
 

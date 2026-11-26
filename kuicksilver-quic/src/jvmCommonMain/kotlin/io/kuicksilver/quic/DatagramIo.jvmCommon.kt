@@ -8,6 +8,7 @@ import io.ktor.network.sockets.InetSocketAddress
 internal actual suspend fun openPortableDatagramIo(
     local: InetSocketAddress,
     acceleratedRefusal: Throwable?,
-): DatagramIo = NioDatagramIo.open(local)
+    logger: KuicksilverLogger,
+): DatagramIo = NioDatagramIo.open(local, logger = logger)
 
 internal actual fun printWarning(line: String) = System.err.println(line)

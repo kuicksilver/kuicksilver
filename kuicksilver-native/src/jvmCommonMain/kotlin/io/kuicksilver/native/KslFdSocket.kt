@@ -40,6 +40,12 @@ public object KslFdSocket {
     public fun dfProbe(fd: Long): Int = KslNative.udpFdDfProbe(fd)
 
     /**
+     * `IPV6_V6ONLY` on the unbound AF_INET6 socket [fd] (`ksl_udp_fd_v6only`), which the JDK cannot set: true when it took.
+     * The IPv6 half of the portable socket's two sockets on one port, where a dual-stack one has no DF on its IPv4 half.
+     */
+    public fun v6Only(fd: Long): Boolean = KslNative.udpFdV6Only(fd) == 1
+
+    /**
      * `strerror(EMSGSIZE)` in the process's locale: the text the JDK puts in a send's `SocketException` on Linux and Apple
      * (localized under a non-English locale); null on Windows.
      */

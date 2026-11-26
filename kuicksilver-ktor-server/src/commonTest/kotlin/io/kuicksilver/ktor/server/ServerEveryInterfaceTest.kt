@@ -1,5 +1,7 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class, io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+
 package io.kuicksilver.ktor.server
 
 import io.ktor.client.HttpClient
@@ -14,8 +16,13 @@ import io.ktor.server.routing.routing
 import io.kuicksilver.ktor.client.Http3Discovery
 import io.kuicksilver.ktor.network.ipv6Bindable
 import io.kuicksilver.quic.DatagramIo
+import io.kuicksilver.quic.KuicksilverLogger
+import io.kuicksilver.quic.LogLevel
+import io.kuicksilver.quic.datagramIoSplitForTest
+import io.kuicksilver.quic.datagramIoSplitSupportedForTest
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.TrustConfig
+import kotlin.concurrent.atomics.update
 import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -230,6 +237,86 @@ class ServerEveryInterfaceTest {
                 client(Http3Discovery.H3Only).use { c ->
                     assertEquals("HTTP/3", body(c.get("https://127.0.0.1:$port/").bodyAsText(), token))
                 }
+            }
+        }
+
+    /**
+     * A host whose dual-stack UDP socket gets no Don't Fragment on its IPv4 half (RFC 9000 section 14: "In IPv4, the Don't
+     * Fragment (DF) bit MUST be set if possible"; the hook stands in for that refusal, which the C tests force in `ksl` itself):
+     * the host-less connector's HTTP/3 socket is two on one port, IPv6-only on `::` and AF_INET on 0.0.0.0, says so once at
+     * Info, and serves HTTP/3 over IPv4 and over IPv6 on that port, each with DF (owner decision: every interface of both
+     * families; two sockets where one dual-stack socket cannot be had). The client's own wildcard sockets are split too.
+     * Every platform with the accelerated socket (Linux, Android, Apple, Windows).
+     */
+    @Test fun http3ServesBothFamiliesOnTwoSocketsWithoutDfOnTheIpv4Half() =
+        h3ServerTest {
+            if (!datagramIoSplitSupportedForTest()) return@h3ServerTest
+            datagramIoSplitForTest = true
+            try {
+                // this server's own QUIC log, every level: the line is Info once per process and Debug after (another split
+                // socket in the same process may have taken the Info), so the line itself is counted, not its level
+                val quicLines =
+                    kotlin.concurrent.atomics
+                        .AtomicReference(emptyList<Pair<LogLevel, String>>())
+                val own =
+                    object : KuicksilverLogger {
+                        override fun isEnabled(level: LogLevel): Boolean = true
+
+                        override fun log(
+                            level: LogLevel,
+                            message: String,
+                            cause: Throwable?,
+                        ) {
+                            quicLines.update { it + (level to message) }
+                        }
+                    }
+                val server =
+                    kuicksilverServer(null, configure = {
+                        tlsConnector /* wildcard on purpose: the default bind is the subject */ {
+                            tls { identity = ServerFixtures.identity() }
+                            port = 0
+                        }
+                        observability { logger = own }
+                        shutdownGracePeriod = 0
+                    }) { routing { get("/") { call.respondText("ok") } } }
+                server.startSuspend(false)
+                try {
+                    val port =
+                        server.engine
+                            .resolvedConnectors()
+                            .first()
+                            .port
+                    val lines = quicLines.load()
+                    assertEquals(
+                        1,
+                        lines.count { (level, m) ->
+                            (level == LogLevel.Info || level == LogLevel.Debug) &&
+                                ":$port uses two sockets (IPv6-only and IPv4) on one port" in m
+                        },
+                        "$lines",
+                    )
+                    assertTrue(lines.none { (level, m) -> level >= LogLevel.Warn && "Don't Fragment" in m }, "no warning about DF: $lines")
+                } finally {
+                    server.stopSuspend(0, 500)
+                }
+                startEverywhere({
+                    tlsConnector /* wildcard on purpose: the default bind is the subject */ {
+                        tls { identity = ServerFixtures.identity() }
+                        port = 0
+                    }
+                }) { port, token ->
+                    val hosts = if (ipv6Bindable() && ipv6Loopback()) listOf("127.0.0.1", "[::1]") else listOf("127.0.0.1")
+                    for (host in hosts) {
+                        client(Http3Discovery.H3Only).use { c ->
+                            assertEquals("HTTP/3", body(c.get("https://$host:$port/").bodyAsText(), token), host)
+                            // the call's local address is the one the client sent to, as on the dual-stack socket
+                            val v = addresses(c, "https://$host:$port/addresses", token)
+                            assertEquals(host.trim('[', ']'), v[2], "local host over $host")
+                        }
+                    }
+                }
+            } finally {
+                datagramIoSplitForTest = false
             }
         }
 

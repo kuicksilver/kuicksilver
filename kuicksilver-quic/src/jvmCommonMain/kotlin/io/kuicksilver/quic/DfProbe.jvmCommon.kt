@@ -38,6 +38,13 @@ internal expect fun dfModeOf(
  */
 internal expect fun localizedEmsgsizeText(): String?
 
+/**
+ * `IPV6_V6ONLY` on the open, unbound AF_INET6 channel [ch] (the JDK has no option for it): the IPv6 one of the portable
+ * socket's two sockets on one port, where the dual-stack channel has no DF on its IPv4 half. True when it took; false where
+ * there is no means (the JVM without `ksl`) or the system refused it. Never throws.
+ */
+internal expect fun setV6Only(ch: DatagramChannel): Boolean
+
 /** Every half of the socket in probe mode. */
 internal fun probeComplete(bits: Int): Boolean = bits > 0 && bits and DF_V4 != 0 && (bits and DF_INET6 == 0 || bits and DF_V6 != 0)
 

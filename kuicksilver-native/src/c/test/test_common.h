@@ -198,6 +198,15 @@ int ksl_udp_autoflowlabel_asked_for_test(
     ksl_udp *); /* Linux and Apple: 1 when ksl_udp_open set IPV6_AUTOFLOWLABEL on it */
 int ksl_udp_close_wakes_for_test(ksl_udp *);
 void ksl_udp_no_ipv6_for_test(int on);
+/* the 0.0.0.0 DF fallback (ksl_udp.c, ksl_udp_win.c): DF refused for good on the v4-mapped half of a dual-stack socket, or on an
+   AF_INET socket; a transient (ENOBUFS / WSAENOBUFS) refusal on AF_INET; socket(AF_INET) failing */
+void ksl_udp_no_df_v4_mapped_for_test(int on);
+void ksl_udp_no_df_inet_for_test(int on);
+void ksl_udp_no_df_v6_for_test(int on); /* Linux and Apple: DF refused on the IPv6 half of any AF_INET6 socket */
+void ksl_udp_transient_df_inet_for_test(int on);
+void ksl_udp_no_inet_for_test(int on);      /* 1: EAFNOSUPPORT; another value: socket(AF_INET) fails with that errno */
+void ksl_udp_split_port_for_test(int port); /* Linux and Apple: the first try of a port-0 split takes [port] */
+uint32_t ksl_udp_split_retries_for_test(void); /* Linux and Apple: port-0 splits that gave a port up for IPv4 */
 void ksl_udp_set_err_for_test(ksl_udp *, int e, const char *what);
 void ksl_udp_push_ptb_for_test(ksl_udp *, const uint8_t *quote, uint32_t len, const uint8_t dst[KSL_UDP_ADDR_LEN],
                                uint32_t mtu);

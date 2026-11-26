@@ -27,20 +27,38 @@ import java.nio.channels.Selector
 internal class NioDatagramIo private constructor(
     private val channel: DatagramChannel,
     private val selector: Selector,
+    /**
+     * Two channels on one port ([openWithDf]: a wildcard whose dual-stack channel has no DF on its IPv4 half): [channel] is
+     * IPV6_V6ONLY and this AF_INET one carries IPv4; null for one channel.
+     */
+    private val channel4: DatagramChannel? = null,
+    /** The wildcard asked for, reported as the local address of a split socket (its channels are bound to `::` and 0.0.0.0). */
+    askedHost: String? = null,
 ) : DatagramIo,
     QueuedReceive,
     DfFamilyRestricted {
     override val localAddress: InetSocketAddress =
         (channel.localAddress as java.net.InetSocketAddress).let {
-            InetSocketAddress(checkNotNull(it.address.hostAddress) { "the local address has no host address" }, it.port)
+            InetSocketAddress(askedHost ?: checkNotNull(it.address.hostAddress) { "the local address has no host address" }, it.port)
         }
+
+    /** Whether this socket is two channels on one port (test hook). */
+    internal val splitForTest: Boolean get() = channel4 != null
+
+    /** The channels, IPv6 (or the only one) first. */
+    private val channels: List<DatagramChannel> = listOfNotNull(channel, channel4)
+
+    /** The channel a datagram to [to] leaves on. */
+    private fun channelFor(to: java.net.InetSocketAddress): DatagramChannel =
+        if (channel4 != null && to.address is java.net.Inet4Address) channel4 else channel
+
     private val caps = MutableStateFlow(IoCapabilities.Portable)
     override val capabilities: StateFlow<IoCapabilities> get() = caps
 
     /** ADR-0006: the portable socket marks every datagram ECT(0) through IP_TOS (no per-datagram control, no reading of marks). */
     private fun enableEcn() {
         try {
-            channel.setOption(StandardSocketOptions.IP_TOS, 0x02)
+            for (c in channels) c.setOption(StandardSocketOptions.IP_TOS, 0x02)
             caps.value =
                 IoCapabilities(ecnSend = true, ecnReceive = false, gsoMaxSegments = 1, gro = false, df = false, batch = 1)
         } catch (
@@ -53,7 +71,7 @@ internal class NioDatagramIo private constructor(
 
     override fun disableEcnMarking() {
         try {
-            channel.setOption(StandardSocketOptions.IP_TOS, 0)
+            for (c in channels) c.setOption(StandardSocketOptions.IP_TOS, 0)
         } catch (e: Exception) {
         }
         caps.value =
@@ -98,7 +116,7 @@ internal class NioDatagramIo private constructor(
     }
 
     /** `IP_MTU_DISCOVER` ([family] 4) or `IPV6_MTU_DISCOVER` (6) of the socket while it is open, -1 when unreadable (test hook). */
-    internal fun dfModeForTest(family: Int): Int = dfModeOf(channel, family)
+    internal fun dfModeForTest(family: Int): Int = dfModeOf(if (family == 4 && channel4 != null) channel4 else channel, family)
 
     private var lastJava: java.net.InetSocketAddress? = null
     private var lastKtor: InetSocketAddress? = null
@@ -129,12 +147,25 @@ internal class NioDatagramIo private constructor(
         return j
     } // the underlying object: no reverse lookup
 
+    /** A split socket's channel [drain] reads first, in turn, so a flood on one family delays the other by one drain at most. */
+    private var drainFirst = 0
+
     private fun drain(into: PacketBatch): Int {
+        if (channel4 == null) return drain(into, channel)
+        val first = channels[drainFirst]
+        drainFirst = drainFirst xor 1
+        return drain(into, first) + drain(into, channels[drainFirst])
+    }
+
+    private fun drain(
+        into: PacketBatch,
+        ch: DatagramChannel,
+    ): Int {
         var n = 0
         while (into.count < into.capacity) {
             val i = into.count
             val view = into.buffer(i).asByteBuffer()
-            val from = channel.receive(view) as? java.net.InetSocketAddress ?: break
+            val from = ch.receive(view) as? java.net.InetSocketAddress ?: break
             into.setLength(i, view.position())
             into.setAddress(i, ktorOf(from))
             into.setEcn(i, Ecn.NotEct)
@@ -151,7 +182,7 @@ internal class NioDatagramIo private constructor(
     /** What the channel holds now, on the calling thread; 0 once it is closed. */
     override fun receiveQueued(into: PacketBatch): Int =
         try {
-            if (channel.isOpen) drain(into) else 0
+            if (channels.all { it.isOpen }) drain(into) else 0
         } catch (_: java.nio.channels.ClosedChannelException) {
             0
         }
@@ -172,7 +203,7 @@ internal class NioDatagramIo private constructor(
         if (immediate > 0) return immediate
         return runInterruptible(Dispatchers.IO) {
             while (true) {
-                if (!channel.isOpen) throw java.io.IOException("datagram channel closed")
+                if (channels.any { !it.isOpen }) throw java.io.IOException("datagram channel closed")
                 if (interrupted.getAndSet(false)) return@runInterruptible 0
                 selector.select()
                 // a cancelled receive: runInterruptible interrupted this thread, which makes select return at once without
@@ -199,7 +230,7 @@ internal class NioDatagramIo private constructor(
         Selector.open().also {
             try {
                 writeSelectorOpenedForTest?.invoke(it)
-                channel.register(it, SelectionKey.OP_WRITE)
+                for (c in channels) c.register(it, SelectionKey.OP_WRITE)
             } catch (e: Throwable) {
                 closeAfter(it, e)
                 throw e
@@ -211,9 +242,12 @@ internal class NioDatagramIo private constructor(
 
     override suspend fun send(batch: PacketBatch): Int {
         var sent = sendFrom(batch, 0)
-        if (sent < batch.count && channel.isOpen) {
-            // the send buffer is full: wait once, briefly, for room and send the rest; what still does not fit is lost (counted by the loop)
+        val full = lastFull
+        if (sent < batch.count && full != null && channels.all { it.isOpen }) {
+            // the send buffer is full: wait once, briefly, for room and send the rest; what still does not fit is lost (counted by the
+            // loop). A split socket waits for the channel that was full only: the other one being writable says nothing about it
             runInterruptible(Dispatchers.IO) {
+                for (c in channels) c.keyFor(writeSelector)?.interestOps(if (c === full) SelectionKey.OP_WRITE else 0)
                 writeSelector.select(WRITE_WAIT_MS)
                 writeSelector.selectedKeys().clear()
             }
@@ -221,6 +255,9 @@ internal class NioDatagramIo private constructor(
         }
         return sent
     }
+
+    /** The channel the latest [sendFrom] stopped on, its buffer full; null when it sent the whole batch. */
+    private var lastFull: DatagramChannel? = null
 
     override fun trySend(batch: PacketBatch): Int = sendFrom(batch, 0)
 
@@ -232,6 +269,7 @@ internal class NioDatagramIo private constructor(
         batch: PacketBatch,
         from: Int,
     ): Int {
+        lastFull = null
         for (i in from until batch.count) {
             val a =
                 batch.address(i) ?: continue // nothing to send: not a refusal
@@ -244,18 +282,26 @@ internal class NioDatagramIo private constructor(
                 dfRefused += a
                 continue
             }
+            val ch = channelFor(to)
             val n =
                 sendRefusalAware(batch.length(i), a, emsgsizeText) {
                     view.position(0)
-                    channel.send(view, to)
+                    ch.send(view, to)
                 }
-            if (n == 0 && batch.length(i) > 0) return i // a non-blocking channel takes all or nothing
+            if (n == 0 && batch.length(i) > 0) {
+                lastFull = ch
+                return i // a non-blocking channel takes all or nothing
+            }
         }
         return batch.count
     }
 
     override fun close() {
-        channel.close()
+        try {
+            channel.close()
+        } finally {
+            channel4?.close()
+        }
         selector.wakeup()
         selector.close()
         writeSelector.wakeup()
@@ -365,11 +411,11 @@ internal class NioDatagramIo private constructor(
         /**
          * Which traffic of the socket goes without DF: [DF_ALL] none, 4 or 6 the IPv4 or IPv6 half of a dual-stack socket,
          * [DF_NONE] all of it. [bits] from [dfProbe], [jdkSet] whether the JDK's `IP_DONTFRAGMENT` took, [inet] whether the
-         * channel is AF_INET, [onApple] whether the JDK's option is Darwin's: on an AF_INET6 socket that is `IPV6_DONTFRAG`,
-         * which covers v4-mapped traffic too (checked on macOS 26 with the host JVM: 20000 bytes to `::ffff:127.0.0.1` through
-         * such a socket are refused with EMSGSIZE, above lo0's 16384, and go out fragmented without it, though `IP_DONTFRAG`
-         * cannot be read at the IPv4 level of that socket, EINVAL). On Linux and Windows the JDK's option on an AF_INET6
-         * socket sets the IPv6 half only.
+         * channel is AF_INET, [onApple] whether the JDK's option covers a dual-stack socket's v4-mapped traffic
+         * ([appleJdkMapsDf]): Darwin's `IPV6_DONTFRAG` does from Darwin 24 (macOS 15) on (checked on macOS 26 with the host
+         * JVM: 20000 bytes to `::ffff:127.0.0.1` through such a socket are refused with EMSGSIZE, above lo0's 16384, and go
+         * out fragmented without it, though `IP_DONTFRAG` cannot be read at the IPv4 level of that socket, EINVAL), not before
+         * (quic-go `sys_conn_df_darwin.go`). On Linux and Windows the JDK's option on an AF_INET6 socket sets the IPv6 half only.
          */
         internal fun noDfFamily(
             bits: Int,
@@ -469,7 +515,16 @@ internal class NioDatagramIo private constructor(
          * A channel with the buffers and DF of [open]: AF_INET when [inet], else AF_INET6 (dual-stack) where the runtime has
          * IPv6, AF_INET otherwise, so the family is always known.
          */
-        private fun newChannel(inet: Boolean): ChannelDf {
+        private fun newChannel(inet: Boolean): ChannelDf = checkNotNull(newChannel(inet, v6Only = false))
+
+        /**
+         * [newChannel], and with [v6Only] an AF_INET6 channel set IPV6_V6ONLY before its options ([setV6Only]): null when that
+         * cannot be had (no IPv6, no means to set it, refused).
+         */
+        private fun newChannel(
+            inet: Boolean,
+            v6Only: Boolean,
+        ): ChannelDf? {
             var isInet = inet
             val ch =
                 if (inet) {
@@ -484,8 +539,18 @@ internal class NioDatagramIo private constructor(
                 }
             try {
                 channelOpenedForTest?.invoke(ch)
+                if (v6Only && (isInet || !(v6OnlyForTest ?: ::setV6Only)(ch))) {
+                    ch.close()
+                    return null
+                }
                 ch.setOption(StandardSocketOptions.SO_RCVBUF, 8 shl 20)
                 ch.setOption(StandardSocketOptions.SO_SNDBUF, 8 shl 20)
+                if (v6Only) {
+                    dfV6OnlyForTest?.let { f ->
+                        val (bits, jdk) = f()
+                        return ChannelDf(ch, bits, jdk, isInet)
+                    }
+                }
                 dfForTest?.let { f ->
                     val (bits, jdk) = f(isInet)
                     return ChannelDf(ch, bits, jdk, isInet)
@@ -519,17 +584,56 @@ internal class NioDatagramIo private constructor(
          *   the JDK's option, or through [dfProbe] where its bits say it refused the IPv4 half, `ksl` on the JVM and
          *   `android.system.Os` on Android, Apple included) and kept if DF took on it (bound to 0.0.0.0 it then reaches IPv4
          *   peers only).
+         * - A wildcard (0.0.0.0 or `::`) whose dual-stack channel has DF on its IPv6 half only is two channels on one port
+         *   instead, IPV6_V6ONLY ([setV6Only], which the JDK cannot set: `ksl` on the JVM, `android.system.Os` on Android) and
+         *   AF_INET, each with DF ([newSplit]; owner decision: every interface of both families, two sockets where one
+         *   dual-stack socket cannot be had), so neither family is lost; where that cannot be had, as follows.
          * - Where a half of a dual-stack socket still has no DF, sends to that address family throw
          *   [QuicException.DontFragmentUnavailable] (the connection ends with no viable path); where no traffic can have DF
          *   (the JVM without `ksl` below JDK 19; Android or a system refusing both modes; on the AF_INET channel too, for an
          *   IPv4 bind) [open] throws it.
          * This socket's datagrams stay within 1200 bytes, so PMTUD stays off (`df` capability false); with probe mode it could
-         * run here later. Returns the channel, the [dfProbe] bits and the address family without DF ([DF_ALL]: none).
+         * run here later. Returns the channel (two for a split socket), the [dfProbe] bits and the address family without DF
+         * ([DF_ALL]: none).
          */
-        private fun openWithDf(local: InetSocketAddress): Triple<DatagramChannel, Int, Int> {
-            val localV6 = local.ipBytesNoDns()?.size == 16
+        private fun openWithDf(local: InetSocketAddress): Opened {
+            val ip = local.ipBytesNoDns()
+            val localV6 = ip?.size == 16
             var c = newChannel(inet = false)
-            if (!c.inet && triesInet(c.bits, c.jdk, localV6, apple, dontFragmentOption() != null)) {
+            // a wildcard whose dual-stack channel has DF on its IPv6 half only: two channels on one port instead, IPV6_V6ONLY and
+            // AF_INET, each with DF (owner decision: every interface of both families; two sockets where one dual-stack socket
+            // cannot be had). Where that cannot be had (no means to set IPV6_V6ONLY: the JVM without `ksl`; either without DF),
+            // the choices below
+            if (!c.inet && ip != null && ip.all { it == 0.toByte() } &&
+                noDfFamily(c.bits, c.jdk, inet = false, onApple = appleJdkMapsDf()) == 4
+            ) {
+                val split =
+                    try {
+                        newSplit()
+                    } catch (e: Throwable) {
+                        closeAfter(c.ch, e)
+                        throw e
+                    }
+                if (split != null) {
+                    try {
+                        closingDroppedForTest?.invoke(c.ch)
+                        c.ch.close()
+                    } catch (e: Throwable) {
+                        closeAfter(split.first.ch, e)
+                        closeAfter(split.second.ch, e)
+                        throw e
+                    }
+                    val v6 = split.first.bits
+                    val v4 = split.second.bits
+                    // probe mode on each channel's own half (the IPv6 one's on IPV6_V6ONLY, the IPv4 one's on AF_INET), else DO mode:
+                    // warned as for one channel
+                    val probe6 = v6 > 0 && v6 and DF_V6 != 0
+                    val probe4 = v4 > 0 && v4 and DF_V4 != 0
+                    if ((v6 >= 0 || v4 >= 0) && (v6 > 0 || v4 > 0 || linuxKernel) && !(probe6 && probe4)) warnProbeMissing(v6 or v4)
+                    return Opened(split.first.ch, split.second.ch, (if (v6 > 0) v6 else 0) or (if (v4 > 0) v4 else 0), DF_ALL)
+                }
+            }
+            if (!c.inet && triesInet(c.bits, c.jdk, localV6, appleJdkMapsDf(), dontFragmentOption() != null)) {
                 val r =
                     try {
                         newChannel(inet = true)
@@ -548,7 +652,7 @@ internal class NioDatagramIo private constructor(
                 }
                 c = kept
             }
-            val missing = noDfFamily(c.bits, c.jdk, c.inet, apple)
+            val missing = noDfFamily(c.bits, c.jdk, c.inet, appleJdkMapsDf())
             if (missing == DF_NONE) {
                 val e =
                     QuicException.DontFragmentUnavailable(
@@ -559,14 +663,118 @@ internal class NioDatagramIo private constructor(
                 closeAfter(c.ch, e)
                 throw e
             }
-            if ((c.bits > 0 || (c.bits == 0 && linuxKernel)) && !probeComplete(c.bits) && probeMissingLogged.compareAndSet(false, true)) {
-                printWarning(
-                    "kuicksilver: the portable UDP socket has no DF probe mode on every half (bits ${c.bits}): DO mode, so a " +
-                        "forged ICMP message can end its connections (RFC 9000 section 14.2.1)",
-                )
-            }
+            if ((c.bits > 0 || (c.bits == 0 && linuxKernel)) && !probeComplete(c.bits)) warnProbeMissing(c.bits)
             // an AF_INET channel (an IPv4 bind that took DF only there) cannot reach IPv6 at all: refused as without DF
-            return Triple(c.ch, c.bits, if (c.inet && missing == DF_ALL) 6 else missing)
+            return Opened(c.ch, null, c.bits, if (c.inet && missing == DF_ALL) 6 else missing)
+        }
+
+        /** Says once per process that the portable socket's DF is in DO mode on a half ([bits] from [dfProbe]). */
+        private fun warnProbeMissing(bits: Int) {
+            if (!probeMissingLogged.compareAndSet(false, true)) return
+            printWarning(
+                "kuicksilver: the portable UDP socket has no DF probe mode on every half (bits $bits): DO mode, so a " +
+                    "forged ICMP message can end its connections (RFC 9000 section 14.2.1)",
+            )
+        }
+
+        /** What [openWithDf] chose: the channel, a split socket's AF_INET one, the [dfProbe] bits, the family without DF. */
+        private class Opened(
+            val ch: DatagramChannel,
+            val ch4: DatagramChannel?,
+            val bits: Int,
+            val noDf: Int,
+        )
+
+        /**
+         * Two unbound channels with DF for a split socket: IPV6_V6ONLY (DF on its IPv6 half, by [dfProbe] or the JDK's option)
+         * and AF_INET (as [keepsInet]); null, both closed, when either cannot be had.
+         */
+        private fun newSplit(): Pair<ChannelDf, ChannelDf>? {
+            val v6 = newChannel(inet = false, v6Only = true) ?: return null
+            val v6Df = (v6.bits > 0 && v6.bits and (DF_V6 or DF_V6_DO) != 0) || v6.jdk
+            val v4 =
+                try {
+                    if (v6Df) newChannel(inet = true) else null
+                } catch (e: Throwable) {
+                    closeAfter(v6.ch, e)
+                    throw e
+                }
+            if (v4 != null && keepsInet(v4.bits, v4.jdk)) return v6 to v4
+            v6.ch.close()
+            v4?.ch?.close()
+            return null
+        }
+
+        /** Tests: [setV6Only]'s answer for the channels [open] makes, instead of setting it. */
+        @kotlin.concurrent.Volatile
+        internal var v6OnlyForTest: ((DatagramChannel) -> Boolean)? = null
+
+        /** Tests: the DF outcome of an IPV6_V6ONLY channel ([dfProbe] bits, whether the JDK's option took); [dfForTest] otherwise. */
+        @kotlin.concurrent.Volatile
+        internal var dfV6OnlyForTest: (() -> Pair<Int, Boolean>)? = null
+
+        /**
+         * Tests: whether Darwin applies the JDK's `IPV6_DONTFRAG` to v4-mapped traffic, instead of [appleMapsDfCheck] and the
+         * release rule.
+         */
+        @kotlin.concurrent.Volatile
+        internal var appleMapsDfForTest: Boolean? = null
+
+        /**
+         * Whether the JDK's DF option on a dual-stack channel covers its v4-mapped traffic, the `onApple` of [noDfFamily]:
+         * Apple from Darwin 24 (macOS 15) on only. Before, `IPV6_DONTFRAG` takes on a dual-stack socket but leaves v4-mapped
+         * datagrams without DF (quic-go `sys_conn_df_darwin.go`), as `ksl_udp.c`'s check finds; false elsewhere (Linux and
+         * Windows set the IPv6 half only).
+         */
+        internal fun appleJdkMapsDf(): Boolean = apple && (appleMapsDfForTest ?: appleMapsDf)
+
+        private val appleMapsDf: Boolean by lazy {
+            val c = appleMapsDfCheck()
+            if (c >= 0) c == 1 else macOsMapsDf(System.getProperty("os.version") ?: "")
+        }
+
+        /**
+         * The release rule where the loopback cannot tell: macOS [version] (`os.version`, "14.6.1") 15 or later. A JDK built
+         * against an SDK older than macOS 11 reports 10.16 for every later macOS: taken as before 15.
+         */
+        internal fun macOsMapsDf(version: String): Boolean = version.substringBefore('.').toIntOrNull()?.let { it >= 15 } == true
+
+        /**
+         * `ksl_udp.c`'s loopback check through the JDK's option (the JVM without `ksl`): on two dual-stack channels with room for
+         * it (SO_SNDBUF above net.inet.udp.maxdgram, 9216), 20000 bytes to 127.0.0.1 (v4-mapped on them; lo0's MTU is 16384)
+         * must go out without the option and be refused as too long with it, while 100 bytes still go. 1 yes, 0 no, -1 when it
+         * cannot tell (no such option, the control refused too, no loopback).
+         */
+        internal fun appleMapsDfCheck(): Int {
+            val opt = dontFragmentOption() ?: return -1
+            return try {
+                DatagramChannel.open(java.net.StandardProtocolFamily.INET).use { r ->
+                    r.bind(java.net.InetSocketAddress(java.net.InetAddress.getByName("127.0.0.1"), 0))
+                    val to =
+                        java.net.InetSocketAddress(
+                            java.net.InetAddress.getByName("127.0.0.1"),
+                            (r.localAddress as java.net.InetSocketAddress).port,
+                        )
+                    DatagramChannel.open(java.net.StandardProtocolFamily.INET6).use { c ->
+                        DatagramChannel.open(java.net.StandardProtocolFamily.INET6).use { d ->
+                            c.setOption(StandardSocketOptions.SO_SNDBUF, 65536)
+                            d.setOption(StandardSocketOptions.SO_SNDBUF, 65536)
+                            d.setOption(opt, true)
+                            if (c.send(java.nio.ByteBuffer.allocate(20000), to) != 20000) return -1
+                            if (d.send(java.nio.ByteBuffer.allocate(100), to) != 100) return 0
+                            try {
+                                if (d.send(java.nio.ByteBuffer.allocate(20000), to) == 20000) 0 else -1
+                            } catch (e: java.net.SocketException) {
+                                if (isMessageTooLong(e)) 1 else -1
+                            }
+                        }
+                    }
+                }
+            } catch (_: java.io.IOException) {
+                -1
+            } catch (_: UnsupportedOperationException) {
+                -1
+            }
         }
 
         /**
@@ -599,6 +807,9 @@ internal class NioDatagramIo private constructor(
             inetJdk: Boolean,
         ): Boolean = dfComplete(inetBits) || inetJdk
 
+        /** Ports a split socket on port 0 tries before its bind fails ([open]). */
+        private const val SPLIT_PORT_TRIES = 16
+
         /** How long a send waits for room in a full socket buffer before the rest of its batch is lost. */
         private const val WRITE_WAIT_MS = 5L
 
@@ -609,29 +820,71 @@ internal class NioDatagramIo private constructor(
          */
         fun open(
             local: InetSocketAddress,
+            logger: KuicksilverLogger = KuicksilverLogger.Default,
             configure: (DatagramChannel) -> Unit = {},
         ): NioDatagramIo {
-            val (ch, probe, noDf) = openWithDf(local)
+            val opened = openWithDf(local)
+            var ch = opened.ch
+            var ch4 = opened.ch4
+            val probe = opened.bits
+            val noDf = opened.noDf
             val selector: Selector
             try {
                 configure(ch)
-                ch.bind(local.toJavaAddress())
+                ch4?.let(configure)
+                if (ch4 == null) {
+                    ch.bind(local.toJavaAddress())
+                } else {
+                    // a split socket: the IPv6 channel first, then AF_INET on the port it got; port 0 tries another port where
+                    // that one is held for IPv4 (an IPV6_V6ONLY bind does not look at IPv4 sockets)
+                    var attempt = 0
+                    while (true) {
+                        ch.bind(java.net.InetSocketAddress(java.net.InetAddress.getByName("::"), local.port))
+                        val port = (ch.localAddress as java.net.InetSocketAddress).port
+                        try {
+                            checkNotNull(ch4).bind(java.net.InetSocketAddress(java.net.InetAddress.getByName("0.0.0.0"), port))
+                            break
+                        } catch (e: java.net.BindException) {
+                            if (local.port != 0 || ++attempt >= SPLIT_PORT_TRIES) throw e
+                            ch.close()
+                            checkNotNull(ch4).close()
+                            val again = newSplit() ?: throw e
+                            ch = again.first.ch
+                            ch4 = again.second.ch
+                            configure(ch)
+                            configure(checkNotNull(ch4))
+                        }
+                    }
+                    checkNotNull(ch4).configureBlocking(false)
+                }
                 ch.configureBlocking(false)
                 selector = Selector.open()
             } catch (e: Throwable) {
+                ch4?.let { closeAfter(it, e) }
                 closeAfter(ch, e) // a failure of the close itself must not hide why the open failed
                 throw e
             }
             val io =
                 try {
                     ch.register(selector, SelectionKey.OP_READ)
+                    ch4?.register(selector, SelectionKey.OP_READ)
                     registeredForTest?.invoke(ch, selector)
-                    NioDatagramIo(ch, selector)
+                    val asked = if (ch4 == null) null else (local.toJavaAddress() as java.net.InetSocketAddress).address.hostAddress
+                    NioDatagramIo(ch, selector, ch4, asked)
                 } catch (e: Throwable) {
                     closeAfter(selector, e)
+                    ch4?.let { closeAfter(it, e) }
                     closeAfter(ch, e)
                     throw e
                 }
+            if (ch4 != null) { // a split socket says so, as the accelerated one does ([SplitSocketLog])
+                val bound = ch.localAddress as java.net.InetSocketAddress
+                SplitSocketLog.emit(
+                    logger,
+                    checkNotNull(checkNotNull((local.toJavaAddress() as java.net.InetSocketAddress).address).hostAddress),
+                    bound.port,
+                )
+            }
             return io.also {
                 it.dfProbeGranted = probe
                 it.noDf = noDf
