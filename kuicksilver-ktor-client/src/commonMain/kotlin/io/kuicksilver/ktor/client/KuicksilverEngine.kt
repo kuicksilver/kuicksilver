@@ -1125,22 +1125,31 @@ internal class KuicksilverEngine(
                 // a 0-RTT connection counts once its handshake completed (or failed)
                 val outcome =
                     cause ?: runCatching { h3Attempt.getCompleted().quic.awaitHandshake() }.exceptionOrNull()
-                altSvcLock.withLock {
-                    if (outcome == null) {
-                        // lost the race, but QUIC works here
-                        brokenAltSvc.confirmQuic(network)
-                        rememberSrtt(
-                            origin,
-                            h3Attempt
-                                .getCompleted()
-                                .quic.stats.smoothedRtt,
-                        )
-                    } else if (outcome !is CancellationException && !isTransientRefusal(outcome) && !resumptionOnly(outcome)) {
-                        // a refusal (CONNECTION_REFUSED) is no failure of the alternative: the next call tries it again
-                        val reason = classifyH3Failure(outcome) ?: FallbackReason.Other
-                        warnFirstBroken(origin, reason, brokenAltSvc.markBroken(origin, alt, reason))
-                        events.emit("altSvcMarkedBroken") { altSvcMarkedBroken(origin, alt) }
+                // the mark under the lock; the log line and the event after it, as at the other marks: neither the logger
+                // nor a listener runs under the lock every request's Alt-Svc lookup waits for
+                val marked =
+                    altSvcLock.withLock {
+                        if (outcome == null) {
+                            // lost the race, but QUIC works here
+                            brokenAltSvc.confirmQuic(network)
+                            rememberSrtt(
+                                origin,
+                                h3Attempt
+                                    .getCompleted()
+                                    .quic.stats.smoothedRtt,
+                            )
+                            null
+                        } else if (outcome !is CancellationException && !isTransientRefusal(outcome) && !resumptionOnly(outcome)) {
+                            // a refusal (CONNECTION_REFUSED) is no failure of the alternative: the next call tries it again
+                            val reason = classifyH3Failure(outcome) ?: FallbackReason.Other
+                            reason to brokenAltSvc.markBroken(origin, alt, reason)
+                        } else {
+                            null
+                        }
                     }
+                if (marked != null) {
+                    warnFirstBroken(origin, marked.first, marked.second)
+                    events.emit("altSvcMarkedBroken") { altSvcMarkedBroken(origin, alt) }
                 }
                 raceLoserSettledForTest?.invoke()
             }
