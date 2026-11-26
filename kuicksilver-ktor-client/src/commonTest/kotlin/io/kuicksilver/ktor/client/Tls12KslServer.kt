@@ -20,6 +20,7 @@ import io.kuicksilver.native.KslException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -86,7 +87,9 @@ internal class Tls12KslServer private constructor(
                     try {
                         block(server)
                     } finally {
-                        accepting.cancel()
+                        // every connection's coroutine, a child of it, has left its Ksl calls before the context and the
+                        // selector go (close): none is inside drive, tcpFeed or tcpRead on a freed context
+                        accepting.cancelAndJoin()
                     }
                 } finally {
                     server.close()
@@ -169,8 +172,13 @@ internal class Tls12KslServer private constructor(
                                 if (n < 0) break
                                 lock.withLock {
                                     var off = 0
-                                    while (off < n) off += Ksl.tcpWrite(ssl, buf, off, n - off).coerceAtLeast(0)
-                                    flush(ssl, w, null)
+                                    while (off < n) {
+                                        val wrote = Ksl.tcpWrite(ssl, buf, off, n - off)
+                                        // what ksl made goes out before the next write; a write that took nothing and left
+                                        // nothing to send makes no progress: the relay ends instead of spinning under the lock
+                                        val sent = flush(ssl, w, null)
+                                        if (wrote > 0) off += wrote else check(sent) { "ksl took none of the plaintext" }
+                                    }
                                 }
                             }
                             lock.withLock {

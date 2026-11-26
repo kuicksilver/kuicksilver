@@ -121,7 +121,9 @@ class ClientTls12KslServerTest {
                     assertTrue(o.ems, "Extended Master Secret")
                     // the opt-in TLS 1.3 only refuses this server
                     client(more = { tls { versions = io.kuicksilver.tls.TlsVersions.Tls13 } }).use { c ->
-                        assertFailsWith<Throwable> { c.get("https://server.test:${s.port}/") }
+                        val e = assertFailsWith<Throwable> { c.get("https://server.test:${s.port}/") }
+                        val alert = generateSequence(e) { it.cause }.filterIsInstance<TlsException.AlertReceived>().firstOrNull()
+                        assertEquals("protocol_version", alert?.description, "the TLS 1.2 server's answer to a TLS 1.3-only client: $e")
                     }
                     assertNotNull(s.next().failure)
                 }

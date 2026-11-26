@@ -156,13 +156,16 @@ internal class TouchedBody(
     class Mark(
         /** Test hook: the sender waits for it before it takes a byte (null: never), so a test orders take and keep. */
         private val beforeTakeForTest: (suspend () -> Unit)? = null,
+        /** Test hook: whether [touchedForTest] is made (a test watches this mark). */
+        trackForTest: Boolean = false,
     ) {
         private val state = kotlin.concurrent.atomics.AtomicInt(UNTOUCHED)
 
         val touched: Boolean get() = state.load() == TOUCHED
 
-        /** Completed once a byte was taken (tests: the sender's side of the race has happened). */
-        internal val touchedForTest = kotlinx.coroutines.CompletableDeferred<Unit>()
+        /** Completed once a byte was taken (tests: the sender's side of the race has happened); null unless tracked. */
+        internal val touchedForTest: kotlinx.coroutines.CompletableDeferred<Unit>? =
+            if (trackForTest) kotlinx.coroutines.CompletableDeferred() else null
 
         /** Runs [beforeTakeForTest], the gate a test may hold the sender at. */
         suspend fun beforeTake() {
@@ -171,7 +174,7 @@ internal class TouchedBody(
 
         /** Before a byte is moved: false when the channel was kept for a repeat (nothing may be read here any more). */
         fun take(): Boolean =
-            (state.compareAndSet(UNTOUCHED, TOUCHED) || state.load() == TOUCHED).also { if (it) touchedForTest.complete(Unit) }
+            (state.compareAndSet(UNTOUCHED, TOUCHED) || state.load() == TOUCHED).also { if (it) touchedForTest?.complete(Unit) }
 
         /** Keeps the channel for a repeat; false when a byte was taken already (the body is consumed). */
         fun keep(): Boolean = state.compareAndSet(UNTOUCHED, KEPT) || state.load() == KEPT
@@ -2795,7 +2798,14 @@ internal class H3Pool(
         // over TCP; any other request waits on, for the path to come back or the stall to be abandoned
         val repeatable = data.method.isIdempotent() && data.body.isReplayable()
         // a body that cannot be produced again: whether any of it was taken, which decides whether a 421 may send it again
-        val touch = if (misdirectedFails && !body.isReplayable()) TouchedBody.Mark(beforeTakeForTest) else null
+        val touch =
+            if (misdirectedFails &&
+                !body.isReplayable()
+            ) {
+                TouchedBody.Mark(beforeTakeForTest, trackForTest = misdirectedForTest != null)
+            } else {
+                null
+            }
         // the application's channel this attempt reads (a streamed body), for the repeat a 421 may hand it to
         var sent: SentBody? = null
         val response: Http3Response =

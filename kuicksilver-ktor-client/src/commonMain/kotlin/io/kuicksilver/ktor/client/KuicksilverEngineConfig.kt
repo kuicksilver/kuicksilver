@@ -689,7 +689,10 @@ public class ProxiesConfig {
      * `ExpectedName` gives way to its base, a `Pinned` to its base) and no client certificate. The block starts from that
      * same trust and no identity and may set anything. The server name (SNI and the name verified) is the proxy's host and
      * ALPN offers `http/1.1` only (`h3` to a CONNECT-UDP proxy). An ECH configuration set here is offered to the proxy as
-     * given. docs/guide/ktor.md, "Proxies".
+     * given. The block is checked when the engine is created as an `https://` proxy's TCP connection takes it (its
+     * `versions` included, so key-exchange groups TLS 1.2 cannot use fail under the default `Tls12And13`), even when it
+     * serves only a [connectUdp] proxy, whose QUIC connections are TLS 1.3 whatever it says: set `versions = Tls13` there.
+     * docs/guide/ktor.md, "Proxies".
      */
     @SecuritySensitive
     public fun tls(block: ClientTlsConfig.() -> Unit) {

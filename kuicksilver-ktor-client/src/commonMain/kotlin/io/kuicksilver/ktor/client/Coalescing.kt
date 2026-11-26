@@ -186,8 +186,9 @@ internal class CoalescingPeer(
  *   was accepted or a new connection to the host would offer ECH. A refusal is remembered for the connection, and so is a
  *   421 ([CoalescedHosts.record]).
  * - **the TLS version**, every time: a connection that negotiated TLS 1.2 never carries a host whose new connection would
- *   be TLS 1.3 only (one that would offer ECH: [tlsConfigFor] with its ECH route; a `versions = Tls13` client never has
- *   such a connection), since that host's check of a new connection includes the version (RFC 9113 section 9.1.1).
+ *   be TLS 1.3 only (one of an ECH route, the endpoint's of an HTTPS record or the configured list's: [tlsConfigFor]'s
+ *   rule; a `versions = Tls13` client never has such a connection), since that host's check of a new connection includes
+ *   the version (RFC 9113 section 9.1.1).
  *
  * A refusal for any reason but the name is checked against the connection's own origin too ([CoalescingPeer.ownHost], its
  * name hidden as for the new host): when that fails as well, the decision is [Coalesce.Retire], and [onRetire] gets the own
@@ -211,13 +212,13 @@ internal suspend fun KuicksilverEngineConfig.checkCoalescing(
     if (peer.chain.isEmpty() || !coalescingTrust(tls.trust) || hosts.verdict(host) == false) return Coalesce.No
     try {
         if (dns.answeredDestinations(lookupHost, port).none { Destination.of(it).sameAs(peer.remote) }) return Coalesce.No
+        // the route of the host's own connection: the endpoint's when dns is an HTTPS record endpoint's view (connectTo),
+        // else the request's from the configured list
         val route = dns.echRoute(host) { tls.ech.listFor(it) }
-        // a new connection to the host would be TLS 1.3 only (an ECH route): a TLS 1.2 connection never carries it
-        if (peer.tlsVersion == io.kuicksilver.tls.TlsVersion.Tls12 &&
-            tlsConfigFor(host, alpn, quic, route.offer).versions == io.kuicksilver.tls.TlsVersions.Tls13
-        ) {
-            return Coalesce.No
-        }
+        // a new connection to the host would be TLS 1.3 only, the rule of tlsConfigFor (QUIC, an ECH offer, an ECH retry): a
+        // TLS 1.2 connection never carries it. Read off the route, not by building that TlsConfig on every request
+        val tls13Only = quic || route.offer.list != null || route.offer.retry
+        if (peer.tlsVersion == io.kuicksilver.tls.TlsVersion.Tls12 && tls13Only) return Coalesce.No
         if (hosts.verdict(host) == true) return Coalesce.Yes
         val hidden = peer.echAccepted || route.offer.list?.isUsable == true
         return when (val v = tlsConfigFor(host, alpn, quic).verifyForReuse(peer.chain, peer.stapleUntil, hidden)) {

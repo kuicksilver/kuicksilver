@@ -1094,7 +1094,7 @@ class ClientCoalescingTest {
                                 body.writeStringUtf8(payload)
                                 body.flushAndClose()
                                 // the sender first: the decision waits until it took a byte
-                                if (senderFirst) withTimeout(10.seconds) { assertNotNull(mark).touchedForTest.await() }
+                                if (senderFirst) withTimeout(10.seconds) { assertNotNull(assertNotNull(mark).touchedForTest).await() }
                             }
                             try {
                                 val r = c.post("https://b.wild.test:$port/echo") { setBody(body) }
@@ -1563,5 +1563,22 @@ class ClientCoalescingTest {
                     network { dns = MapDns() }
                 }
             assertEquals(Coalesce.No, later.checkCoalescing(tls12, "d.wild.test", 443, later.newRequestDns(), alpn))
+            // an HTTPS record's endpoint with `ech` (RFC 9848; no configured list): the request reaches it through the endpoint's
+            // view of its resolution (connectTo), whose route is the endpoint's, so its connections are TLS 1.3 only too
+            val plain =
+                KuicksilverEngineConfig().apply {
+                    tls { trust = TrustConfig.Custom { c, _, _ -> VerifyResult.Accepted(c) } }
+                    network { dns = MapDns() }
+                }
+            val endpoint = plain.newRequestDns().connectTo("e.wild.test", 443, EchRoute(list))
+            assertEquals(Coalesce.No, plain.checkCoalescing(tls12, "e.wild.test", 443, endpoint, alpn), "the record's ECH")
+            val noEch = plain.newRequestDns().connectTo("e.wild.test", 443, null)
+            assertEquals(Coalesce.Yes, plain.checkCoalescing(tls12, "e.wild.test", 443, noEch, alpn), "an endpoint without ech")
+            assertEquals(Coalesce.Yes, plain.checkCoalescing(tls13, "e.wild.test", 443, endpoint, alpn), "a TLS 1.3 connection")
+            // the secure-disable retry of an ECH route (no configuration left) stays TLS 1.3 only too
+            val route = EchRoute(list)
+            assertNotNull(route.rejected(route.offer, TlsException.EchRejected(null)))
+            val disabled = plain.newRequestDns().connectTo("f.wild.test", 443, route)
+            assertEquals(Coalesce.No, plain.checkCoalescing(tls12, "f.wild.test", 443, disabled, alpn), "the ECH retry")
         }
 }

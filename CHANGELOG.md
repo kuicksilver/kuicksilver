@@ -1160,7 +1160,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   the native library cannot be loaded for the check). Under the new default that refuses `keyExchangeGroups` without an
   elliptic curve (TLS 1.2 has no hybrid) unless `versions = Tls13` (the message says so; with
   `http3 { discovery = H3Only }` they are taken), also in a `proxies { tls { } }` block that was accepted before and would
-  now fail every proxy connection, and, with `http2 { enabled }`, `keyExchangeGroups` without `secp256r1` (RFC 9113
+  now fail every proxy connection (the block is checked as an `https://` proxy's TCP connection takes it, also when it
+  serves only a CONNECT-UDP proxy, whose QUIC connections are TLS 1.3: `versions = Tls13` there), and, with `http2 { enabled }`, `keyExchangeGroups` without `secp256r1` (RFC 9113
   section 9.2.2: HTTP/2 over TLS 1.2 needs TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 with P-256). Under TLS 1.2 the server's
   certificate chain and a client certificate travel in the clear: set `Tls13` when `tls { identity }` identifies a user or
   device. The Ktor server's connectors and a `TlsConfig` keep `Tls13` as their default.
