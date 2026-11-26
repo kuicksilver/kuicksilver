@@ -55,8 +55,9 @@ class ServerTls12JdkClientTest {
         port: Int,
         alpn: String?,
         suites: List<String>? = null,
+        context: SSLContext = jdkContext(),
     ): SSLSocket {
-        val s = jdkContext().socketFactory.createSocket(InetAddress.getLoopbackAddress(), port) as SSLSocket
+        val s = context.socketFactory.createSocket(InetAddress.getLoopbackAddress(), port) as SSLSocket
         s.soTimeout = 20_000
         s.sslParameters =
             s.sslParameters.apply {
@@ -72,6 +73,57 @@ class ServerTls12JdkClientTest {
             throw e
         }
         return s
+    }
+
+    /** An RSA identity: RFC 9113 section 9.2.2 gives HTTP/2 over TLS 1.2 only to a deployment with one. */
+    private fun rsaIdentity() =
+        io.kuicksilver.tls.TlsIdentity
+            .fromDer(listOf(RsaTestCert.leaf), RsaTestCert.key.copyOf())
+
+    /**
+     * A JDK client context that trusts any server and checks no name: the RSA leaf is not under the test CA and names
+     * `server.test` only, both beside the point here (an [X509ExtendedTrustManager], so the JDK adds no host name check).
+     */
+    private fun trustAnyContext(): SSLContext {
+        val trustAny =
+            object : X509ExtendedTrustManager() {
+                override fun checkClientTrusted(
+                    c: Array<X509Certificate>,
+                    a: String,
+                ) = error("client side only")
+
+                override fun checkClientTrusted(
+                    c: Array<X509Certificate>,
+                    a: String,
+                    s: java.net.Socket,
+                ) = error("client side only")
+
+                override fun checkClientTrusted(
+                    c: Array<X509Certificate>,
+                    a: String,
+                    e: SSLEngine,
+                ) = error("client side only")
+
+                override fun checkServerTrusted(
+                    c: Array<X509Certificate>,
+                    a: String,
+                ) = Unit
+
+                override fun checkServerTrusted(
+                    c: Array<X509Certificate>,
+                    a: String,
+                    s: java.net.Socket,
+                ) = Unit
+
+                override fun checkServerTrusted(
+                    c: Array<X509Certificate>,
+                    a: String,
+                    e: SSLEngine,
+                ) = Unit
+
+                override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+            }
+        return SSLContext.getInstance("TLS").apply { init(null, arrayOf(trustAny), null) }
     }
 
     private fun SSLSocket.http(request: String): String {
@@ -146,7 +198,11 @@ class ServerTls12JdkClientTest {
                             if (withP256) listOf(io.kuicksilver.tls.KeyExchangeGroups.SECP256R1) else emptyList(),
                     )
                 val (server, port) =
-                    tlsServer(configure = { http3 { enabled = false } }, connector = {
+                    tlsServer(configure = {
+                        http3 { enabled = false }
+                        // HTTP/2 over TLS 1.2 needs secp256r1 among the groups (RFC 9113 section 9.2.2); this is about HTTP/1.1
+                        http2 { enabled = false }
+                    }, connector = {
                         tls {
                             versions = TlsVersions.Tls12And13
                             clientAuth = io.kuicksilver.tls.ClientAuth.Required
@@ -324,22 +380,7 @@ class ServerTls12JdkClientTest {
                         .resolvedConnectors()
                         .first()
                         .port
-                // the RSA leaf is not under the test CA, and which CA signed it is beside the point: the client trusts any
-                val trustAny =
-                    object : X509TrustManager {
-                        override fun checkClientTrusted(
-                            c: Array<X509Certificate>,
-                            a: String,
-                        ) = error("client side only")
-
-                        override fun checkServerTrusted(
-                            c: Array<X509Certificate>,
-                            a: String,
-                        ) = Unit
-
-                        override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
-                    }
-                val ctx = SSLContext.getInstance("TLS").apply { init(null, arrayOf(trustAny), null) }
+                val ctx = trustAnyContext()
                 withContext(Dispatchers.IO) {
                     (ctx.socketFactory.createSocket(InetAddress.getLoopbackAddress(), port) as SSLSocket).use { s ->
                         s.soTimeout = 20_000
@@ -360,38 +401,59 @@ class ServerTls12JdkClientTest {
             }
         }
 
-    /** HTTP/2 over TLS 1.2 (RFC 9113 section 9.2) with the JDK's HttpClient capped at TLS 1.2. */
+    /**
+     * HTTP/2 over TLS 1.2 (RFC 9113 section 9.2) with the JDK's HttpClient capped at TLS 1.2, from a connector with an RSA
+     * certificate (section 9.2.2); with the ECDSA one of the fixtures the same client gets HTTP/1.1.
+     */
     @Test fun jdkTls12ClientOverH2() =
         serverTest {
-            val (server, port) =
-                tlsServer(configure = {
-                    http3 { enabled = false }
-                }, connector = { tls { versions = TlsVersions.Tls12And13 } }) {
-                    routing { get("/") { call.respondText("h2 ${call.request.httpVersion}") } }
-                }
-            try {
-                val client =
-                    HttpClient
-                        .newBuilder()
-                        .version(HttpClient.Version.HTTP_2)
-                        .sslContext(jdkContext())
-                        .sslParameters(
-                            javax.net.ssl
-                                .SSLParameters()
-                                .apply { protocols = arrayOf("TLSv1.2") },
-                        ).connectTimeout(java.time.Duration.ofSeconds(10))
-                        .build()
-                val r =
-                    withContext(Dispatchers.IO) {
-                        client.send(HttpRequest.newBuilder(URI("https://127.0.0.1:$port/")).build(), HttpResponse.BodyHandlers.ofString())
+            for (rsa in listOf(true, false)) {
+                val (server, port) =
+                    tlsServer(configure = {
+                        http3 { enabled = false }
+                    }, connector = {
+                        tls {
+                            if (rsa) identity = rsaIdentity()
+                            versions = TlsVersions.Tls12And13
+                        }
+                        // the RSA leaf names server.test only: a request for 127.0.0.1 would get 421 (RFC 9110 section 7.4)
+                        allowMisdirectedHosts = rsa
+                    }) {
+                        routing { get("/") { call.respondText("served ${call.request.httpVersion}") } }
                     }
-                assertEquals(HttpClient.Version.HTTP_2, r.version())
-                assertEquals("h2 HTTP/2", r.body())
-                assertEquals("TLSv1.2", r.sslSession().get().protocol)
-            } finally {
-                server.stop(100, 500)
+                try {
+                    jdkTls12OverH2(port, rsa)
+                } finally {
+                    server.stop(100, 500)
+                }
             }
         }
+
+    /** The JDK's HttpClient asking for HTTP/2 over TLS 1.2: it gets it from an RSA connector, HTTP/1.1 from an ECDSA one. */
+    private suspend fun jdkTls12OverH2(
+        port: Int,
+        rsa: Boolean,
+    ) {
+        val client =
+            HttpClient
+                .newBuilder()
+                .version(HttpClient.Version.HTTP_2)
+                .sslContext(if (rsa) trustAnyContext() else jdkContext())
+                .sslParameters(
+                    javax.net.ssl
+                        .SSLParameters()
+                        .apply { protocols = arrayOf("TLSv1.2") },
+                ).connectTimeout(java.time.Duration.ofSeconds(10))
+                .build()
+        val r =
+            withContext(Dispatchers.IO) {
+                client.send(HttpRequest.newBuilder(URI("https://127.0.0.1:$port/")).build(), HttpResponse.BodyHandlers.ofString())
+            }
+        assertEquals(if (rsa) HttpClient.Version.HTTP_2 else HttpClient.Version.HTTP_1_1, r.version())
+        assertEquals(200, r.statusCode())
+        assertEquals(if (rsa) "served HTTP/2" else "served HTTP/1.1", r.body())
+        assertEquals("TLSv1.2", r.sslSession().get().protocol)
+    }
 
     /**
      * RFC 9113 section 9.2.1: "A deployment of HTTP/2 over TLS 1.2 MUST disable renegotiation. An endpoint MUST treat a TLS
@@ -408,7 +470,12 @@ class ServerTls12JdkClientTest {
                 tlsServer(configure = {
                     http3 { enabled = false }
                     http3 { altSvc = false }
-                }, connector = { tls { versions = TlsVersions.Tls12And13 } }) { routing { get("/") { call.respondText("h2") } } }
+                }, connector = {
+                    tls {
+                        identity = rsaIdentity()
+                        versions = TlsVersions.Tls12And13
+                    }
+                }) { routing { get("/") { call.respondText("h2") } } }
             try {
                 val fromServer = withContext(Dispatchers.IO) { relayed(port) { relay -> renegotiateAfterSettings(relay) } }
                 val records = records(fromServer)
@@ -427,7 +494,7 @@ class ServerTls12JdkClientTest {
 
     /** A JDK TLS 1.2 `h2` connection through [relay]: the preface, SETTINGS both ways, then a renegotiation; the client's failure is expected. */
     private fun renegotiateAfterSettings(relay: Int) {
-        jdkTls12(relay, "h2").use { s ->
+        jdkTls12(relay, "h2", context = trustAnyContext()).use { s ->
             assertEquals("h2", s.applicationProtocol)
             val out = s.outputStream
             out.write("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".encodeToByteArray())

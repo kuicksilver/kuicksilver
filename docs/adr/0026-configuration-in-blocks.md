@@ -205,3 +205,12 @@ The design left these cases open or met them only in the code; each was decided 
   `maxBidiStreams` is the application's choice and is not refused. `EngineMain` gains `kuicksilver.http3.quic.expert.maxUniStreams`:
   expert options get keys under their DSL path, and the snapshot's `kuicksilver.quic.maxUniStreams` is a renamed key now;
   `DERIVED_KEYS` is gone with its only entry.
+- **HTTP/2 over TLS 1.2 only where the mandatory suite can run.** With HTTP/2 on by default, `versions = Tls12And13`
+  makes a deployment of HTTP/2 over TLS 1.2, which RFC 9113 section 9.2.2 says MUST support
+  `TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256` with P-256; the start only warned for a certificate without an rsaEncryption key.
+  Two strict options were weighed: refuse such a connector at the start, or not offer `h2` to the TLS 1.2 handshakes that
+  cannot support the suite. The second was chosen: ALPN selection in `ksl` (`h2_allowed`) leaves `h2` out of a TLS 1.2
+  handshake whose certificate has no rsaEncryption key or whose groups lack P-256, so that connection is not HTTP/2 over
+  TLS 1.2 and the MUST holds for every handshake, `sniSelector` identities included (which a start check cannot see),
+  while TLS 1.3 clients keep HTTP/2. The start still fails where no TLS 1.2 client could ever get HTTP/2 (`keyExchangeGroups`
+  without `secp256r1`), and says at Info when the connector's own certificate keeps TLS 1.2 clients on HTTP/1.1.

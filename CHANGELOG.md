@@ -1237,6 +1237,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   HTTP/1.1 alone. Plain connectors and h2c are unchanged. A Ktor client call that lacks a client certificate the server
   requires now fails with `Http2Exception.ConnectionClosed` carrying the TLS alert, where HTTP/1.1 threw the
   `TlsException` itself. The `http2 { }` blocks of both engines are stable; `http2 { settings { } }` stays experimental.
+  Over TLS 1.2 (`tls { versions = TlsVersions.Tls12And13 }`) `h2` goes only to a handshake that can support
+  `TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256` with P-256 (RFC 9113 section 9.2.2 MUST): one whose certificate has no
+  rsaEncryption key or whose groups leave P-256 out gets `http/1.1` (in every TLS server, `ksl`'s ALPN selection), and the
+  engine refuses to start a connector serving HTTP/2 over TLS 1.2 whose `keyExchangeGroups` leave `secp256r1` out.
 - Logging: `KuicksilverLogger.Default` is the platform's logger at warnings and up, and every QUIC endpoint and the Ktor
   client start with it: SLF4J on the JVM (logger `io.kuicksilver`; standard error when no SLF4J provider is on the
   classpath), Logcat on Android (tag `Kuicksilver`), `NSLog` on Apple platforms, standard error on Linux and Windows.
@@ -1720,8 +1724,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   asks for no other. That is the hedged construction the same section names against the side-channel and fault attacks
   deterministic ECDSA invites ("combining both randomness and determinism"), as Go and BoringSSL sign, so
   docs/spec/rfc/9325.md records it as met, not as a deviation.
-- Ktor server: a connector that serves HTTP/2 over TLS 1.2 with a certificate without an rsaEncryption key (an EC or an RSA-PSS key) logs a warning at
-  startup (RFC 9113 section 9.2.2: such deployments "MUST support TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256").
+- Ktor server: a connector that serves HTTP/2 over TLS 1.2 with a certificate without an rsaEncryption key (an EC or an
+  RSA-PSS key) gives its TLS 1.2 clients HTTP/1.1 and says so at startup at Info (RFC 9113 section 9.2.2: such
+  deployments "MUST support TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"; see "HTTP/2 is on by default" above).
 - `KuicksilverTlsConnector.tlsConfig(alpn)` returns the TCP configuration with the connector's `versions`, or a TLS
   1.3-only one when `alpn` holds `h3`.
 - TLS server with client certificates (`trust` an `AnchoredCa`): the session ID context now covers the CA certificates

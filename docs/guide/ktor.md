@@ -382,12 +382,15 @@ proxies and scanners): any client can then end up on TLS 1.2.
   `handshake_failure`), no renegotiation, no compression. Among the suites a client offers, the server picks AES-256-GCM
   first, then ChaCha20-Poly1305 (first when the client prefers it), then AES-128-GCM.
 - An ECDSA certificate serves the TLS 1.2 clients that offer an ECDHE-ECDSA suite (most do); a client that offers only
-  RSA suites, such as `TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256`, the suite RFC 9113 makes mandatory for HTTP/2 over
-  TLS 1.2 deployments, needs a connector with an RSA certificate (2048 bits or more). With HTTP/2 on (the default) the
-  start logs a warning for a TLS 1.2 connector whose own certificate has no rsaEncryption key (an EC or an RSA-PSS key; identities an `sniSelector` returns are
-  not checked).
-- With HTTP/2 on (the default), HTTP/2 is offered over TLS 1.2 too (RFC 9113 section 9.2); a client's attempt to renegotiate
-  ends an HTTP/2 connection with GOAWAY PROTOCOL_ERROR, an HTTP/1.1 one goes on with the renegotiation refused.
+  RSA suites needs a connector with an RSA certificate (2048 bits or more).
+- With HTTP/2 on (the default), HTTP/2 is offered over TLS 1.2 too (RFC 9113 section 9.2), where the handshake can
+  support `TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256` with P-256, the suite section 9.2.2 makes mandatory for such
+  deployments: with an rsaEncryption certificate and `secp256r1` among the key-exchange groups. A TLS 1.2 handshake
+  whose certificate has no rsaEncryption key (an EC or an RSA-PSS key, an `sniSelector`'s answer included) or whose
+  groups leave P-256 out gets `http/1.1` instead (a client that offers `h2` alone gets `no_application_protocol`); the
+  start says so at Info for the connector's own certificate, and fails for a connector whose `keyExchangeGroups` leave
+  `secp256r1` out. TLS 1.3 clients get HTTP/2 either way. A client's attempt to renegotiate ends an HTTP/2 connection
+  with GOAWAY PROTOCOL_ERROR, an HTTP/1.1 one goes on with the renegotiation refused.
 - Client certificates, `sniSelector` and tickets work as over TLS 1.3. A TLS 1.2 session resumes for at most
   `SessionTicketConfig.ticketLifetime` after its full handshake (12 hours by default, at most half of `rotateEvery`),
   however often its ticket is renewed (TLS 1.2 has no fresh key exchange on resumption; RFC 9325 section 3.4). With

@@ -183,9 +183,10 @@ public class ServerTlsConfig internal constructor() {
      * runs under the RFC 9325 profile: ECDHE with AES-GCM or ChaCha20-Poly1305 only (no static RSA, no CBC, no SHA-1 MAC),
      * Extended Master Secret required, no renegotiation, no compression; a TLS 1.2 session resumes for at most
      * [SessionTicketConfig.ticketLifetime] after its full handshake, however often its ticket is renewed. HTTP/2 (when on)
-     * is offered over TLS 1.2 as well (RFC 9113 section 9.2); with a certificate without an rsaEncryption key the start logs
-     * a warning, since RFC 9113 section 9.2.2 asks such deployments to support TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256. HTTP/3
-     * stays TLS 1.3 (RFC 9001 section 4.2).
+     * is offered over TLS 1.2 as well (RFC 9113 section 9.2), but only where the deployment supports the suite section 9.2.2
+     * requires of it, TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 with P-256: a TLS 1.2 handshake whose certificate has no
+     * rsaEncryption key gets `http/1.1` (the start says so at Info), and the start fails when [keyExchangeGroups] leaves
+     * `secp256r1` out. HTTP/3 stays TLS 1.3 (RFC 9001 section 4.2).
      */
     @SecuritySensitive
     public var versions: TlsVersions = TlsVersions.Tls13

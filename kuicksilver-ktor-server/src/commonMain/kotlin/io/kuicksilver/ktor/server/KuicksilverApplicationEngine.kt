@@ -776,6 +776,8 @@ public class KuicksilverApplicationEngine(
                     h2Settings = configuration.resolveHttp2Settings()
                     engineTls = configuration.tls.resolve("tls").also { resolvedTls += it }
                     val listeners = configuration.connectors.map { resolve(everyInterfaceOf(it)) }
+                    // RFC 9113 section 9.2.2 for HTTP/2 over TLS 1.2, before anything binds
+                    for (l in listeners) l.tls?.let { checkTls12H2(it, configuration.http2.enabled, environment.log) }
 
                     // the PROXY protocol header's wait is cut to the request-head deadline: below 3 s it would be shorter than
                     // the spec's "at least 3 seconds to cover a TCP retransmit" (section 2)

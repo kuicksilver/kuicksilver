@@ -240,7 +240,12 @@ class ServerTls12Test {
             val (server, port) =
                 tlsServer(configure = {
                     http3 { enabled = false }
-                }, connector = { tls { versions = TlsVersions.Tls12And13 } }) { routing { get("/") { call.respondText("h2") } } }
+                }, connector = {
+                    tls {
+                        identity = rsaIdentity()
+                        versions = TlsVersions.Tls12And13
+                    }
+                }) { routing { get("/") { call.respondText("h2") } } }
             try {
                 val o = tls12(port, listOf("h2", "http/1.1"), request = null)
                 assertNull(o.failure, "${o.failure}")
@@ -321,41 +326,132 @@ class ServerTls12Test {
             }
         }
 
+    private fun rsaIdentity(): TlsIdentity = TlsIdentity.fromDer(listOf(RsaTestCert.leaf), RsaTestCert.key.copyOf())
+
     /**
-     * RFC 9113 section 9.2.2: "deployments of HTTP/2 that use TLS 1.2 MUST support TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256";
-     * a connector serving HTTP/2 over TLS 1.2 with a certificate without an rsaEncryption key is logged at startup, one with an RSA
-     * key is not, and neither is one without TLS 1.2.
+     * RFC 9113 section 9.2.2: "deployments of HTTP/2 that use TLS 1.2 MUST support TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+     * [TLS-ECDHE] with the P-256 elliptic curve". A certificate without an rsaEncryption key cannot serve that suite, so a TLS
+     * 1.2 client of such a connector is not offered `h2`: it gets HTTP/1.1, or `no_application_protocol` when it offers `h2`
+     * alone. A TLS 1.3 client still gets HTTP/2, and the start says so at Info.
      */
-    @Test fun negative_http2OverTls12WithoutRsaCertificateIsLogged() =
+    @Test fun negative_tls12WithoutRsaCertificateGetsNoH2() =
         serverTest {
-            suspend fun warned(
-                rsa: Boolean,
-                versions: TlsVersions,
-            ): Boolean {
-                val log = CapturedLog()
-                val identity =
-                    if (rsa) TlsIdentity.fromDer(listOf(RsaTestCert.leaf), RsaTestCert.key.copyOf()) else ServerFixtures.identity()
-                val server =
-                    kuicksilverServer(log, configure = {
-                        http3 { enabled = false }
-                        tlsConnector {
-                            tls { this.identity = identity }
-                            host = "127.0.0.1"
-                            port = 0
-                            tls { this.versions = versions }
+            val log = CapturedLog()
+            val (server, port) =
+                tlsServer(configure = { http3 { enabled = false } }, connector = { tls { versions = TlsVersions.Tls12And13 } }, log = log) {
+                    routing { get("/") { call.respondText("served ${call.request.httpVersion}") } }
+                }
+            try {
+                val both = tls12(port, listOf("h2", "http/1.1"))
+                assertNull(both.failure, "${both.failure}")
+                assertEquals(listOf<Byte>(3, 3), both.version)
+                assertEquals("http/1.1", both.alpn, "no h2 over TLS 1.2 without an RSA certificate")
+                assertTrue(both.response.endsWith("served HTTP/1.1"), both.response)
+                val h2Only = tls12(port, listOf("h2"), request = null)
+                assertTrue(h2Only.failure != null, "a TLS 1.2 client that offers h2 alone shares no protocol with it")
+                assertEquals(120 or 0x100, h2Only.receivedAlert, "no_application_protocol (120): ${h2Only.failure}")
+                assertTrue(
+                    log.infos.any { "the certificate has no rsaEncryption key, so TLS 1.2 clients get HTTP/1.1" in it },
+                    "${log.infos}",
+                )
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /** Control: an RSA certificate serves h2 over TLS 1.2, and its start logs nothing about it. */
+    @Test fun tls12WithRsaCertificateGetsH2() =
+        serverTest {
+            val log = CapturedLog()
+            val (server, port) =
+                tlsServer(configure = { http3 { enabled = false } }, connector = {
+                    tls {
+                        identity = rsaIdentity()
+                        versions = TlsVersions.Tls12And13
+                    }
+                }, log = log) { routing { get("/") { call.respondText("rsa") } } }
+            try {
+                assertEquals("h2", tls12(port, listOf("h2", "http/1.1"), request = null).alpn)
+                assertTrue(log.infos.none { "rsaEncryption" in it }, "${log.infos}")
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * The TLS layer decides per handshake, so an identity an sniSelector answers with is held to the same rule: an EC one gets
+     * no h2 over TLS 1.2, and an RSA one whose own groups leave P-256 out gets none either (P-256 is the suite's curve).
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun negative_tls12SniIdentityWithoutRsaOrP256GetsNoH2() =
+        serverTest {
+            for ((answer, expected) in listOf(
+                ServerTlsOverride(ServerFixtures.identity()) to "http/1.1",
+                ServerTlsOverride(
+                    rsaIdentity(),
+                    null,
+                    null,
+                    null,
+                    null,
+                    io.kuicksilver.tls.KeyExchangeGroups(listOf(io.kuicksilver.tls.KeyExchangeGroups.X25519)),
+                ) to "http/1.1",
+                ServerTlsOverride(rsaIdentity()) to "h2",
+            )) {
+                val (server, port) =
+                    tlsServer(configure = { http3 { enabled = false } }, connector = {
+                        tls {
+                            versions = TlsVersions.Tls12And13
+                            sniSelector = { answer }
                         }
-                    }) { routing { get("/") { call.respondText("ok") } } }
-                server.startSuspend(wait = false)
+                    }) { routing { get("/") { call.respondText("sni") } } }
                 try {
-                    server.engine.resolvedConnectors()
-                    return log.lines.any { it.level == "WARN" && "the certificate has no rsaEncryption key" in it.message }
+                    assertEquals(expected, tls12(port, listOf("h2", "http/1.1"), request = null).alpn, "$answer")
                 } finally {
                     server.stop(100, 500)
                 }
             }
-            assertTrue(warned(rsa = false, TlsVersions.Tls12And13), "an ECDSA certificate with HTTP/2 over TLS 1.2 is logged")
-            assertTrue(!warned(rsa = true, TlsVersions.Tls12And13), "control: an RSA certificate")
-            assertTrue(!warned(rsa = false, TlsVersions.Tls13), "control: no TLS 1.2")
+        }
+
+    /**
+     * RFC 9113 section 9.2.2 names the P-256 curve: a connector that serves HTTP/2 over TLS 1.2 without secp256r1 among its
+     * key-exchange groups could give no TLS 1.2 client HTTP/2, and does not start. Without HTTP/2 or without TLS 1.2 it starts.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun negative_http2OverTls12WithoutP256IsRefusedAtStart() =
+        serverTest {
+            val noP256 =
+                io.kuicksilver.tls.KeyExchangeGroups(
+                    listOf(io.kuicksilver.tls.KeyExchangeGroups.X25519, io.kuicksilver.tls.KeyExchangeGroups.SECP384R1),
+                )
+            val e =
+                kotlin.test.assertFailsWith<IllegalArgumentException> {
+                    val (server, _) =
+                        tlsServer(configure = { http3 { enabled = false } }, connector = {
+                            tls {
+                                versions = TlsVersions.Tls12And13
+                                keyExchangeGroups = noP256
+                            }
+                        }) {}
+                    server.stop(100, 500)
+                }
+            assertTrue(
+                e.message.orEmpty().startsWith("HTTP/2 over TLS 1.2 on 127.0.0.1:0 needs secp256r1 among tls { keyExchangeGroups }"),
+                e.message,
+            )
+            // HTTP/2 off: TLS 1.2 serves HTTP/1.1 only, and P-256 is no requirement
+            tlsServer(configure = {
+                http3 { enabled = false }
+                http2 { enabled = false }
+            }, connector = {
+                tls {
+                    versions = TlsVersions.Tls12And13
+                    keyExchangeGroups = noP256
+                }
+            }) {}.first.stop(100, 500)
+            // TLS 1.3 only (the default): no HTTP/2 over TLS 1.2 to hold to it
+            tlsServer(configure = { http3 { enabled = false } }, connector = { tls { keyExchangeGroups = noP256 } }) {}.first.stop(100, 500)
         }
 
     @Test fun certificateKeyTypeIsRead() {
