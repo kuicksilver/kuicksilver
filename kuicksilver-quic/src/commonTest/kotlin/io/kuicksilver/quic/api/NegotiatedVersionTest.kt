@@ -11,8 +11,10 @@ import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.VersionProfile
 import io.kuicksilver.tls.KslQuicCrypto
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.update
@@ -20,6 +22,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertSame
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -59,12 +62,15 @@ class NegotiatedVersionTest {
         client: QuicConfig,
         server: QuicConfig,
         expected: VersionProfile,
+        admission: io.kuicksilver.quic.ConnectionAdmission? = null,
+        onServerStats: (io.kuicksilver.quic.EndpointStats) -> Unit = {},
     ): Unit =
         runBlocking {
             withTimeout(10.seconds) {
                 val heard = Heard()
-                ApiPair.open(serverQuic = server, crypto = KslQuicCrypto, clientListener = heard).use { p ->
+                ApiPair.open(serverQuic = server, crypto = KslQuicCrypto, clientListener = heard, admission = admission).use { p ->
                     val (c, s) = p.connect(client)
+                    onServerStats(p.server.stats)
                     s.awaitHandshake()
                     assertSame(expected, c.version, "client")
                     assertSame(expected, s.version, "server")
@@ -92,4 +98,78 @@ class NegotiatedVersionTest {
 
     @Test fun aServerPreferringV1StaysInV1() =
         settles(versions(VersionProfile.V1, VersionProfile.V2), versions(VersionProfile.V1, VersionProfile.V2), VersionProfile.V1)
+
+    /**
+     * Incompatible version negotiation (RFC 9000 section 6): the client starts in v2, which the server does not speak; its
+     * Version Negotiation packet makes the client start over in v1, the version the connection reports.
+     */
+    @Test fun aVersionNegotiationRestartReportsTheVersionItRestartedIn() {
+        val client = versions(VersionProfile.V2, VersionProfile.V1)
+        assertSame(VersionProfile.V2, client.firstVersion)
+        settles(client, versions(VersionProfile.V1), VersionProfile.V1) { stats ->
+            // one per datagram of the v2 first flight (a post-quantum ClientHello takes two)
+            assertTrue(stats.versionNegotiations > 0, "the server answered the v2 Initial with Version Negotiation")
+        }
+    }
+
+    /** Through a Retry (RFC 9000 section 8.1.2), the compatible switch from v1 to v2 still settles on v2 for both. */
+    @Test fun aRetryKeepsTheNegotiatedVersion() =
+        settles(
+            versions(VersionProfile.V1, VersionProfile.V2),
+            versions(VersionProfile.V2, VersionProfile.V1),
+            VersionProfile.V2,
+            admission = io.kuicksilver.quic.ConnectionAdmission.AlwaysRetry,
+        ) { stats -> assertTrue(stats.retriesSent > 0, "a Retry went out") }
+
+    /**
+     * A server's 0-RTT connection (RFC 9001 section 4.6) is handed to accept() before its handshake completed: its version
+     * is set by then, and the listener reads it in onZeroRtt(Accepted).
+     */
+    @Test fun aServersEarlyConnectionHasItsVersionBeforeTheHandshakeCompleted(): Unit =
+        runBlocking {
+            withTimeout(20.seconds) {
+                val atZeroRtt = CompletableDeferred<Pair<VersionProfile?, Boolean>>()
+                val serverListener =
+                    object : ConnectionListener {
+                        override fun onZeroRtt(
+                            connection: ConnectionInfo,
+                            outcome: io.kuicksilver.quic.ZeroRttOutcome,
+                        ) {
+                            if (outcome == io.kuicksilver.quic.ZeroRttOutcome.Accepted) {
+                                atZeroRtt.complete(connection.version to connection.connection.isHandshakeComplete)
+                            }
+                        }
+                    }
+                ApiPair.open(crypto = KslQuicCrypto, serverEarlyData = true, serverConfigure = { listener = serverListener }).use { p ->
+                    val clientConfig =
+                        io.kuicksilver.quic.QuicClientConfig
+                            .Builder(
+                                io.kuicksilver.quic.CoreFixtures
+                                    .client(),
+                            ).apply { earlyData = io.kuicksilver.tls.EarlyDataState.Allowed }
+                            .build()
+                    // a first connection leaves the client a ticket
+                    val firstAccepted = async { p.server.accept() }
+                    val first = p.client.connect(p.server.localAddress, clientConfig)
+                    firstAccepted.await().awaitHandshake()
+                    val sessions = (p.client as io.kuicksilver.quic.runtime.EndpointLoop).sessions
+                    while (sessions.size() == 0) yield()
+                    first.close()
+                    // the client's packets wait: the server accepts the early connection before the handshake can complete
+                    p.net.hold(p.clientIo.localAddress)
+                    val accepted = async { p.server.accept() }
+                    val second = p.client.connectEarly(p.server.localAddress, clientConfig)
+                    second.openUni().output.flushAndClose() // something early, so the server has 0-RTT to accept
+                    p.net.release(p.clientIo.localAddress)
+                    val (version, complete) = atZeroRtt.await()
+                    assertSame(VersionProfile.V1, version, "set when the early data was accepted")
+                    assertEquals(false, complete, "before the handshake completed")
+                    val s = accepted.await()
+                    assertSame(VersionProfile.V1, s.version, "from accept(), whether or not the handshake completed since")
+                    second.awaitHandshake()
+                    assertSame(VersionProfile.V1, second.version)
+                    second.close()
+                }
+            }
+        }
 }

@@ -4184,7 +4184,10 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.MigrationApiTest.preferr
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.MigrationApiTest.probeFailsOnDeadPath
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.MigrationApiTest.probeWithoutSwitchKeepsCurrentPath
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.MigrationApiTest.serverPathListStaysBoundedAcrossMigrations
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.NegotiatedVersionTest.aRetryKeepsTheNegotiatedVersion
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.NegotiatedVersionTest.aServerPreferringV1StaysInV1
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.NegotiatedVersionTest.aServersEarlyConnectionHasItsVersionBeforeTheHandshakeCompleted
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.NegotiatedVersionTest.aVersionNegotiationRestartReportsTheVersionItRestartedIn
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.NegotiatedVersionTest.compatibleNegotiationFromV1ToV2
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.NegotiatedVersionTest.v1Only
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.NegotiatedVersionTest.v2Negotiated
