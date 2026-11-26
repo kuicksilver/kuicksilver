@@ -11,6 +11,7 @@ import io.ktor.network.selector.SelectorManager
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.quicConfig
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.awaitCancellation
 import kotlin.test.BeforeTest
 import kotlin.test.Test

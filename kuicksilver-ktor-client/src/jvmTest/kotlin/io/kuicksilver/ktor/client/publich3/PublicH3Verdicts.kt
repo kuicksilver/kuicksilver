@@ -9,6 +9,7 @@ import io.kuicksilver.http2.Http2ErrorCode
 import io.kuicksilver.http2.runtime.Http2Exception
 import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Exception
+import io.kuicksilver.io.ConnectionEndedException
 import io.kuicksilver.ktor.client.ConnectStage
 import io.kuicksilver.ktor.client.FailureDiagnostics
 import io.kuicksilver.ktor.client.ProtocolDiagnostics
@@ -609,50 +610,38 @@ private fun isTransient(x: Throwable): Boolean =
 
 /**
  * A message the library gives a plain `kotlinx.io.IOException` (exactly that class) when the peer or the path ended a
- * connection, at [site] (`path:line`, checked by PublicH3VerdictsTest); [prefix] when the message continues with a value.
+ * connection, at [site] (`path:line`, checked by PublicH3VerdictsTest, which finds [built] in that file); [prefix] when
+ * the message continues with a value.
  */
 internal data class TransportMessage(
     val text: String,
     val site: String,
     val prefix: Boolean = false,
+    val built: String = "IOException(\"$text",
 )
 
 /**
- * The peer, path and network closes the library reports as a plain IOException. Any other plain IOException message (our
- * own close: "the connection is closing", "the HTTP/2 connection was closed by the client", "the TLS socket is closed:
- * nothing more is read") is not a transport failure.
+ * The peer, path and network closes the library still reports as a plain IOException. The others are typed: the peer's
+ * close and its silence are [ConnectionEndedException.PeerClosed] and [ConnectionEndedException.PeerUnresponsive], a
+ * transport failure by type; our own close is [ConnectionEndedException.LocalClose], never one. Any other plain
+ * IOException message is not a transport failure.
  *
- * TODO: the library is to give these closes exception types of their own (tracked separately); then match the types and
- * drop this list. The same change must cover [isTransient]'s java.io.EOFException, which it accepts from anywhere: a
- * kotlinx-io read past the end inside our own code (a parser's bug) passes as a network end today.
+ * TODO: [isTransient]'s java.io.EOFException is accepted from anywhere: a kotlinx-io read past the end inside our own
+ * code (a parser's bug) passes as a network end today.
  */
 internal val TRANSPORT_MESSAGES =
     listOf(
-        TransportMessage(
-            "the peer closed the connection",
-            "kuicksilver-http2/src/commonMain/kotlin/io/kuicksilver/http2/runtime/H2Runtime.kt:751",
-        ),
-        TransportMessage(
-            "no PING acknowledgement within ",
-            "kuicksilver-http2/src/commonMain/kotlin/io/kuicksilver/http2/runtime/H2Runtime.kt:832",
-            prefix = true,
-        ),
-        TransportMessage(
-            "the HTTP/2 connection did not answer a health PING",
-            "kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/h1/H1Pool.kt:662",
-        ),
-        TransportMessage(
-            "the HTTP/2 connection did not answer a health PING",
-            "kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/h1/H1Pool.kt:814",
-        ),
+        // the socket timeout while our own request was still going out: nothing says whose side stalled
         TransportMessage(
             "the socket timeout expired",
-            "kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/h1/H1Pool.kt:1302",
+            "kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/h1/H1Pool.kt:1409",
+            built = "fun closeAfterExpiry(what: String = \"the socket timeout expired\")",
         ),
     )
 
-/** Whether [x] is a plain IOException with one of the [TRANSPORT_MESSAGES]. */
+/** Whether [x] is the library's typed end by the peer or the path, or a plain IOException with a [TRANSPORT_MESSAGES] text. */
 private fun isTransportMessage(x: Throwable): Boolean {
+    if (x is ConnectionEndedException.PeerClosed || x is ConnectionEndedException.PeerUnresponsive) return true
     if (x::class != java.io.IOException::class) return false
     val m = x.message ?: return false
     return TRANSPORT_MESSAGES.any { if (it.prefix) m.startsWith(it.text) else m == it.text }
@@ -660,7 +649,8 @@ private fun isTransportMessage(x: Throwable): Boolean {
 
 /**
  * Whether the chain from [first] down its causes is a transport failure, link by link: every link is a network exception
- * ([isTransient]), a plain IOException with a [TRANSPORT_MESSAGES] message, a TLS transport closure
+ * ([isTransient]), a typed peer end or a plain IOException with a [TRANSPORT_MESSAGES] message ([isTransportMessage]), a TLS
+ * transport closure
  * ([isTlsTransportClosure], which judges the rest of the chain itself) or Ktor's ClosedByteChannelException (a channel
  * closed over its cause, which passes the walk on without deciding it); and at least one link is one of the first three.
  * No cause, or any other link (a RuntimeException, another exception of this library, another plain IOException), is not.

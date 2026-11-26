@@ -9,6 +9,7 @@ import io.kuicksilver.http2.Http2ErrorCode
 import io.kuicksilver.http2.runtime.Http2Exception
 import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Exception
+import io.kuicksilver.io.ConnectionEndedException
 import io.kuicksilver.ktor.client.QuicHandshakeProgress
 import io.kuicksilver.ktor.client.QuicStalledException
 import io.kuicksilver.quic.Initiator
@@ -485,8 +486,8 @@ class PublicH3VerdictsTest {
     @Test fun aServerThatClosesWithoutGoAwayIsAWarning() {
         val causes =
             listOf(
-                IOException("the peer closed the connection"),
-                IOException("no PING acknowledgement within 30000 ms"),
+                ConnectionEndedException.PeerClosed("the peer closed the connection"),
+                ConnectionEndedException.PeerUnresponsive("no PING acknowledgement within 30000 ms"),
                 TlsException.Protocol(null, "transport closed without close_notify (truncation)", null),
             )
         for (c in causes) {
@@ -504,7 +505,9 @@ class PublicH3VerdictsTest {
         for (c in listOf(
             IllegalStateException("unexpected frame state"),
             QuicException.ConnectionLost.Internal("loop failed"),
-            IOException("the peer closed the connection", IllegalStateException("underneath")),
+            ConnectionEndedException.PeerClosed("the peer closed the connection", IllegalStateException("underneath")),
+            // the message without the type: what the library gives no peer end
+            IOException("the peer closed the connection"),
             TlsException.Protocol(null, "unexpected ksl state 5", null),
         )) {
             for (byPeer in listOf(true, false)) {
@@ -513,9 +516,11 @@ class PublicH3VerdictsTest {
                 assertEquals(Verdict.Fail, classify(ev).verdict, "$c, byPeer $byPeer")
             }
         }
-        // the transport-like causes: a network exception, the runtime's plain IOException over one, a TLS transport closure
+        // the transport-like causes: a network exception, the runtime's typed peer end over one, a TLS transport closure
         assertTrue(isTransportCauseChain(java.io.EOFException("end")))
-        assertTrue(isTransportCauseChain(IOException("the peer closed the connection", java.net.SocketException("reset"))))
+        assertTrue(
+            isTransportCauseChain(ConnectionEndedException.PeerClosed("the peer closed the connection", java.net.SocketException("reset"))),
+        )
         assertFalse(isTransportCauseChain(IOException("the connection was lost", java.net.SocketException("reset"))), "an unlisted message")
         assertTrue(isTransportCauseChain(TlsException.Protocol(null, "transport closed during the TLS handshake", null)))
         assertFalse(isTransportCauseChain(null))
@@ -694,46 +699,56 @@ class PublicH3VerdictsTest {
             ?: throw AssertionError("the repository root is not above $start")
     }
 
-    /** Whether the file of [site] (`path:line`; the line is only a hint) builds `IOException("<text>` somewhere. */
+    /** Whether the file of [site] (`path:line`; the line is only a hint) holds [built] somewhere. */
     private fun builtIn(
         site: String,
-        text: String,
+        built: String,
     ): Boolean =
         java.io
             .File(repoRoot(), site.substringBefore(':'))
             .readText()
-            .contains("IOException(\"$text")
+            .contains(built)
 
     /**
-     * Every transport message is still one the library gives a plain IOException in its file: a renamed one fails here. The
-     * line of each site is a hint for the reader; lines move, the check is on the content.
+     * Every transport message is still one the library gives a plain IOException in its file, and every typed close
+     * still has its type there: a renamed or retyped one fails here. The line of each site is a hint for the reader;
+     * lines move, the check is on the content.
      */
     @Test fun everyTransportMessageIsStillAtItsSite() {
         for (m in TRANSPORT_MESSAGES) {
             assertTrue(
-                builtIn(m.site, m.text),
-                "${m.site.substringBefore(
-                    ':',
-                )} no longer builds IOException(\"${m.text}...\") (was near line ${m.site.substringAfter(':')})",
+                builtIn(m.site, m.built) && builtIn(m.site, "kotlinx.io.IOException(what)"),
+                "${m.site.substringBefore(':')} no longer builds ${m.built}... (was near line ${m.site.substringAfter(':')})",
             )
         }
-        // and the plain IOExceptions of our own closes, which must not count, are where they were
-        for ((text, site) in ourCloses) {
+        for ((text, site) in peerEnds + ourCloses) {
             assertTrue(
                 builtIn(site, text),
-                "${site.substringBefore(':')} no longer says \"$text\" (was near line ${site.substringAfter(':')})",
+                "${site.substringBefore(':')} no longer builds $text... (was near line ${site.substringAfter(':')})",
             )
         }
     }
 
-    /** Plain IOExceptions the library gives its own closes: never a transport failure. */
+    /** The typed ends by the peer or the path the library gives: a transport failure by type. */
+    private val peerEnds =
+        listOf(
+            "PeerClosed(\"the peer closed the connection" to
+                "kuicksilver-http2/src/commonMain/kotlin/io/kuicksilver/http2/runtime/H2Runtime.kt:751",
+            "PeerUnresponsive(\"no PING acknowledgement within " to
+                "kuicksilver-http2/src/commonMain/kotlin/io/kuicksilver/http2/runtime/H2Runtime.kt:833",
+            "PeerUnresponsive(\"the HTTP/2 connection did not answer a health PING" to
+                "kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/h1/H1Pool.kt:687",
+        )
+
+    /** The typed closes the library gives its own closes: never a transport failure. */
     private val ourCloses =
         listOf(
-            "the connection is closing" to "kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/h1/H1Pool.kt:351",
-            "the HTTP/2 connection was closed by the client" to
-                "kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/h2/H2Pool.kt:46",
-            "the TLS socket is closed: nothing more is read" to
-                "kuicksilver-ktor-network/src/commonMain/kotlin/io/kuicksilver/ktor/network/SocketTls.kt:197",
+            "LocalClose(\"the connection is closing" to
+                "kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/h1/H1Pool.kt:370",
+            "LocalClose(\"the HTTP/2 connection was closed by the client" to
+                "kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/h2/H2Pool.kt:80",
+            "LocalClose(\"the TLS socket is closed: nothing more is read" to
+                "kuicksilver-ktor-network/src/commonMain/kotlin/io/kuicksilver/ktor/network/SocketTls.kt:198",
         )
 
     @Test fun onlyTheListedPeerAndPathMessagesAreTransportFailures() {
@@ -746,19 +761,41 @@ class PublicH3VerdictsTest {
                 text,
             )
         }
-        for ((text, _) in ourCloses) {
-            assertFalse(isTransportCauseChain(IOException(text)), text)
+        for (typed in listOf(ConnectionEndedException.PeerClosed("x"), ConnectionEndedException.PeerUnresponsive("x"))) {
+            assertTrue(isTransportCauseChain(typed), "$typed")
             assertEquals(
-                Verdict.Fail,
-                classify(evidenceOf(connectionClosed(null, byPeer = false, cause = IOException(text)), null)).verdict,
-                text,
+                Verdict.Warn,
+                classify(evidenceOf(connectionClosed(null, byPeer = true, cause = typed), null)).verdict,
+                "$typed",
             )
-            val tls = TlsException.Protocol(null, "transport closed without close_notify (truncation)", IOException(text))
-            assertEquals(Verdict.Fail, classify(evidenceOf(tls, null)).verdict, "a truncation over our own close: $text")
+        }
+        for ((built, _) in ourCloses + peerEnds) {
+            // the typed message as a plain IOException, as before the types: no transport failure
+            val text = built.substringAfter('"')
+            assertFalse(isTransportCauseChain(IOException(text)), text)
+        }
+        for ((built, _) in ourCloses) {
+            val text = built.substringAfter('"')
+            for (ours in listOf(IOException(text), ConnectionEndedException.LocalClose(text))) {
+                assertFalse(isTransportCauseChain(ours), "$ours")
+                assertEquals(
+                    Verdict.Fail,
+                    classify(evidenceOf(connectionClosed(null, byPeer = false, cause = ours), null)).verdict,
+                    "$ours",
+                )
+                val tls = TlsException.Protocol(null, "transport closed without close_notify (truncation)", ours)
+                assertEquals(Verdict.Fail, classify(evidenceOf(tls, null)).verdict, "a truncation over our own close: $ours")
+            }
         }
         // the class alone is not enough, nor a subclass with a listed message
         assertFalse(isTransportCauseChain(IOException("something else")))
-        assertFalse(isTransportCauseChain(java.io.InterruptedIOException("the peer closed the connection")))
+        assertFalse(isTransportCauseChain(java.io.InterruptedIOException("the socket timeout expired")))
+        // a typed peer end over our own close is ours: the chain is judged link by link
+        assertFalse(
+            isTransportCauseChain(
+                ConnectionEndedException.PeerClosed("x", IllegalStateException("pump")),
+            ),
+        )
     }
 
     @Test fun aTlsTransportFailureNeedsATransportCauseChainLinkByLink() {
