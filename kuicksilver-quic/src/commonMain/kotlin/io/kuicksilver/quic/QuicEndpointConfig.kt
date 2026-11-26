@@ -185,8 +185,9 @@ public class QuicServerConfig private constructor(
 
         /**
          * Default 1,048,576 (1..16,777,216). A NEW_TOKEN token validates one connection: the server remembers each one it accepted
-         * for at least [newTokenLifetime] in a register sized for this many per lifetime, made when the first token is shown
-         * (32 MiB at the default; about 32 bytes per token, rounded up to a power of two per stripe). Past that, a returning
+         * for at least [newTokenLifetime] in a register that holds up to this many per lifetime: it starts at 128 KiB with the
+         * first token shown and doubles as it fills, up to about 32 bytes per token (32 MiB at the default, rounded up to a power
+         * of two per stripe). Past that, a returning
          * client's token is treated as absent (it may get a Retry) until older entries age out: never a second use. All loops of
          * the endpoint share it.
          */

@@ -15,9 +15,12 @@ import kotlin.time.Duration.Companion.seconds
  * production (`ProcessReplayRegister`), shared by every endpoint and loop. Fingerprints are SipHash-64 under a random key, so a client cannot aim collisions at another
  * client's tickets; a collision only costs one round trip (1-RTT instead of 0-RTT).
  *
- * Layout: [STRIPES] lock-striped buckets, each with two halves of [SLOTS] open-addressed 64-bit fingerprints; a half covers
- * [HALF_SPAN], so an entry lives between one and two spans (20–40 s). A half at 3/4 load refuses further admissions (fails
- * closed) until it rotates; released slots do not count toward that load. Memory: [CAPACITY] × 2 × 8 bytes = 1 MiB.
+ * Layout: [STRIPES] lock-striped buckets, each with two halves of up to [SLOTS] open-addressed 64-bit fingerprints; a half
+ * covers [HALF_SPAN], so an entry lives between one and two spans (20–40 s). A stripe starts with [INITIAL_SLOTS] slots per half
+ * (fewer when [SLOTS] is smaller) and doubles both halves when a half reaches 3/4 load, up to [SLOTS]; a half at 3/4 load of the
+ * largest size refuses further admissions (fails closed) until it rotates; released slots do not count toward that load.
+ * Memory: at most [CAPACITY] × 2 × 8 bytes = 1 MiB, grown on demand (a NEW_TOKEN register of a million tokens would otherwise
+ * take 32 MiB at its first token).
  */
 @OptIn(ExperimentalAtomicApi::class)
 internal class ZeroRttReplayRegister(
@@ -48,15 +51,15 @@ internal class ZeroRttReplayRegister(
         halfSpan: Duration = HALF_SPAN,
     ) : this(random.nextLong(), random.nextLong(), stripeCount, slots, halfSpan)
 
-    /** Fingerprints (live plus tombstones) a half holds before it compacts or fails closed: 3/4 of [slots]. */
-    private val limit = slots * 3 / 4
-
     private class Stripe(
         slots: Int,
     ) {
         val lock = AtomicInt(0)
         var current = LongArray(slots)
         var previous = LongArray(slots)
+
+        /** Fingerprints (live plus tombstones) a half of the current size holds before it grows, compacts or fails closed: 3/4. */
+        val limit: Int get() = current.size * 3 / 4
         var live = 0 // fingerprints in [current]
         var tombstones = 0 // released slots of [current]
         var start = TimeMark.NEVER
@@ -67,7 +70,7 @@ internal class ZeroRttReplayRegister(
         var wallHigh = 0L // latest wall clock of an admission
     }
 
-    private val stripes = Array(stripeCount) { Stripe(slots) }
+    private val stripes = Array(stripeCount) { Stripe(minOf(slots, INITIAL_SLOTS)) }
 
     /**
      * Fingerprints in the current halves still inside the window at [now] (the resource probe; storage itself is fixed). A stripe
@@ -76,8 +79,8 @@ internal class ZeroRttReplayRegister(
     fun liveEntries(now: TimeMark): Int =
         stripes.sumOf { s -> locked(s) { if (s.start == TimeMark.NEVER || now >= s.start + halfSpan * 2) 0 else s.live } }
 
-    /** Bytes of fingerprint storage. */
-    val memoryBytes: Long get() = stripeCount.toLong() * slots * 2 * 8
+    /** Bytes of fingerprint storage now (it grows with the load, up to stripes x slots x 2 halves x 8 bytes). */
+    val memoryBytes: Long get() = stripes.sumOf { s -> locked(s) { (s.current.size + s.previous.size).toLong() * 8 } }
 
     private fun fingerprint(id: ByteArray): Long {
         val h = SipHash.hash24(k0, k1, id)
@@ -127,14 +130,39 @@ internal class ZeroRttReplayRegister(
         table: LongArray,
         fp: Long,
     ): Int {
-        var i = (fp.toInt() and (slots - 1))
-        repeat(slots) {
+        val mask = table.size - 1
+        var i = (fp.toInt() and mask)
+        repeat(table.size) {
             val v = table[i]
             if (v == EMPTY) return -1
             if (v == fp) return i
-            i = (i + 1) and (slots - 1)
+            i = (i + 1) and mask
         }
         return -1
+    }
+
+    /** [table]'s fingerprints (tombstones dropped) in a new table of [size] slots. */
+    private fun rehash(
+        table: LongArray,
+        size: Int,
+    ): LongArray {
+        val out = LongArray(size)
+        val mask = size - 1
+        for (v in table) {
+            if (v == EMPTY || v == TOMBSTONE) continue
+            var i = (v.toInt() and mask)
+            while (out[i] != EMPTY) i = (i + 1) and mask
+            out[i] = v
+        }
+        return out
+    }
+
+    /** Doubles both halves of [s]: what either remembers is kept, so growing never forgets a fingerprint. */
+    private fun grow(s: Stripe) {
+        val size = s.current.size * 2
+        s.current = rehash(s.current, size)
+        s.previous = rehash(s.previous, size)
+        s.tombstones = 0
     }
 
     /**
@@ -167,14 +195,7 @@ internal class ZeroRttReplayRegister(
 
     /** Rebuilds [Stripe.current] without its tombstones, so released slots do not lengthen probes or count as load. */
     private fun compact(s: Stripe) {
-        val old = s.current.copyOf()
-        s.current.fill(EMPTY)
-        for (v in old) {
-            if (v == EMPTY || v == TOMBSTONE) continue
-            var i = (v.toInt() and (slots - 1))
-            while (s.current[i] != EMPTY) i = (i + 1) and (slots - 1)
-            s.current[i] = v
-        }
+        s.current = rehash(s.current, s.current.size)
         s.tombstones = 0
     }
 
@@ -195,10 +216,14 @@ internal class ZeroRttReplayRegister(
             if (wallClockStepped(s, now, wallMillis)) return@locked false
             rotate(s, now)
             if (find(s.current, fp) >= 0 || find(s.previous, fp) >= 0) return@locked false
-            if (s.live >= limit) return@locked false
-            if (s.live + s.tombstones >= limit) compact(s)
-            var i = (fp.toInt() and (slots - 1))
-            while (s.current[i] != EMPTY && s.current[i] != TOMBSTONE) i = (i + 1) and (slots - 1)
+            if (s.live >= s.limit) {
+                if (s.current.size >= slots) return@locked false
+                grow(s)
+            }
+            if (s.live + s.tombstones >= s.limit) compact(s)
+            val mask = s.current.size - 1
+            var i = (fp.toInt() and mask)
+            while (s.current[i] != EMPTY && s.current[i] != TOMBSTONE) i = (i + 1) and mask
             if (s.current[i] == TOMBSTONE) s.tombstones--
             s.current[i] = fp
             s.live++
@@ -228,6 +253,9 @@ internal class ZeroRttReplayRegister(
         const val STRIPES = 64
         const val SLOTS = 1024
         const val CAPACITY = STRIPES * SLOTS
+
+        /** Slots per half a stripe starts with: 64 stripes x 128 x 2 halves x 8 bytes = 128 KiB at first. */
+        const val INITIAL_SLOTS = 128
 
         private const val EMPTY = 0L
         private const val TOMBSTONE = -1L

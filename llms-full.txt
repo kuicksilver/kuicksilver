@@ -1070,8 +1070,9 @@ instance), bound to the client's IP address but not its port, valid for
 `QuicServerConfig.newTokenLifetime` (24 hours; null issues none) and accepted once: a register of the tokens it
 accepted, kept for at least the lifetime, treats a second use as no token.
 
-The register holds at least `newTokenReplayCapacity` tokens per lifetime (1,048,576 by default, 32 MiB allocated when the first
-token is shown; about 32 bytes per token, rounded up to a power of two). It never forgets a token early: once it is full
+The register holds at least `newTokenReplayCapacity` tokens per lifetime (1,048,576 by default). Its memory grows with
+its load: 128 KiB when the first token is shown, doubled as stripes fill, up to about 32 bytes per token (32 MiB at the
+default, rounded up to a power of two). It never forgets a token early: once it is full
 (first in parts, as its 64 stripes fill unevenly), a returning client's token is treated as absent, not accepted
 twice, so the client gets whatever the policy gives a client without a token (a Retry under `AlwaysRetry` or under
 load). Entries age out one to two lifetimes after they were added. A server that expects more returning clients per
@@ -6606,7 +6607,7 @@ server's `sniSelector` works as over TCP (its overrides must suit QUIC as well: 
 | server `earlyDataContext` (*experimental*) | `ByteArray?` | `null` | at most 256 bytes | 0.2.0 | application settings bound into tickets (`Http3Endpoint` puts its SETTINGS here) |
 | client `tokenStore` (*experimental*) | `QuicTokenStore?` | `null` |  | 0.3.0 | keep the servers' NEW_TOKEN tokens and present one on the next connection to the same server name and port: no Retry round trip; links those connections ([Address tokens](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#address-tokens-new_token)) |
 | server `preferredAddress` (*experimental*) | `PreferredAddress?` | `null` | IP literals, ports 1..65535, not unspecified or multicast | 0.3.0 | also listen on these addresses (one per family) and offer them in `preferred_address`; clients that follow move there after validating the path ([Migration and paths](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#migration-and-paths)) |
-| server `newTokenReplayCapacity` (*experimental*) | `Int` | `1_048_576` | 1..16,777,216 | 0.3.0 | NEW_TOKEN tokens the replay register holds per lifetime (32 bytes each, 32 MiB at the default, allocated on the first token shown); once full a returning client's token counts as absent |
+| server `newTokenReplayCapacity` (*experimental*) | `Int` | `1_048_576` | 1..16,777,216 | 0.3.0 | NEW_TOKEN tokens the replay register holds per lifetime (32 bytes each, up to 32 MiB at the default; it starts at 128 KiB and grows with its load); once full a returning client's token counts as absent |
 | server `newTokenLifetime` (*experimental*) | `Duration?` | 24 hours | positive, at most 7 days; `null` issues none | 0.3.0 | how long the NEW_TOKEN tokens this server issues validate a returning client's address ([Admission and endpoint limits](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#admission-and-endpoint-limits)) |
 
 ### QuicEndpointConfig

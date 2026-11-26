@@ -493,7 +493,7 @@ internal class AddressTokens(
         /** A generation's nonces end here (the counter part of the nonce is 56 bits). */
         const val COUNTER_LIMIT: Long = 1L shl 56
 
-        /** Default NEW_TOKEN replay capacity: 1,048,576 tokens per lifetime in 32 MiB ([replayLayout]). */
+        /** Default NEW_TOKEN replay capacity: 1,048,576 tokens per lifetime in at most 32 MiB ([replayLayout]), grown on demand. */
         const val DEFAULT_REPLAY_CAPACITY: Int = 1 shl 20
         const val MAX_REPLAY_CAPACITY: Int = 1 shl 24
 
