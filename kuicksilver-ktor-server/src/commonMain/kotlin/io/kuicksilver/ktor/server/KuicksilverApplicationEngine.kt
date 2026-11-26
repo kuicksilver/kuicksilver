@@ -498,7 +498,7 @@ public class KuicksilverApplicationEngine(
      */
     internal val log: io.ktor.util.logging.Logger =
         configuration.observability.logger.let {
-            if (it === ServerObservability.ApplicationLog) environment.log else KuicksilverLoggerAsKtor(it)
+            if (it === ServerObservability.ApplicationLog) environment.log else kuicksilverLoggerAsKtor(it)
         }
 
     /** The configuration's [KuicksilverServerEventListener], behind a guard that logs its failures. */

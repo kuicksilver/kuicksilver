@@ -386,6 +386,47 @@ class ServerConfigMappingTest {
             }
         }
 
+    /**
+     * The engine's Ktor logger asks the application's logger at every level before it builds a line: a level it does not
+     * enable is never delivered (and trace goes as debug).
+     */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    @Test
+    fun theEnginesLoggerChecksEveryLevel() {
+        val lines = kotlin.concurrent.atomics.AtomicReference(emptyList<Pair<io.kuicksilver.quic.LogLevel, String>>())
+        val warnAndUp =
+            object : KuicksilverLogger {
+                override fun isEnabled(level: io.kuicksilver.quic.LogLevel) = level >= io.kuicksilver.quic.LogLevel.Warn
+
+                override fun log(
+                    level: io.kuicksilver.quic.LogLevel,
+                    message: String,
+                    cause: Throwable?,
+                ) {
+                    assertTrue(isEnabled(level), "$level delivered although disabled")
+                    while (true) {
+                        val was = lines.load()
+                        if (lines.compareAndSet(was, was + (level to message))) return
+                    }
+                }
+            }
+        val log = kuicksilverServer(null, configure = { observability { logger = warnAndUp } }) {}.engine.log
+        val boom = IllegalStateException("boom")
+        log.trace("t")
+        log.trace("t", boom)
+        log.debug("d")
+        log.debug("d", boom)
+        log.info("i")
+        log.info("i", boom)
+        log.warn("w")
+        log.warn("w", boom)
+        log.error("e")
+        log.error("e", boom)
+        val warn = io.kuicksilver.quic.LogLevel.Warn
+        val error = io.kuicksilver.quic.LogLevel.Error
+        assertEquals(listOf(warn to "w", warn to "w", error to "e", error to "e"), lines.load())
+    }
+
     @Test fun tlsBlockResolves() {
         val id = ServerFixtures.identity()
         val trust = TrustConfig.AnchoredCa(listOf(ServerFixtures.testCa))

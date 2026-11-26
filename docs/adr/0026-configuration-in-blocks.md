@@ -285,3 +285,12 @@ The design left these cases open or met them only in the code; each was decided 
   enforced, not assumed. A resumed TLS 1.2 session is held to the same rule, as OpenSSL calls the ALPN callback on
   resumption too (tested with both key types). The client-visible effects are documented: a TLS 1.2 client of an ECDSA
   certificate gets HTTP/1.1 when it offers both protocols and `no_application_protocol` when it offers `h2` alone.
+- **The server's own logger is guarded and whole.** With `observability { logger }` set, the engine's Ktor `Logger` was
+  a common class that forwarded the plain forms and delegated the rest of the interface to a `KtorSimpleLogger`: on the
+  JVM a real SLF4J logger, so the formatted forms, the markers and the `isXxxEnabled` checks went past the application's
+  logger, and an exception out of it reached the engine (the per-IP refusals are logged from the accept loop). It is
+  now a platform implementation of the whole interface (on the JVM and Android SLF4J's `LegacyAbstractLogger`, which routes
+  every form, the fluent API included, through one call; on Native Ktor's `Logger` with its `level` from the logger),
+  behind a guard that asks the level before a line is built, reads a throwing `isEnabled` as false and drops what the
+  logger throws, a CancellationException too, as the QUIC endpoints' guard does. A marker is dropped: a
+  `KuicksilverLogger` has none.

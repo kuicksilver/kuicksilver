@@ -41,6 +41,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.yield
+import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -579,6 +580,61 @@ class ServerH1Test {
             } finally {
                 selector.close()
                 server.stop(100, 500)
+            }
+        }
+
+    /**
+     * Self-attack on `observability { logger }`: a logger whose `log` throws, or whose `isEnabled` throws, takes the engine's
+     * lines (here the per-IP refusals, logged from the accept loop, and the start's) without ending anything: refused
+     * clients keep being refused, and once the held connection is gone the address is served again. The logger was called,
+     * so its exception went through the engine's guard.
+     */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    @Test
+    fun negative_aThrowingLoggerDoesNotStopTheListener() =
+        serverTest {
+            for (throwIn in listOf("log", "isEnabled")) {
+                val calls = kotlin.concurrent.atomics.AtomicInt(0)
+                val failing =
+                    object : io.kuicksilver.quic.KuicksilverLogger {
+                        override fun isEnabled(level: io.kuicksilver.quic.LogLevel): Boolean {
+                            if (throwIn == "isEnabled") {
+                                calls.incrementAndFetch()
+                                throw IllegalStateException("isEnabled fails")
+                            }
+                            return true
+                        }
+
+                        override fun log(
+                            level: io.kuicksilver.quic.LogLevel,
+                            message: String,
+                            cause: Throwable?,
+                        ) {
+                            calls.incrementAndFetch()
+                            throw kotlinx.coroutines.CancellationException("log fails")
+                        }
+                    }
+                val (server, port) =
+                    tlsServer({
+                        tcp { maxConnectionsPerIp = 1 }
+                        observability { logger = failing }
+                    }) { routing { get("/") { call.respondText("ok") } } }
+                val selector = SelectorManager(Dispatchers.IO)
+                try {
+                    val held = connectTcp(selector, InetSocketAddress("127.0.0.1", port))
+                    withTimeout(10.seconds) { server.engine.openTcpSockets.first { it == 1 } }
+                    repeat(3) {
+                        assertTrue(withTimeout(10.seconds) { runCatching { rawHttp(port, get) } }.isFailure, "$throwIn: refused")
+                    }
+                    withTimeout(10.seconds) { server.engine.refusedPerIp.first { it == 3L } }
+                    assertTrue(calls.load() > 0, "$throwIn: the logger was called")
+                    held.close()
+                    withTimeout(10.seconds) { server.engine.openTcpSockets.first { it == 0 } }
+                    assertTrue(rawHttp(port, get).startsWith("HTTP/1.1 200"), "$throwIn: the listener still serves")
+                } finally {
+                    selector.close()
+                    server.stop(100, 500)
+                }
             }
         }
 }

@@ -3367,6 +3367,7 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMa
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.streamLimitsFitWebTransportOrAreKept
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.tcpAndWebSocketOptionsReachTheConfiguration
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.theEnginesIdentityTurnsKtorsConnectorsIntoTls
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.theEnginesLoggerChecksEveryLevel
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.theLoggerDefaultsToTheApplicationLog
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.tlsBlockResolves
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.webTransportWithEightSessionsStarts
@@ -3468,6 +3469,7 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1Test.g
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1Test.handshakeFailureClosesOnlyThatConnection
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1Test.identityTurnsPortConnectorIntoTls
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1Test.keepAliveTwoRequests
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1Test.negative_aThrowingLoggerDoesNotStopTheListener
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1Test.negative_gracefulStopWaitsForALargeResponseInFlight
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1Test.negative_ipv6ConnectorListensOnItsAddressOnly
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1Test.negative_perIpLimitRefusesAtAcceptBeforeTls
@@ -3988,6 +3990,9 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h2.ClientSigna
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h3.H3AuthorityTest.defaultPortFollowsTheScheme
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h3.H3AuthorityTest.hostAndPort
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.CurlHttp3Test.curlDownloadsOverHttp3Only
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineLoggerSlf4jJvmTest.everySlf4jFormGoesToTheApplicationsLogger
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineLoggerSlf4jJvmTest.negative_disabledLevelsAreNeitherBuiltNorDelivered
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineLoggerSlf4jJvmTest.negative_throwingLoggerOrArgumentIsContained
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainKeysTest.everyKnownKeyReachesItsOption
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainKeysTest.ktorsIdleTimeoutKeyIsTheHttp1One
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainKeysTest.negative_aListWhereOneValueBelongsNamesTheKey

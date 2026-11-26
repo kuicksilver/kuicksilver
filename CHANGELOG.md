@@ -1252,7 +1252,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   Before, the default was `KuicksilverLogger.Stderr`. The Ktor server logs to the application's log (`environment.log`)
   unless `observability { logger }` is set: its default is `ServerObservability.ApplicationLog` (not nullable, as on the
   client), and a logger of the application's own takes every engine line, TCP, HTTP/1.1, HTTP/2 and the TLS file
-  watchers included, not the HTTP/3 endpoints' alone. `KuicksilverLogger.platform(level)` gives the platform's
+  watchers included, not the HTTP/3 endpoints' alone; nothing such a logger throws reaches the engine, each level is asked
+  before a line is built, and on the JVM and Android every SLF4J form of the engine's `Logger` (formatted, with a marker,
+  the `isXxxEnabled` checks) goes to it, none to an SLF4J binding. `KuicksilverLogger.platform(level)` gives the platform's
   logger at another level; `KuicksilverLogger` and `LogLevel` are stable.
 - Ktor server: `tlsConnector { }` and `plainConnector { }` without a `host` bind every interface of both families (breaking
   behaviour): one dual-stack socket per protocol on `::`, IPv4 clients arriving as IPv4-mapped addresses, or `0.0.0.0` where

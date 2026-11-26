@@ -943,52 +943,39 @@ public class ServerObservability internal constructor() {
 }
 
 /**
- * [logger] as a Ktor [Logger], for the engine's own lines when `observability { logger }` is not the application's log: the
- * plain forms (`warn(message)`, `warn(message, cause)`, ...) go to [logger] at their level (trace as debug); the rest of
- * the interface (an SLF4J logger on the JVM) is a quiet logger's.
+ * [logger] as a Ktor [Logger], for the engine's own lines when `observability { logger }` is not the application's log.
+ * Every member of the platform's `Logger` goes to [logger] (an SLF4J logger on the JVM and Android: the formatted forms,
+ * the markers and the `isXxxEnabled` checks too, so nothing reaches a real SLF4J logger); trace goes as debug. A level
+ * [logger] does not enable is dropped before its message is built, and nothing [logger] throws reaches the engine
+ * ([LoggerGuard]): a failing logger cannot end a listener's accept loop.
  */
-internal class KuicksilverLoggerAsKtor(
+internal expect fun kuicksilverLoggerAsKtor(logger: KuicksilverLogger): Logger
+
+/**
+ * [logger] behind a guard, for [kuicksilverLoggerAsKtor]: a level is checked before the message is built, an `isEnabled`
+ * that throws reads as false, and what [logger] (or building the message) throws is dropped, a CancellationException too
+ * (as the QUIC endpoints' own guard does: rethrowing it would end the caller's coroutine for a logging failure).
+ */
+internal class LoggerGuard(
     private val logger: KuicksilverLogger,
-    quiet: Logger = KtorSimpleLogger("io.kuicksilver.ktor.server"),
-) : Logger by quiet {
-    override fun error(message: String) = logger.log(LogLevel.Error, message, null)
+) {
+    fun enabled(level: LogLevel): Boolean =
+        try {
+            logger.isEnabled(level)
+        } catch (_: Throwable) {
+            false
+        }
 
-    override fun error(
-        message: String,
-        cause: Throwable,
-    ) = logger.log(LogLevel.Error, message, cause)
-
-    override fun warn(message: String) = logger.log(LogLevel.Warn, message, null)
-
-    override fun warn(
-        message: String,
-        cause: Throwable,
-    ) = logger.log(LogLevel.Warn, message, cause)
-
-    override fun info(message: String) = logger.log(LogLevel.Info, message, null)
-
-    override fun info(
-        message: String,
-        cause: Throwable,
-    ) = logger.log(LogLevel.Info, message, cause)
-
-    override fun debug(message: String) {
-        if (logger.isEnabled(LogLevel.Debug)) logger.log(LogLevel.Debug, message, null)
-    }
-
-    override fun debug(
-        message: String,
-        cause: Throwable,
+    inline fun log(
+        level: LogLevel,
+        cause: Throwable? = null,
+        message: () -> String,
     ) {
-        if (logger.isEnabled(LogLevel.Debug)) logger.log(LogLevel.Debug, message, cause)
+        try {
+            if (enabled(level)) logger.log(level, message(), cause)
+        } catch (_: Throwable) {
+        }
     }
-
-    override fun trace(message: String) = debug(message)
-
-    override fun trace(
-        message: String,
-        cause: Throwable,
-    ) = debug(message, cause)
 
     override fun toString(): String = logger.toString()
 }
