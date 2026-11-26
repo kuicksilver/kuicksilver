@@ -37,6 +37,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 /** `ConnectionAdmission`, the bounded Initial queue and the endpoint limits (threat-model 3.2, 5 items 4, 5, 7). */
@@ -386,6 +387,49 @@ class AdmissionTest {
                 p.remove(p.server, it)
             }
             assertNotNull(p.feed(p.server, firstInitial(p), ip), "a removed connection frees its IP slot")
+        }
+    }
+
+    /**
+     * The per-address limit says why it refuses (ADR-0026): one Warn line, at most once per 5 minutes, naming the address and
+     * the option to change behind NAT; the limit of the whole endpoint says nothing of the kind.
+     */
+    @Test fun perIpLimitWarnsAtMostOncePerFiveMinutes() {
+        val lines = mutableListOf<String>()
+        val capture =
+            object : io.kuicksilver.quic.KuicksilverLogger {
+                override fun isEnabled(level: io.kuicksilver.quic.LogLevel): Boolean = true
+
+                override fun log(
+                    level: io.kuicksilver.quic.LogLevel,
+                    message: String,
+                    cause: Throwable?,
+                ) {
+                    if ("per-IP" in message) lines += "$level $message"
+                }
+            }
+        val p =
+            EndpointPair {
+                maxConnectionsPerIp = 1
+                observability { logger = capture }
+            }
+        p.use { _ ->
+            assertNotNull(p.feed(p.server, firstInitial(p), InetSocketAddress("10.9.9.9", 1)))
+            assertNull(p.feed(p.server, firstInitial(p), InetSocketAddress("10.9.9.9", 2)))
+            assertEquals(
+                listOf(
+                    "Warn QUIC per-IP limit (1) reached for 10.9.9.9; behind NAT or kube-proxy set " +
+                        "http3 { endpoint { maxConnectionsPerIp = null } }",
+                ),
+                lines,
+            )
+            assertNull(p.feed(p.server, firstInitial(p), InetSocketAddress("10.9.9.9", 3)))
+            p.now += 4.minutes
+            assertNull(p.feed(p.server, firstInitial(p), InetSocketAddress("10.9.9.9", 4)))
+            assertEquals(1, lines.size, "once per 5 minutes")
+            p.now += 1.minutes
+            assertNull(p.feed(p.server, firstInitial(p), InetSocketAddress("10.9.9.9", 5)))
+            assertEquals(2, lines.size, "again after 5 minutes")
         }
     }
 

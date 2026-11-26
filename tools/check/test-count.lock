@@ -5222,6 +5222,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.endpoint.AdmissionTest.negat
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.endpoint.AdmissionTest.negative_initialQueueCap
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.endpoint.AdmissionTest.negative_noTokenHandlerDoesNotValidate
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.endpoint.AdmissionTest.negative_refusalIsAmplificationLimited
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.endpoint.AdmissionTest.perIpLimitWarnsAtMostOncePerFiveMinutes
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.endpoint.AdmissionTest.processPendingHonoursMax
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.endpoint.AdmissionTest.reflectiveSourcePortsDropped
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.endpoint.AdmissionTest.secondInitialOfAQueuedFlightReachesTheNewConnection

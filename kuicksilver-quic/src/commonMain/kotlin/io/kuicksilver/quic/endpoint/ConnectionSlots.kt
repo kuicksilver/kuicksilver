@@ -24,8 +24,8 @@ internal sealed class ConnectionSlots {
     abstract val total: Int
 
     /**
-     * Takes a server connection's slot and one of [ip], or nothing: -1 when [maxTotal] slots or [maxPerIp] of [ip] are taken
-     * (null: no per-address limit), else the connections of [ip] before this one.
+     * Takes a server connection's slot and one of [ip], or nothing: [FULL] when [maxTotal] slots are taken, [PER_IP_FULL] when
+     * [maxPerIp] of [ip] are (null: no per-address limit), else the connections of [ip] before this one.
      */
     abstract fun acquire(
         ip: AddressClass.IpKey,
@@ -42,6 +42,19 @@ internal sealed class ConnectionSlots {
     /** Addresses holding connections, for `QuicResourceProbe` (which counts a group's shared slots once). */
     abstract val addresses: Int
 
+    /** When the per-address limit was last said to the logger (monotonic nanoseconds); a loop group's loops share it. */
+    private val perIpWarned = kotlin.concurrent.atomics.AtomicLong(Long.MIN_VALUE)
+
+    /**
+     * True at most once per [PER_IP_WARNING_INTERVAL] (by [nowNanos]): whether a refusal by the per-address limit is
+     * logged now. The first refusal always is.
+     */
+    fun perIpWarningDue(nowNanos: Long): Boolean {
+        val last = perIpWarned.load()
+        if (last != Long.MIN_VALUE && nowNanos - last < PER_IP_WARNING_INTERVAL.inWholeNanoseconds) return false
+        return perIpWarned.compareAndSet(last, nowNanos)
+    }
+
     /** One endpoint's slots, used on its loop's thread only. */
     class Local : ConnectionSlots() {
         private val perIp = HashMap<AddressClass.IpKey, Int>()
@@ -53,9 +66,9 @@ internal sealed class ConnectionSlots {
             maxTotal: Int,
             maxPerIp: Int?,
         ): Int {
-            if (total >= maxTotal) return -1
+            if (total >= maxTotal) return FULL
             val n = perIp[ip] ?: 0
-            if (maxPerIp != null && n >= maxPerIp) return -1
+            if (maxPerIp != null && n >= maxPerIp) return PER_IP_FULL
             perIp[ip] = n + 1
             total++
             return n
@@ -107,14 +120,14 @@ internal sealed class ConnectionSlots {
         ): Int {
             // the address first, the total last: a full address never holds one of the last total slots, even briefly, so
             // it cannot make a concurrent Initial of another address be refused
-            if (count.load() >= maxTotal) return -1
+            if (count.load() >= maxTotal) return FULL
             val before = change(ip) { n -> if (maxPerIp != null && n >= maxPerIp) n else n + 1 }
-            if (maxPerIp != null && before >= maxPerIp) return -1
+            if (maxPerIp != null && before >= maxPerIp) return PER_IP_FULL
             while (true) {
                 val t = count.load()
                 if (t >= maxTotal) {
                     change(ip) { n -> if (n > 0) n - 1 else 0 } // the endpoint filled up meanwhile: the address slot goes back
-                    return -1
+                    return FULL
                 }
                 if (count.compareAndSet(t, t + 1)) return before
             }
@@ -171,5 +184,16 @@ internal sealed class ConnectionSlots {
             const val BUCKETS = 1024
             val EMPTY = emptyArray<Entry>()
         }
+    }
+
+    companion object {
+        /** [acquire]: the endpoint holds `maxConnections`. */
+        const val FULL: Int = -1
+
+        /** [acquire]: the address holds `maxConnectionsPerIp`. */
+        const val PER_IP_FULL: Int = -2
+
+        /** The least time between two log lines about the per-address limit. */
+        val PER_IP_WARNING_INTERVAL: kotlin.time.Duration = kotlin.time.Duration.parse("5m")
     }
 }
