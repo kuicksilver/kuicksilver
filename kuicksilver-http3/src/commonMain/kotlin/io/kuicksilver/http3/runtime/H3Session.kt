@@ -777,6 +777,7 @@ internal class H3Session(
                     return
                 }
             // nothing of the server is read before a rejected 0-RTT is noted: QPACK must have forgotten the early streams first
+            if (!awaitZeroRttAnswer()) return
             noteRejectedZeroRttHere()
             // the peer's streams are read to their end even when the connection is lost (drains)
             if (st.id and 2L != 0L) {

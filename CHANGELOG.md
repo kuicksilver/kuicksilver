@@ -1799,6 +1799,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3 client, rejected 0-RTT: the connection could close with QPACK_ENCODER_STREAM_ERROR when both sides used the
+  QPACK dynamic table. The transport can hand the server's control stream over before it reports that the server
+  rejected the 0-RTT, and the client then read the server's SETTINGS before it noted the rejection. Its encoder's Set
+  Dynamic Table Capacity went to the encoder stream the rejection had dropped, and its inserts went to the new one. The
+  server's decoder, its table still of capacity 0 (RFC 9204 section 3.2.3), refused them. The client now reads no
+  server stream until the handshake has settled the 0-RTT (RFC 9001 section 4.6.2), so QPACK forgets the early
+  streams before the server's SETTINGS reach it.
 - HTTP/1.1 client: an idle pooled connection is now watched for the server's close (RFC 9112 section 9.5: "Implementations
   SHOULD constantly monitor open connections for a received closure signal and respond to it as appropriate"). When the
   server ends it (close_notify, or a FIN alone) or sends bytes no request asked for, the client closes it in order at once

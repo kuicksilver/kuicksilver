@@ -153,6 +153,28 @@ internal suspend fun H3Session.cancelSections(st: QuicStream) {
  */
 internal suspend fun H3Session.noteRejectedZeroRtt() = withContext(dispatcher) { noteRejectedZeroRttHere() }
 
+/**
+ * Client, before a stream of the server is read: waits until the server's answer to our 0-RTT is known (RFC 9001 section
+ * 4.6.2), which it is once the handshake completed; false when the connection ended first. The transport can hand a
+ * server's stream over before it reports the answer: the server's 1-RTT packets are read as soon as their key exists,
+ * before the handshake's end settles the 0-RTT, and the transport's loop reports the rejection on its own thread while
+ * this dispatcher already reads the stream. Read then, the server's SETTINGS reached QPACK before the rejection was
+ * noted: the encoder's Set Dynamic Table Capacity went to the encoder stream the rejection dropped and its inserts to
+ * the new one, and the server's decoder, its table still of capacity 0, closed the connection with
+ * QPACK_ENCODER_STREAM_ERROR (RFC 9204 sections 3.2.3 and 4.3.1).
+ */
+internal suspend fun H3Session.awaitZeroRttAnswer(): Boolean {
+    if (isServer || zeroRttRejectionNoted || quic.isHandshakeComplete) return true
+    return try {
+        quic.awaitHandshake()
+        true
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Throwable) {
+        false // the connection is gone: its closed handler reports it
+    }
+}
+
 /** [noteRejectedZeroRtt], for a caller already on the dispatcher. */
 internal suspend fun H3Session.noteRejectedZeroRttHere() {
     checkOnDispatcher()

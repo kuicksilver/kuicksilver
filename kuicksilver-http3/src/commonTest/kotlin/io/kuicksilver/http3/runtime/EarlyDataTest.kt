@@ -253,6 +253,8 @@ class EarlyDataTest {
         clientHold: AtomicInt? = null,
         /** Sees the resuming client's HTTP/3 session before it starts. */
         clientSession: ((H3Session) -> Unit)? = null,
+        /** The transport the resuming client's HTTP/3 session runs on, made from its QUIC connection. */
+        clientTransport: ((io.kuicksilver.quic.QuicConnection) -> io.kuicksilver.quic.QuicConnection)? = null,
         /** false: the test ends the connection in [beforeRequest]; no request follows and the result is null. */
         sendRequest: Boolean = true,
         /** The resuming server's QUIC settings (its transport parameters). */
@@ -351,9 +353,11 @@ class EarlyDataTest {
             }
             val c =
                 try {
+                    if (clientTransport != null) Http3Endpoint.earlyTransportForTest = clientTransport
                     client.connectEarly(second.localAddress, H3Fixtures.client(), settings = clientSettings)
                 } finally {
                     H3Session.createdForTest = null
+                    Http3Endpoint.earlyTransportForTest = null
                 }
             beforeRequest?.invoke(c) { holding.store(0) }
             holding.store(0)
@@ -598,6 +602,82 @@ class EarlyDataTest {
                     }
                 assertEquals(false, accepted)
                 assertEquals(4, seen.load(), "the early request once, after the rejection, and three more")
+            }
+        }
+
+    /**
+     * CI run 45756922960 (macOS arm64, 3 CPUs): the transport handed the server's control stream over before it reported the
+     * rejection of the 0-RTT (it reads the server's 1-RTT packets once it has their key, a step before the handshake's end
+     * settles the 0-RTT, and reports the rejection on its own thread), so the client read the server's SETTINGS before it
+     * noted the rejection. The encoder's Set Dynamic Table Capacity went to the encoder stream the rejection had dropped,
+     * its inserts to the new one, and the server's decoder, its table of capacity 0, closed the connection with
+     * QPACK_ENCODER_STREAM_ERROR (RFC 9204 section 3.2.3: the table's capacity is 0 until the encoder sets it). Here the
+     * transport reports the answer only once the session, on its dispatcher, asks for the handshake's end after it took the
+     * server's first stream: the session must not read that stream before. Red before: QPACK_ENCODER_STREAM_ERROR.
+     */
+    @Test fun aServerStreamTakenBeforeTheRejectionIsReportedWaitsForIt(): Unit =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val dynamic = http3Settings { enableQpackDynamicTable() }
+                val headers = Http3Headers.of("x-session-detail" to "a value worth putting into the dynamic table")
+                val made = kotlin.concurrent.atomics.AtomicReference<LateZeroRttAnswer?>(null)
+                val accepted =
+                    earlyAcceptedAfterResuming(
+                        issuer = http3Settings { enableQpackDynamicTable() },
+                        resumer =
+                            http3Settings {
+                                enableQpackDynamicTable()
+                                h3Datagram = false
+                            },
+                        earlyRequest = true,
+                        clientSettings = dynamic,
+                        responseHeaders = headers,
+                        clientTransport = { q -> LateZeroRttAnswer(q).also { made.store(it) } },
+                        clientSession = { session -> made.load()!!.session = session },
+                    ) { c, resumed ->
+                        val s = resumed().single()
+                        repeat(2) {
+                            val r = c.request(http3Request("GET", "server.test", "/again"))
+                            assertEquals(204, r.status)
+                            assertEquals("a value worth putting into the dynamic table", r.headers["x-session-detail"])
+                        }
+                        s.session.criticalStreamsSeen.first { it == 3 }
+                        withContext(s.session.dispatcher) {
+                            assertEquals(4096L, s.session.qpack.decoderTableForTest().second, "the client's Set Dynamic Table Capacity")
+                        }
+                        assertTrue(!s.session.closed.isCompleted && !c.session.closed.isCompleted, "the connection lives")
+                    }
+                assertEquals(false, accepted)
+                assertTrue(made.load()!!.tookEarly.load(), "the server's first stream was handed over before the answer was reported")
+            }
+        }
+
+    /**
+     * The wait for the 0-RTT's answer before a server stream is read ends with the connection: a client that closes while
+     * the answer is still unreported ends, and the stream it took is never read (no critical stream of the server seen).
+     */
+    @Test fun negative_aServerStreamWaitingForTheAnswerEndsWithTheConnection(): Unit =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val made = kotlin.concurrent.atomics.AtomicReference<LateZeroRttAnswer?>(null)
+                val answer =
+                    earlyAcceptedAfterResuming(
+                        issuer = http3Settings {},
+                        resumer = http3Settings { h3Datagram = false },
+                        clientTransport = { q -> LateZeroRttAnswer(q, report = false).also { made.store(it) } },
+                        clientSession = { session -> made.load()!!.session = session },
+                        sendRequest = false,
+                        beforeRequest = { c, release ->
+                            // our critical streams went out in 0-RTT while the server's flight was held back; now it comes
+                            release()
+                            val t = made.load()!!
+                            while (!t.tookEarly.load()) kotlinx.coroutines.yield()
+                            c.close()
+                            withTimeout(10.seconds) { c.closed.await() }
+                            assertEquals(0, c.session.criticalStreamsSeen.value, "a server stream was read before the answer")
+                        },
+                    )
+                assertNull(answer)
             }
         }
 
@@ -1646,4 +1726,56 @@ class EarlyDataTest {
                 assertTrue(asked != null)
             }
         }
+}
+
+/**
+ * A client transport that hands the server's first stream over before it reports the server's answer to the 0-RTT, as the
+ * runtime may (its events are drained on the transport's loop while the HTTP/3 session reads on its own dispatcher). The
+ * real transport has the answer by then; this view reports it (the answer and the handshake's end) only once the session
+ * asks for the handshake's end on its dispatcher after it took that stream, or once its encoder took the server's
+ * SETTINGS, whichever comes first: a session that reads the stream at once gets there before the report.
+ */
+@OptIn(ExperimentalKuicksilverApi::class, ExperimentalAtomicApi::class)
+private class LateZeroRttAnswer(
+    private val real: io.kuicksilver.quic.QuicConnection,
+    /** false: the answer is never reported (the connection must end first). */
+    private val report: Boolean = true,
+) : io.kuicksilver.quic.QuicConnection by real {
+    @kotlin.concurrent.Volatile var session: H3Session? = null
+    private val reported = kotlinx.coroutines.CompletableDeferred<Unit>()
+
+    /** The server's first stream was handed over, with the real answer in and this one not reported yet. */
+    val tookEarly = kotlin.concurrent.atomics.AtomicBoolean(false)
+
+    override val earlyDataAccepted: Boolean? get() = if (reported.isCompleted) real.earlyDataAccepted else null
+    override val isHandshakeComplete: Boolean get() = reported.isCompleted && real.isHandshakeComplete
+
+    override suspend fun awaitHandshake() {
+        real.awaitHandshake()
+        val here = kotlinx.coroutines.currentCoroutineContext()[kotlin.coroutines.ContinuationInterceptor]
+        if (report && tookEarly.load() && here != null && here === session?.dispatcher) reported.complete(Unit)
+        kotlinx.coroutines.selects.select {
+            reported.onAwait { }
+            real.closed.onAwait { throw it } // the connection ended first: as the real transport, the wait fails
+        }
+    }
+
+    override suspend fun acceptStream(): io.kuicksilver.quic.QuicStream {
+        val st = real.acceptStream()
+        if (!reported.isCompleted && !tookEarly.load()) {
+            real.awaitHandshake() // the real transport has the answer: only this view holds it back
+            tookEarly.store(true)
+            val s = session!!
+            if (report) {
+                // the report a moment later, on the session's dispatcher: once the encoder has the server's SETTINGS
+                s.scope.launch {
+                    while (!reported.isCompleted && s.qpack.encoderTableForTest().second == 0L && !s.closed.isCompleted) {
+                        kotlinx.coroutines.yield()
+                    }
+                    reported.complete(Unit)
+                }
+            }
+        }
+        return st
+    }
 }
