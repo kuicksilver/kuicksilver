@@ -137,7 +137,7 @@ class Http3ServerTest {
      * forward UDP.
      */
     @Test fun proxyProtocolNamesTheClient() =
-        start("kuicksilver.proxyProtocol.trustedSources=127.0.0.1/32", "kuicksilver.altSvc=false").use { s ->
+        start("kuicksilver.connector.proxyProtocol.trustedSources=127.0.0.1/32", "kuicksilver.http3.altSvc=false").use { s ->
             val raw = Socket()
             raw.connect(InetSocketAddress("127.0.0.1", s.port), 10_000)
             raw.soTimeout = 10_000
@@ -155,7 +155,7 @@ class Http3ServerTest {
 
     /** With the PROXY protocol on, a TCP client that sends no header is refused: nobody chooses their own address. */
     @Test fun negative_proxyProtocolRefusesAClientWithoutHeader() =
-        start("kuicksilver.proxyProtocol.trustedSources=127.0.0.1/32", "kuicksilver.altSvc=false").use { s ->
+        start("kuicksilver.connector.proxyProtocol.trustedSources=127.0.0.1/32", "kuicksilver.http3.altSvc=false").use { s ->
             runBlocking {
                 client(null).use { c ->
                     // reset at accept, before TLS: the client's read fails with "Connection reset" (closed, on some systems)

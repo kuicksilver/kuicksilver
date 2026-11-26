@@ -63,7 +63,7 @@ class EngineMainTest {
                         "-P:ktor.application.modules.0=$module",
                         "-P:kuicksilver.tls.certificateChain=${chain.path}",
                         "-P:kuicksilver.tls.privateKey=${key.path}",
-                        "-P:kuicksilver.altSvc=false",
+                        "-P:kuicksilver.http3.altSvc=false",
                     ),
                 )
             server.startSuspend(false)
@@ -178,8 +178,8 @@ class EngineMainTest {
             return server.engine.configuration.http2.enabled
         }
         assertEquals(false, http2())
-        assertEquals(true, http2("-P:kuicksilver.http2=true"))
-        assertFailsWith<IllegalArgumentException> { http2("-P:kuicksilver.http2=yes") }
+        assertEquals(true, http2("-P:kuicksilver.http2.enabled=true"))
+        assertFailsWith<IllegalArgumentException> { http2("-P:kuicksilver.http2.enabled=yes") }
     }
 
     /**
@@ -195,11 +195,11 @@ class EngineMainTest {
                 return server.engine.configuration.deploymentH2c
             }
             assertEquals(H2cMode.Off, mode())
-            assertEquals(H2cMode.WithHttp11, mode("-P:kuicksilver.h2c=withHttp11"))
-            assertEquals(H2cMode.Only, mode("-P:kuicksilver.h2c=only"))
-            assertEquals(H2cMode.Off, mode("-P:kuicksilver.h2c=off"))
-            assertFailsWith<IllegalArgumentException> { mode("-P:kuicksilver.h2c=yes") }
-            assertFailsWith<IllegalArgumentException> { EngineMain.createServer(clientCaArgs("-P:kuicksilver.h2c=only")).engine }
+            assertEquals(H2cMode.WithHttp11, mode("-P:kuicksilver.connector.h2c=withHttp11"))
+            assertEquals(H2cMode.Only, mode("-P:kuicksilver.connector.h2c=only"))
+            assertEquals(H2cMode.Off, mode("-P:kuicksilver.connector.h2c=off"))
+            assertFailsWith<IllegalArgumentException> { mode("-P:kuicksilver.connector.h2c=yes") }
+            assertFailsWith<IllegalArgumentException> { EngineMain.createServer(clientCaArgs("-P:kuicksilver.connector.h2c=only")).engine }
             // the deployment port serves h2c and HTTP/1.1
             val server =
                 EngineMain.createServer(
@@ -208,8 +208,8 @@ class EngineMainTest {
                         "-port=0",
                         "-P:ktor.application.modules.size=1",
                         "-P:ktor.application.modules.0=$module",
-                        "-P:kuicksilver.http3=false",
-                        "-P:kuicksilver.h2c=withHttp11",
+                        "-P:kuicksilver.http3.enabled=false",
+                        "-P:kuicksilver.connector.h2c=withHttp11",
                     ),
                 )
             server.startSuspend(false)
@@ -240,8 +240,8 @@ class EngineMainTest {
             return server.engine.configuration.webSockets.overHttp2
         }
         assertEquals(true, enabled())
-        assertEquals(false, enabled("-P:kuicksilver.webSocketsOverHttp2=false"))
-        assertFailsWith<IllegalArgumentException> { enabled("-P:kuicksilver.webSocketsOverHttp2=no") }
+        assertEquals(false, enabled("-P:kuicksilver.webSockets.overHttp2=false"))
+        assertFailsWith<IllegalArgumentException> { enabled("-P:kuicksilver.webSockets.overHttp2=no") }
     }
 
     /** `kuicksilver.h1AllowBareLf` lets a bare LF end an HTTP/1.1 head line (RFC 9112 section 2.2 MAY); off by default. */
@@ -252,8 +252,8 @@ class EngineMainTest {
             return server.engine.configuration.http1.allowBareLf
         }
         assertEquals(false, allowed())
-        assertEquals(true, allowed("-P:kuicksilver.h1AllowBareLf=true"))
-        assertFailsWith<IllegalArgumentException> { allowed("-P:kuicksilver.h1AllowBareLf=yes") }
+        assertEquals(true, allowed("-P:kuicksilver.http1.allowBareLf=true"))
+        assertFailsWith<IllegalArgumentException> { allowed("-P:kuicksilver.http1.allowBareLf=yes") }
     }
 
     /** `kuicksilver.http2RepeatOffenderPenalty` turns the backoff by address on; off by default (threat model 3.23). */
@@ -264,10 +264,10 @@ class EngineMainTest {
             return (server.engine.configuration.http2.repeatOffenderPenalty ?: Duration.ZERO) to (server.engine.h2Offenders != null)
         }
         assertEquals(Duration.ZERO to false, penalty(), "off by default")
-        assertEquals(30.seconds to true, penalty("-P:kuicksilver.http2RepeatOffenderPenalty=30s"))
-        assertEquals(Duration.ZERO to false, penalty("-P:kuicksilver.http2RepeatOffenderPenalty=0"))
-        assertFailsWith<IllegalArgumentException> { penalty("-P:kuicksilver.http2RepeatOffenderPenalty=-1s") }
-        assertFailsWith<IllegalArgumentException> { penalty("-P:kuicksilver.http2RepeatOffenderPenalty=soon") }
+        assertEquals(30.seconds to true, penalty("-P:kuicksilver.http2.repeatOffenderPenalty=30s"))
+        assertEquals(Duration.ZERO to false, penalty("-P:kuicksilver.http2.repeatOffenderPenalty=off"))
+        assertFailsWith<IllegalArgumentException> { penalty("-P:kuicksilver.http2.repeatOffenderPenalty=-1s") }
+        assertFailsWith<IllegalArgumentException> { penalty("-P:kuicksilver.http2.repeatOffenderPenalty=soon") }
     }
 
     /** `kuicksilver.maxTcpConnections` and `kuicksilver.maxTcpConnectionsPerIp` (`0` is off) set the TCP connection limits. */
@@ -278,11 +278,11 @@ class EngineMainTest {
             return c.tcp.maxConnections to c.tcp.maxConnectionsPerIp
         }
         assertEquals(10_000 to null, limits(), "the defaults: the per-IP limit is off")
-        assertEquals(500 to 16, limits("-P:kuicksilver.maxTcpConnections=500", "-P:kuicksilver.maxTcpConnectionsPerIp=16"))
-        assertEquals(10_000 to null, limits("-P:kuicksilver.maxTcpConnectionsPerIp=0"))
-        assertFailsWith<IllegalArgumentException> { limits("-P:kuicksilver.maxTcpConnections=0") }
-        assertFailsWith<IllegalArgumentException> { limits("-P:kuicksilver.maxTcpConnections=many") }
-        assertFailsWith<IllegalArgumentException> { limits("-P:kuicksilver.maxTcpConnectionsPerIp=-1") }
+        assertEquals(500 to 16, limits("-P:kuicksilver.tcp.maxConnections=500", "-P:kuicksilver.tcp.maxConnectionsPerIp=16"))
+        assertEquals(10_000 to null, limits("-P:kuicksilver.tcp.maxConnectionsPerIp=off"))
+        assertFailsWith<IllegalArgumentException> { limits("-P:kuicksilver.tcp.maxConnections=0") }
+        assertFailsWith<IllegalArgumentException> { limits("-P:kuicksilver.tcp.maxConnections=many") }
+        assertFailsWith<IllegalArgumentException> { limits("-P:kuicksilver.tcp.maxConnectionsPerIp=-1") }
     }
 
     /**
@@ -299,16 +299,16 @@ class EngineMainTest {
         assertEquals(
             Triple(500, 4096, 512),
             limits(
-                "-P:kuicksilver.quicMaxConnections=500",
-                "-P:kuicksilver.quicMaxConnectionsPerIp=4096",
-                "-P:kuicksilver.quicAcceptQueue=512",
+                "-P:kuicksilver.http3.endpoint.maxConnections=500",
+                "-P:kuicksilver.http3.endpoint.maxConnectionsPerIp=4096",
+                "-P:kuicksilver.http3.endpoint.acceptQueue=512",
             ),
         )
-        assertEquals(Triple(10_000, null, 128), limits("-P:kuicksilver.quicMaxConnectionsPerIp=0"))
-        assertFailsWith<IllegalArgumentException> { limits("-P:kuicksilver.quicMaxConnections=0") }
-        assertFailsWith<IllegalArgumentException> { limits("-P:kuicksilver.quicAcceptQueue=0") }
-        assertFailsWith<IllegalArgumentException> { limits("-P:kuicksilver.quicAcceptQueue=many") }
-        assertFailsWith<IllegalArgumentException> { limits("-P:kuicksilver.quicMaxConnectionsPerIp=-1") }
+        assertEquals(Triple(10_000, null, 128), limits("-P:kuicksilver.http3.endpoint.maxConnectionsPerIp=off"))
+        assertFailsWith<IllegalArgumentException> { limits("-P:kuicksilver.http3.endpoint.maxConnections=0") }
+        assertFailsWith<IllegalArgumentException> { limits("-P:kuicksilver.http3.endpoint.acceptQueue=0") }
+        assertFailsWith<IllegalArgumentException> { limits("-P:kuicksilver.http3.endpoint.acceptQueue=many") }
+        assertFailsWith<IllegalArgumentException> { limits("-P:kuicksilver.http3.endpoint.maxConnectionsPerIp=-1") }
     }
 
     /** `kuicksilver.quic.*`: the QUIC transport of the HTTP/3 listeners, each key the `QuicConfig` option of its name. */
@@ -321,15 +321,15 @@ class EngineMainTest {
         assertEquals(QuicConfig.Default.maxIdleTimeout, none.resolveQuic().maxIdleTimeout, "no key: the default")
         val cfg =
             quic(
-                "-P:kuicksilver.quic.initialUdpPayloadSize=1350",
-                "-P:kuicksilver.quic.maxSendUdpPayloadSize=1380",
-                "-P:kuicksilver.quic.maxUdpPayloadSize=1400",
-                "-P:kuicksilver.quic.pmtud=false",
-                "-P:kuicksilver.quic.maxIdleTimeout=1m",
-                "-P:kuicksilver.quic.handshakeTimeout=5s",
-                "-P:kuicksilver.quic.keepAlive=15s",
-                "-P:kuicksilver.quic.maxBidiStreams=500",
-                "-P:kuicksilver.quic.allowMigration=false",
+                "-P:kuicksilver.http3.quic.pathMtu.initial=1350",
+                "-P:kuicksilver.http3.quic.pathMtu.maxSend=1380",
+                "-P:kuicksilver.http3.quic.pathMtu.maxReceive=1400",
+                "-P:kuicksilver.http3.quic.pathMtu.discovery=false",
+                "-P:kuicksilver.http3.quic.maxIdleTimeout=1m",
+                "-P:kuicksilver.http3.quic.handshakeTimeout=5s",
+                "-P:kuicksilver.http3.quic.keepAlive=15s",
+                "-P:kuicksilver.http3.quic.maxBidiStreams=500",
+                "-P:kuicksilver.http3.quic.migration.allow=false",
             )
         val c = cfg.resolveQuic()
         assertEquals(1350, c.initialUdpPayloadSize)
@@ -345,10 +345,10 @@ class EngineMainTest {
         // the other options keep their defaults
         assertEquals(QuicConfig.Default.initialStreamWindow, c.initialStreamWindow)
         assertEquals(QuicConfig.Default.versions, c.versions)
-        val off = quic("-P:kuicksilver.quic.maxIdleTimeout=0", "-P:kuicksilver.quic.keepAlive=0").resolveQuic()
+        val off = quic("-P:kuicksilver.http3.quic.maxIdleTimeout=off", "-P:kuicksilver.http3.quic.keepAlive=off").resolveQuic()
         assertEquals(Duration.ZERO, off.maxIdleTimeout, "0: no idle timeout of our own")
         assertNull(off.keepAlive, "0: no keep-alive")
-        assertEquals(1452, quic("-P:kuicksilver.quic.initialUdpPayloadSize=1452").resolveQuic().initialUdpPayloadSize)
+        assertEquals(1452, quic("-P:kuicksilver.http3.quic.pathMtu.initial=1452").resolveQuic().initialUdpPayloadSize)
     }
 
     @Test
@@ -359,66 +359,79 @@ class EngineMainTest {
             }.message!!
         // RFC 9000 section 14: below 1200 is no QUIC datagram size
         assertEquals(
-            "kuicksilver.quic: pathMtu { initial } must be 1200..65527",
-            refused("-P:kuicksilver.quic.initialUdpPayloadSize=1199"),
+            "kuicksilver.http3.quic: pathMtu { initial } must be 1200..65527",
+            refused("-P:kuicksilver.http3.quic.pathMtu.initial=1199"),
         )
         assertEquals(
-            "kuicksilver.quic: pathMtu { maxSend } must be 1200..65527",
-            refused("-P:kuicksilver.quic.maxSendUdpPayloadSize=1000"),
+            "kuicksilver.http3.quic: pathMtu { maxSend } must be 1200..65527",
+            refused("-P:kuicksilver.http3.quic.pathMtu.maxSend=1000"),
         )
         assertEquals(
-            "kuicksilver.quic.maxUdpPayloadSize must be at most 1500 (the endpoint's datagram slots), not 70000",
-            refused("-P:kuicksilver.quic.maxUdpPayloadSize=70000"),
+            "kuicksilver.http3.quic.pathMtu.maxReceive: must be at most 1500 (the endpoint's datagram slots), not 70000",
+            refused("-P:kuicksilver.http3.quic.pathMtu.maxReceive=70000"),
         )
         // what QuicConfig takes but the HTTP/3 listener's endpoint would refuse only at bind, once the server starts
         assertEquals(
-            "kuicksilver.quic.maxUdpPayloadSize must be at most 1500 (the endpoint's datagram slots), not 1501",
-            refused("-P:kuicksilver.quic.maxUdpPayloadSize=1501"),
+            "kuicksilver.http3.quic.pathMtu.maxReceive: must be at most 1500 (the endpoint's datagram slots), not 1501",
+            refused("-P:kuicksilver.http3.quic.pathMtu.maxReceive=1501"),
         )
-        assertEquals("kuicksilver.quic: pathMtu { maxReceive } must be 1200..65527", refused("-P:kuicksilver.quic.maxUdpPayloadSize=1199"))
+        assertEquals(
+            "kuicksilver.http3.quic: pathMtu { maxReceive } must be 1200..65527",
+            refused("-P:kuicksilver.http3.quic.pathMtu.maxReceive=1199"),
+        )
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
         assertEquals(
             1500,
             EngineMain
-                .createServer(arrayOf("-host=127.0.0.1", "-port=0", "-P:kuicksilver.quic.maxUdpPayloadSize=1500"))
+                .createServer(arrayOf("-host=127.0.0.1", "-port=0", "-P:kuicksilver.http3.quic.pathMtu.maxReceive=1500"))
                 .engine.configuration
                 .resolveQuic()
                 .maxUdpPayloadSize,
         )
         assertEquals(
-            "kuicksilver.quic.initialUdpPayloadSize: \"1350b\" is not a whole number",
-            refused("-P:kuicksilver.quic.initialUdpPayloadSize=1350b"),
-        )
-        assertEquals("kuicksilver.quic.pmtud: \"maybe\" is not true or false", refused("-P:kuicksilver.quic.pmtud=maybe"))
-        assertEquals("kuicksilver.quic.allowMigration: \"yes\" is not true or false", refused("-P:kuicksilver.quic.allowMigration=yes"))
-        assertEquals(
-            "kuicksilver.quic.maxIdleTimeout: \"soon\" is not a duration (30s, 1m)",
-            refused("-P:kuicksilver.quic.maxIdleTimeout=soon"),
-        )
-        assertTrue(refused("-P:kuicksilver.quic.handshakeTimeout=0").startsWith("kuicksilver.quic: handshakeTimeout must be positive"))
-        assertTrue(refused("-P:kuicksilver.quic.maxIdleTimeout=-1s").startsWith("kuicksilver.quic: maxIdleTimeout"))
-        assertEquals(
-            "kuicksilver.quic: keepAlive must be at most 3/4 of maxIdleTimeout",
-            refused("-P:kuicksilver.quic.maxIdleTimeout=10s", "-P:kuicksilver.quic.keepAlive=9s"),
+            "kuicksilver.http3.quic.pathMtu.initial: \"1350b\" is not a whole number",
+            refused("-P:kuicksilver.http3.quic.pathMtu.initial=1350b"),
         )
         assertEquals(
-            "kuicksilver.quic: maxBidiStreams and expert { maxUniStreams } must be 0..2^60",
-            refused("-P:kuicksilver.quic.maxBidiStreams=-1"),
+            "kuicksilver.http3.quic.pathMtu.discovery: \"maybe\" is not true or false",
+            refused("-P:kuicksilver.http3.quic.pathMtu.discovery=maybe"),
         )
         assertEquals(
-            "kuicksilver.quic.maxUniStreams is derived by the engine (RFC 9114 section 6.2); remove it",
+            "kuicksilver.http3.quic.migration.allow: \"yes\" is not true or false",
+            refused("-P:kuicksilver.http3.quic.migration.allow=yes"),
+        )
+        assertEquals(
+            "kuicksilver.http3.quic.maxIdleTimeout: \"soon\" is not a duration (30s, 1h), or off",
+            refused("-P:kuicksilver.http3.quic.maxIdleTimeout=soon"),
+        )
+        assertTrue(
+            refused(
+                "-P:kuicksilver.http3.quic.handshakeTimeout=0s",
+            ).startsWith("kuicksilver.http3.quic: handshakeTimeout must be positive"),
+        )
+        assertTrue(refused("-P:kuicksilver.http3.quic.maxIdleTimeout=-1s").startsWith("kuicksilver.http3.quic: maxIdleTimeout"))
+        assertEquals(
+            "kuicksilver.http3.quic: keepAlive must be at most 3/4 of maxIdleTimeout",
+            refused("-P:kuicksilver.http3.quic.maxIdleTimeout=10s", "-P:kuicksilver.http3.quic.keepAlive=9s"),
+        )
+        assertEquals(
+            "kuicksilver.http3.quic: maxBidiStreams and expert { maxUniStreams } must be 0..2^60",
+            refused("-P:kuicksilver.http3.quic.maxBidiStreams=-1"),
+        )
+        assertEquals(
+            "kuicksilver.quic.maxUniStreams is derived by the engine (RFC 9114 section 6.2: HTTP/3 needs at least 3, the engine keeps the default); remove it",
             refused("-P:kuicksilver.quic.maxUniStreams=many"),
         )
         // a misspelt key does not leave the default in place silently
         val typo = refused("-P:kuicksilver.quic.initialPacketSize=1350")
         assertTrue(
-            typo.startsWith("kuicksilver.quic.initialPacketSize is not a QUIC key; the keys are kuicksilver.quic.initialUdpPayloadSize"),
+            typo.startsWith("kuicksilver.quic.initialPacketSize is not a Kuicksilver key"),
             typo,
         )
     }
 
     /**
-     * The `kuicksilver.quic` block of docs/guide/quic.md ("Tunnels and NAT paths (WireGuard)"), loaded as it stands with `-config`, so
+     * The `kuicksilver.http3.quic` block of docs/guide/quic.md ("Tunnels and NAT paths (WireGuard)"), loaded as it stands with `-config`, so
      * a key the guide shows and the engine does not read (or reads otherwise) fails here.
      */
     @Test
@@ -430,7 +443,7 @@ class EngineMainTest {
                 .first { it.exists() }
                 .readText()
         val block = guide.substringAfter("### Tunnels and NAT paths (WireGuard)").substringAfter("```hocon\n").substringBefore("```")
-        assertTrue(block.contains("kuicksilver {") && block.contains("quic {"), block)
+        assertTrue(block.contains("kuicksilver.http3 {") && block.contains("quic {"), block)
         val file = File(dir, "quic.conf").apply { writeText("ktor.deployment.port = 0\nktor.deployment.host = \"127.0.0.1\"\n$block") }
         val c =
             EngineMain
@@ -445,14 +458,21 @@ class EngineMainTest {
     }
 
     @Test fun reloadIntervalKeyParsed() {
-        assertEquals(30.seconds, EngineMain.parseReloadInterval("30s"))
-        assertEquals(1.hours, EngineMain.parseReloadInterval("1h"))
-        assertEquals(1.hours, EngineMain.parseReloadInterval("PT1H"))
-        assertNull(EngineMain.parseReloadInterval("0"), "0 turns polling off")
-        assertNull(EngineMain.parseReloadInterval(null))
-        assertFailsWith<IllegalArgumentException> { EngineMain.parseReloadInterval("soon") }
-        assertFailsWith<IllegalArgumentException>("busy polling is refused") { EngineMain.parseReloadInterval("500ms") }
-        assertFailsWith<IllegalArgumentException> { EngineMain.parseReloadInterval("-1h") }
+        fun interval(value: String) =
+            EngineMain
+                .createServer(clientCaArgs("-P:kuicksilver.tls.reloadInterval=$value"))
+                .engine.configuration.tls.reloadInterval
+        assertEquals(30.seconds, interval("30s"))
+        assertEquals(1.hours, interval("1h"))
+        assertEquals(1.hours, interval("PT1H"))
+        assertNull(interval("off"), "off turns polling off")
+        assertEquals(
+            "kuicksilver.tls.reloadInterval: use off instead of 0",
+            assertFailsWith<IllegalArgumentException> { interval("0") }.message,
+        )
+        assertFailsWith<IllegalArgumentException> { interval("soon") }
+        assertFailsWith<IllegalArgumentException>("busy polling is refused") { interval("500ms") }
+        assertFailsWith<IllegalArgumentException> { interval("-1h") }
     }
 
     @Test fun negative_reloadIntervalWithoutPemFilesRefused() {
@@ -589,7 +609,7 @@ class EngineMainTest {
             "-P:ktor.application.modules.0=$module",
             "-P:kuicksilver.tls.certificateChain=${chain.path}",
             "-P:kuicksilver.tls.privateKey=${key.path}",
-            "-P:kuicksilver.altSvc=false",
+            "-P:kuicksilver.http3.altSvc=false",
         ) + extra
     }
 
@@ -614,7 +634,10 @@ class EngineMainTest {
      */
     @Test fun trustedGatewayKeyTakesOtherHosts() =
         serverTest {
-            for ((args, want) in listOf(clientCaArgs() to "421", clientCaArgs("-P:kuicksilver.tls.trustedGateway=true") to "200")) {
+            for ((args, want) in listOf(
+                clientCaArgs() to "421",
+                clientCaArgs("-P:kuicksilver.connector.allowMisdirectedHosts=true") to "200",
+            )) {
                 val server = EngineMain.createServer(args)
                 server.startSuspend(false)
                 try {
@@ -631,7 +654,10 @@ class EngineMainTest {
             }
             // without the identity files the deployment port is cleartext, behind a TLS-terminating proxy: an absolute-form https
             // target gets 421 unless the key says the proxy is a trusted gateway
-            for ((extra, want) in listOf(emptyArray<String>() to "421", arrayOf("-P:kuicksilver.tls.trustedGateway=true") to "200")) {
+            for ((extra, want) in listOf(
+                emptyArray<String>() to "421",
+                arrayOf("-P:kuicksilver.connector.allowMisdirectedHosts=true") to "200",
+            )) {
                 val server =
                     EngineMain.createServer(
                         arrayOf(
@@ -639,7 +665,7 @@ class EngineMainTest {
                             "-port=0",
                             "-P:ktor.application.modules.size=1",
                             "-P:ktor.application.modules.0=$module",
-                            "-P:kuicksilver.http3=false",
+                            "-P:kuicksilver.http3.enabled=false",
                         ) + extra,
                     )
                 server.startSuspend(false)
@@ -663,7 +689,7 @@ class EngineMainTest {
             assertFailsWith<IllegalArgumentException> {
                 EngineMain
                     .createServer(
-                        clientCaArgs("-P:kuicksilver.tls.trustedGateway=yes"),
+                        clientCaArgs("-P:kuicksilver.connector.allowMisdirectedHosts=yes"),
                     ).engine
             }
         }
@@ -740,7 +766,7 @@ class EngineMainTest {
                         "-sslKeyStore=${ksFile.path}",
                         "-P:ktor.security.ssl.keyStorePassword=pw",
                         "-P:ktor.security.ssl.privateKeyPassword=pw",
-                        "-P:kuicksilver.tls.trustedGateway=true",
+                        "-P:kuicksilver.connector.allowMisdirectedHosts=true",
                     ),
                 )
             val e = assertFailsWith<io.kuicksilver.tls.TlsException.Config> { server.startSuspend(false) }
@@ -774,8 +800,8 @@ class EngineMainTest {
                         "-P:ktor.security.ssl.privateKeyPassword=pw",
                         "-P:ktor.application.modules.size=1",
                         "-P:ktor.application.modules.0=$module",
-                        "-P:kuicksilver.http3=false",
-                        "-P:kuicksilver.tls.trustedGateway=true",
+                        "-P:kuicksilver.http3.enabled=false",
+                        "-P:kuicksilver.connector.allowMisdirectedHosts=true",
                     ),
                 )
             server.startSuspend(false)
@@ -811,11 +837,11 @@ class EngineMainTest {
             val server =
                 EngineMain.createServer(
                     args(
-                        "-P:kuicksilver.proxyProtocol.trustedSources.size=2",
-                        "-P:kuicksilver.proxyProtocol.trustedSources.0=127.0.0.1",
-                        "-P:kuicksilver.proxyProtocol.trustedSources.1=::1",
-                        "-P:kuicksilver.proxyProtocol.headerTimeout=4s",
-                        "-P:kuicksilver.proxyProtocol.maxHeaderSize=512",
+                        "-P:kuicksilver.connector.proxyProtocol.trustedSources.size=2",
+                        "-P:kuicksilver.connector.proxyProtocol.trustedSources.0=127.0.0.1",
+                        "-P:kuicksilver.connector.proxyProtocol.trustedSources.1=::1",
+                        "-P:kuicksilver.connector.proxyProtocol.headerTimeout=4s",
+                        "-P:kuicksilver.connector.proxyProtocol.maxHeaderSize=512",
                     ),
                 )
 
@@ -839,7 +865,7 @@ class EngineMainTest {
                 server.stop(100, 500)
             }
             // one comma-separated string works too
-            val listed = EngineMain.createServer(args("-P:kuicksilver.proxyProtocol.trustedSources=10.0.0.0/8, 192.0.2.7"))
+            val listed = EngineMain.createServer(args("-P:kuicksilver.connector.proxyProtocol.trustedSources=10.0.0.0/8, 192.0.2.7"))
             @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
             assertEquals(
                 listOf("10.0.0.0/8", "192.0.2.7"),
@@ -848,12 +874,21 @@ class EngineMainTest {
             )
             listed.stop(0, 0)
             for (bad in listOf(
-                arrayOf("-P:kuicksilver.proxyProtocol.trustedSources=10.0.0.1/8"),
-                arrayOf("-P:kuicksilver.proxyProtocol.headerTimeout=2s"),
-                arrayOf("-P:kuicksilver.proxyProtocol.trustedSources=10.0.0.0/8", "-P:kuicksilver.proxyProtocol.maxHeaderSize=many"),
-                arrayOf("-P:kuicksilver.proxyProtocol.trustedSources=10.0.0.0/8", "-P:kuicksilver.proxyProtocol.headerTimeout=soon"),
+                arrayOf("-P:kuicksilver.connector.proxyProtocol.trustedSources=10.0.0.1/8"),
+                arrayOf("-P:kuicksilver.connector.proxyProtocol.headerTimeout=2s"),
+                arrayOf(
+                    "-P:kuicksilver.connector.proxyProtocol.trustedSources=10.0.0.0/8",
+                    "-P:kuicksilver.connector.proxyProtocol.maxHeaderSize=many",
+                ),
+                arrayOf(
+                    "-P:kuicksilver.connector.proxyProtocol.trustedSources=10.0.0.0/8",
+                    "-P:kuicksilver.connector.proxyProtocol.headerTimeout=soon",
+                ),
                 // below the spec's "at least 3 seconds to cover a TCP retransmit"
-                arrayOf("-P:kuicksilver.proxyProtocol.trustedSources=10.0.0.0/8", "-P:kuicksilver.proxyProtocol.headerTimeout=2s"),
+                arrayOf(
+                    "-P:kuicksilver.connector.proxyProtocol.trustedSources=10.0.0.0/8",
+                    "-P:kuicksilver.connector.proxyProtocol.headerTimeout=2s",
+                ),
             )) {
                 assertFailsWith<IllegalArgumentException>(bad.joinToString()) { EngineMain.createServer(args(*bad)).engine }
             }
@@ -869,7 +904,7 @@ class EngineMainTest {
                         "-port=0",
                         "-P:ktor.application.modules.size=1",
                         "-P:ktor.application.modules.0=$module",
-                        "-P:kuicksilver.proxyProtocol.trustedSources=127.0.0.1",
+                        "-P:kuicksilver.connector.proxyProtocol.trustedSources=127.0.0.1",
                     ),
                 )
             @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -904,8 +939,8 @@ class EngineMainTest {
                         "-P:ktor.security.ssl.privateKeyPassword=pw",
                         "-P:ktor.application.modules.size=1",
                         "-P:ktor.application.modules.0=$module",
-                        "-P:kuicksilver.http3=false",
-                        "-P:kuicksilver.proxyProtocol.trustedSources=127.0.0.1",
+                        "-P:kuicksilver.http3.enabled=false",
+                        "-P:kuicksilver.connector.proxyProtocol.trustedSources=127.0.0.1",
                     ),
                 )
             val e = assertFailsWith<io.kuicksilver.tls.TlsException.Config> { server.startSuspend(false) }
@@ -914,16 +949,21 @@ class EngineMainTest {
         }
 
     @Test fun tlsVersionsKeyParsed() {
-        assertNull(EngineMain.parseTlsVersions(null))
-        assertEquals(io.kuicksilver.tls.TlsVersions.Tls13, EngineMain.parseTlsVersions("tls13"))
-        assertEquals(io.kuicksilver.tls.TlsVersions.Tls12And13, EngineMain.parseTlsVersions(" tls12And13 "))
-        assertEquals(io.kuicksilver.tls.TlsVersions.Tls12And13, EngineMain.parseTlsVersions("TLS12AND13"))
-        for (bad in listOf(
-            "tls12",
-            "1.2",
-            "",
-        )) {
-            assertFailsWith<IllegalArgumentException>("negative: $bad") { EngineMain.parseTlsVersions(bad) }
+        fun versions(value: String) =
+            EngineMain
+                .createServer(clientCaArgs("-P:kuicksilver.tls.versions=$value"))
+                .engine.configuration.tls.versions
+        assertEquals(
+            io.kuicksilver.tls.TlsVersions.Tls13,
+            EngineMain
+                .createServer(clientCaArgs())
+                .engine.configuration.tls.versions,
+        )
+        assertEquals(io.kuicksilver.tls.TlsVersions.Tls13, versions("tls13"))
+        assertEquals(io.kuicksilver.tls.TlsVersions.Tls12And13, versions(" tls12And13 "))
+        assertEquals(io.kuicksilver.tls.TlsVersions.Tls12And13, versions("TLS12AND13"))
+        for (bad in listOf("tls12", "1.2", "")) {
+            assertFailsWith<IllegalArgumentException>("negative: $bad") { versions(bad) }
         }
     }
 
@@ -1181,11 +1221,17 @@ class EngineMainTest {
         }
 
     @Test fun clientAuthKeyParsed() {
-        assertEquals(ClientAuth.None, EngineMain.parseClientAuth(null))
-        assertEquals(ClientAuth.None, EngineMain.parseClientAuth("none"))
-        assertEquals(ClientAuth.Optional, EngineMain.parseClientAuth("optional"))
-        assertEquals(ClientAuth.Required, EngineMain.parseClientAuth(" required "))
-        assertFailsWith<IllegalArgumentException> { EngineMain.parseClientAuth("yes") }
+        val ca = pem("auth-ca.pem", TestCerts.toPem("CERTIFICATE", TestCerts.testCa))
+
+        fun auth(vararg extra: String) =
+            EngineMain
+                .createServer(clientCaArgs(*extra))
+                .engine.configuration.tls.clientAuth
+        assertEquals(ClientAuth.None, auth())
+        assertEquals(ClientAuth.None, auth("-P:kuicksilver.tls.clientAuth=none"))
+        assertEquals(ClientAuth.Optional, auth("-P:kuicksilver.tls.clientAuth=optional", "-P:kuicksilver.tls.clientCa=${ca.path}"))
+        assertEquals(ClientAuth.Required, auth("-P:kuicksilver.tls.clientAuth= required ", "-P:kuicksilver.tls.clientCa=${ca.path}"))
+        assertFailsWith<IllegalArgumentException> { auth("-P:kuicksilver.tls.clientAuth=yes") }
     }
 
     /** The client CA keys go together, need the identity files, and the CA file gets the watcher's checks at startup. */

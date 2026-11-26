@@ -1152,12 +1152,12 @@ kuicksilver {
         privateKey = "/etc/letsencrypt/live/example.com/privkey.pem"
         reloadInterval = 1h
     }
-    quicMaxConnectionsPerIp = 4096     # behind a NAT or kube-proxy; see deployment.md
+    http3.endpoint.maxConnectionsPerIp = 4096   # behind a NAT or kube-proxy; see deployment.md
 }
 ```
 
-[samples/http3-server](../../samples/http3-server/README.md) is such a server, with `kuicksilver.http2`,
-`kuicksilver.altSvc` and `kuicksilver.proxyProtocol.trustedSources` taken from environment variables (`${?NAME}`), and a
+[samples/http3-server](../../samples/http3-server/README.md) is such a server, with `kuicksilver.http2.enabled`,
+`kuicksilver.http3.altSvc` and `kuicksilver.connector.proxyProtocol.trustedSources` taken from environment variables (`${?NAME}`), and a
 test that starts it with its `application.conf`.
 
 The application's main class is `io.kuicksilver.ktor.server.EngineMain` (in Gradle: `application { mainClass.set("io.kuicksilver.ktor.server.EngineMain") }`),

@@ -615,11 +615,13 @@ A Ktor server started with `EngineMain` takes the same options as `application.c
 ([configuration reference](configuration.md#quic-transport-keys)); the `kuicksilver-ktor-server` tests load this block as it stands:
 
 ```hocon
-kuicksilver {
+kuicksilver.http3 {
     quic {
-        initialUdpPayloadSize = 1350
-        maxSendUdpPayloadSize = 1372
-        pmtud = true                   # false: never above initialUdpPayloadSize
+        pathMtu {
+            initial = 1350
+            maxSend = 1372
+            discovery = true           # false: never above pathMtu.initial
+        }
         maxIdleTimeout = 60s
         keepAlive = 15s                # PINGs keep a NAT's UDP mapping open while the application is quiet
     }

@@ -14,7 +14,7 @@ the repository's `gradle/verification-metadata.xml`. It is not published.
 
 One port, every protocol a client may speak:
 
-- **HTTP/3 on UDP** and **HTTP/2 and HTTP/1.1 over TLS on TCP**, with the same number (`kuicksilver.http2 = true`
+- **HTTP/3 on UDP** and **HTTP/2 and HTTP/1.1 over TLS on TCP**, with the same number (`kuicksilver.http2.enabled = true`
   offers `h2` before `http/1.1` in ALPN, so an old client still gets HTTP/1.1);
 - **Alt-Svc**: every TCP response says `Alt-Svc: h3=":8443"; ma=86400` (and an ALTSVC frame on HTTP/2), so browsers,
   curl and the Kuicksilver client move to HTTP/3 for their next requests;
@@ -28,7 +28,7 @@ The module reports which protocol carried the request and who sent it:
 | File | What it shows |
 |---|---|
 | `src/main/kotlin/.../Main.kt` | `EngineMain.main(args)` and a Ktor module that knows nothing of the protocols |
-| `src/main/resources/application.conf` | the `kuicksilver.*` keys: TLS files, `http2`, `altSvc`, `proxyProtocol.trustedSources`, each with an environment variable |
+| `src/main/resources/application.conf` | the `kuicksilver.*` keys: TLS files, `http2.enabled`, `http3.altSvc`, `connector.proxyProtocol.trustedSources`, each with an environment variable |
 | `src/test/kotlin/.../Http3ServerTest.kt` | `EngineMain` with this `application.conf`, and Kuicksilver's Ktor client against it |
 | `certs/gen.sh` | a development CA and certificate in `build/dev-certs`; `--test` regenerates `TestCerts.kt` |
 
@@ -65,8 +65,8 @@ can be added there, or passed as `-P:<key>=<value>`.
 |---|---|---|
 | `PORT` | `ktor.deployment.port` | `8443`, TCP and UDP |
 | `TLS_CHAIN`, `TLS_KEY` | `kuicksilver.tls.certificateChain`, `privateKey` | `build/dev-certs/chain.pem`, `key.pem` (an unencrypted PKCS#8 key) |
-| `ALT_SVC` | `kuicksilver.altSvc` | `true` |
-| `PROXY_TRUSTED_SOURCES` | `kuicksilver.proxyProtocol.trustedSources` | unset: no PROXY protocol |
+| `ALT_SVC` | `kuicksilver.http3.altSvc` | `true` |
+| `PROXY_TRUSTED_SOURCES` | `kuicksilver.connector.proxyProtocol.trustedSources` | unset: no PROXY protocol |
 
 ## Deploying it
 
