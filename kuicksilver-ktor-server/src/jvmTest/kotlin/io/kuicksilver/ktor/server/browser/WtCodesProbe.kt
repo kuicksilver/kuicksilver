@@ -23,6 +23,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -416,14 +417,20 @@ internal class WtCodesProbe(
         }
     }
 
-    /** Writes until the peer's STOP_SENDING (or anything else) fails the output; no fixed waits: flow control paces it. */
+    /**
+     * Writes 1 KiB every 20 ms until the peer's STOP_SENDING (or anything else) fails the output, or [CASE_WAIT] (about
+     * 150 KiB at most). The session API reports a STOP_SENDING only to a write, so the writer keeps writing; paced, because
+     * a browser that never sends one (Firefox 161 after `reader.cancel`) would otherwise get megabytes of every case it
+     * cancelled.
+     */
     private suspend fun writeUntilStopped(st: WebTransportSendStream): String {
         val chunk = ByteArray(1024) { 'x'.code.toByte() }
         return try {
             withTimeout(CASE_WAIT) {
                 while (true) {
                     st.output.writeFully(chunk)
-                    st.output.flush() // the stream's flow control paces the loop
+                    st.output.flush()
+                    delay(20)
                 }
                 @Suppress("UNREACHABLE_CODE")
                 "unreachable"

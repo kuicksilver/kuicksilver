@@ -76,6 +76,9 @@ kuicksilver-ktor-server/src/commonTest/kotlin/io/kuicksilver/ktor/server/h1/H1Pi
 kuicksilver-ktor-server/src/jvmTest/kotlin/io/kuicksilver/guide/server/GuideImportsTest.kt	2
 kuicksilver-ktor-server/src/jvmTest/kotlin/io/kuicksilver/ktor/server/GuideSamplesTest.kt	2
 kuicksilver-ktor-server/src/jvmTest/kotlin/io/kuicksilver/ktor/server/StopFirstRequestJvmTest.kt	1
+kuicksilver-ktor-server/src/jvmTest/kotlin/io/kuicksilver/ktor/server/browser/ChromeWebTransportTest.kt	4
+kuicksilver-ktor-server/src/jvmTest/kotlin/io/kuicksilver/ktor/server/browser/ManualWebTransportServer.kt	1
+kuicksilver-ktor-server/src/jvmTest/kotlin/io/kuicksilver/ktor/server/browser/WtCodesProbe.kt	4
 kuicksilver-native/src/c/test/test_udp.c	9
 kuicksilver-native/src/c/test/test_udp_win.c	2
 kuicksilver-native/src/jvmTest/kotlin/io/kuicksilver/native/KslLoaderTest.kt	1
@@ -99,6 +102,8 @@ kuicksilver-quic/src/jvmTest/kotlin/io/kuicksilver/quic/KslDatagramIoTest.kt	1
 kuicksilver-quic/src/jvmTest/kotlin/io/kuicksilver/quic/KslReceiveSlicesTest.kt	3
 kuicksilver-quic/src/jvmTest/kotlin/io/kuicksilver/quic/RealUdpMigrationTest.kt	1
 kuicksilver-quic/src/jvmTest/kotlin/io/kuicksilver/quic/UncaughtExceptionTest.kt	4
+kuicksilver-quic/src/jvmTest/kotlin/io/kuicksilver/quic/api/DatagramDrainerLatencyJvmTest.kt	4
+kuicksilver-quic/src/jvmTest/kotlin/io/kuicksilver/quic/api/DatagramFairnessJvmTest.kt	3
 kuicksilver-quic/src/nativeTest/kotlin/io/kuicksilver/quic/KtorDatagramIoTest.kt	8
 kuicksilver-tls/src/commonTest/kotlin/io/kuicksilver/tls/KslUdpSocketCloseTest.kt	1
 kuicksilver-tls/src/commonTest/kotlin/io/kuicksilver/tls/TicketKeysTest.kt	1
