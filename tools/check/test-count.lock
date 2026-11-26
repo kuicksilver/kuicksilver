@@ -3054,9 +3054,12 @@ kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketAbortT
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketAddressAfterCloseTest.addressesStayReadableAfterClose
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketTlsTest.clientServerEchoOverRealSockets
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketTlsTest.closePropagatesShutdown
+kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketTlsTest.negative_aCloseDuringTheReadAttachIsALocalClose
+kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketTlsTest.negative_aCloseDuringTheWriteAttachStaysGraceful
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketTlsTest.negative_aDeliveringReadAfterTheAbortIsALocalClose
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketTlsTest.negative_aDeliveringReadAfterTheCloseEndedIsALocalClose
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketTlsTest.negative_aDeliveringReadPendingAtTheCloseIsALocalClose
+kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketTlsTest.negative_aPeerResetTheWritePumpMeetsIsNotALocalClose
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketTlsTest.negative_aReadAfterTheAbortIsALocalClose
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketTlsTest.negative_aReadAfterTheCloseEndedIsALocalClose
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketTlsTest.negative_aReadAfterTheCloseIsALocalClose
@@ -3065,6 +3068,9 @@ kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketTlsTes
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketTlsTest.negative_aWriteAfterTheAbortIsALocalClose
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketTlsTest.negative_aWriteAfterTheCloseEndedIsALocalClose
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketTlsTest.negative_aWriteAfterTheCloseIsALocalClose
+kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketTlsTest.negative_aWritePendingAtTheAbortIsALocalClose
+kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketTlsTest.negative_anAbortDuringTheReadAttachIsALocalClose
+kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketTlsTest.negative_anAbortDuringTheWriteAttachIsALocalClose
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketTlsTest.negative_closeIsBoundedWhenThePeerStopsReading
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketTlsTest.pinnedConnectAcceptsCorrectPinAndRejectsWrongPin
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketTlsTest.secondConnectionResumesOverSockets

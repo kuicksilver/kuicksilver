@@ -39,8 +39,10 @@ import io.kuicksilver.tls.TrustConfig
 import io.kuicksilver.tls.VerifyReason
 import io.kuicksilver.tls.tlsConfig
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CompletableJob
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.Job
@@ -318,6 +320,173 @@ class SocketTlsTest {
     /** And after an abort. */
     @Test fun negative_aWriteAfterTheAbortIsALocalClose(): Unit = writeAfterLocalEnd(awaitEnd = true, aborted = true) { it.abort() }
 
+    /**
+     * A write waiting for room when the socket is aborted (the peer stopped reading) fails with the write side's
+     * LocalClose, not with the pump's cancellation. Over [MemorySocket], whose buffers are known
+     * ([negative_closeIsBoundedWhenThePeerStopsReading]): 64 MiB never fit.
+     */
+    @Test fun negative_aWritePendingAtTheAbortIsALocalClose(): Unit =
+        runBlocking {
+            val raw = MemorySocket()
+            val server = async(Dispatchers.Default) { TlsConnection.server(raw.serverIn, raw.serverOut, serverConfig()) }
+            val c = withTimeout(20.seconds) { raw.tls(clientConfig()) }
+            val s = withTimeout(20.seconds) { server.await() }
+            try {
+                val out = c.openWriteChannel(autoFlush = true)
+                val data = ByteArray(64 shl 20)
+                val write = async(start = CoroutineStart.UNDISPATCHED) { runCatching { out.writeFully(data, 0, data.size) } }
+                assertTrue(!write.isCompleted, "the write waits for room before the abort")
+                c.abort()
+                val pending = withTimeout(20.seconds) { write.await() }.exceptionOrNull()
+                // ktor's channel may take the rest of a waiting write into its buffer once it is woken: then the next write fails
+                val e =
+                    pending ?: runCatching {
+                        withTimeout(10.seconds) {
+                            out.writeFully(ByteArray(1), 0, 1)
+                            out.flush()
+                        }
+                    }.exceptionOrNull()
+                assertTrue(e != null && e !is CancellationException, "the waiting write failed with $e")
+                val end = generateSequence(e) { it.cause }.filterIsInstance<ConnectionEndedException>().firstOrNull()
+                assertIs<ConnectionEndedException.LocalClose>(end, "the waiting write failed with $e")
+                assertEquals("the TLS socket is closed: nothing more is written", end.message)
+            } finally {
+                c.abort() // also when an assertion failed before the abort: the client's session is released
+                s.close()
+            }
+        }
+
+    /**
+     * A close or an abort that comes while a read channel attaches (after the attach's checks, before its relay is
+     * published) finds no relay to end: the attach ends it itself, and the channel fails with the LocalClose, not with
+     * the relay's cancellation by the aborted socket's job.
+     */
+    @Test fun negative_aCloseDuringTheReadAttachIsALocalClose(): Unit = endDuringReadAttach(aborted = false) { it.close() }
+
+    /** The same for an abort. */
+    @Test fun negative_anAbortDuringTheReadAttachIsALocalClose(): Unit = endDuringReadAttach(aborted = true) { it.abort() }
+
+    private fun endDuringReadAttach(
+        aborted: Boolean,
+        end: (TlsSocket) -> Unit,
+    ): Unit =
+        runBlocking {
+            val srv = LoopbackServer.start { s -> runCatching { s.openReadChannel().readAvailable(ByteArray(1), 0, 1) } }
+            try {
+                val c = withTimeout(20.seconds) { srv.client() }
+                c.beforeReadAttachForTest = { end(c) }
+                val r = c.openReadChannel()
+                assertLocalClose(r)
+                withTimeout(20.seconds) { c.socketContext.join() }
+                srv.awaitHandler(aborted)
+            } finally {
+                srv.close()
+            }
+        }
+
+    /**
+     * A close that comes while a write channel attaches finds no pump to close: the attach ends it, the write fails with
+     * the write side's LocalClose, and nothing is written into the closed session: the close stays graceful, the peer
+     * reads close_notify (a clean end), not internal_error (RFC 9846 section 6.1).
+     */
+    @Test fun negative_aCloseDuringTheWriteAttachStaysGraceful(): Unit =
+        runBlocking {
+            val seen = CompletableDeferred<Pair<Int, Throwable?>>()
+            val srv =
+                LoopbackServer.start { s ->
+                    val r = s.openReadChannel()
+                    val n = runCatching { r.readAvailable(ByteArray(64), 0, 64) }
+                    seen.complete((n.getOrNull() ?: -2) to (n.exceptionOrNull() ?: r.closedCause))
+                }
+            try {
+                val c = withTimeout(20.seconds) { srv.client() }
+                c.beforeWriteAttachForTest = { c.close() }
+                val w = c.openWriteChannel(autoFlush = true)
+                // the close may find the pump published and close its channel cleanly (what was queued still goes out), or
+                // the attach ends the pump first: a ClosedWriteChannelException without a cause or the LocalClose, never a
+                // cancellation
+                val e =
+                    runCatching {
+                        withTimeout(10.seconds) {
+                            w.writeFully(ByteArray(10), 0, 10)
+                            w.flush()
+                        }
+                    }.exceptionOrNull()
+                assertTrue(e != null && e !is CancellationException, "the write failed with $e")
+                val end = generateSequence(e) { it.cause }.filterIsInstance<ConnectionEndedException>().firstOrNull()
+                assertTrue(end == null || end is ConnectionEndedException.LocalClose, "the write failed with $e")
+                val (n, cause) = withTimeout(20.seconds) { seen.await() }
+                assertEquals(-1, n, "the peer reads the clean end of a graceful close, not data or an alert ($cause)")
+                assertEquals(null, cause, "the peer's read side ended cleanly")
+                withTimeout(20.seconds) { c.socketContext.join() }
+                srv.awaitHandler(false)
+            } finally {
+                srv.close()
+            }
+        }
+
+    /** The same for an abort: the write fails with the LocalClose, not with the pump's cancellation. */
+    @Test fun negative_anAbortDuringTheWriteAttachIsALocalClose(): Unit =
+        runBlocking {
+            val srv = LoopbackServer.start { s -> runCatching { s.openReadChannel().readAvailable(ByteArray(1), 0, 1) } }
+            try {
+                val c = withTimeout(20.seconds) { srv.client() }
+                c.beforeWriteAttachForTest = { c.abort() }
+                assertWriteLocalClose(c.openWriteChannel(autoFlush = true))
+                withTimeout(20.seconds) { c.socketContext.join() }
+                srv.awaitHandler(true)
+            } finally {
+                srv.close()
+            }
+        }
+
+    /**
+     * A reset by the peer that the write pump meets first is the peer's end: neither the write nor the read reports a
+     * LocalClose (the pump's failure was taken for this side's end, and the reader got "the TLS socket is closed").
+     */
+    @Test fun negative_aPeerResetTheWritePumpMeetsIsNotALocalClose(): Unit =
+        runBlocking {
+            val srv = LoopbackServer.start { s -> s.abort() }
+            try {
+                val c = withTimeout(20.seconds) { srv.client() }
+                val r = c.openReadChannel()
+                val w = c.openWriteChannel(autoFlush = true)
+                val chunk = ByteArray(64 shl 10)
+                val wrote = runCatching { withTimeout(20.seconds) { while (true) w.writeFully(chunk, 0, chunk.size) } }.exceptionOrNull()
+                assertTrue(wrote != null && wrote !is CancellationException, "the write after the peer's reset failed with $wrote")
+                assertTrue(
+                    generateSequence(wrote) { it.cause }.none { it is ConnectionEndedException.LocalClose },
+                    "the write failed with this side's end: $wrote",
+                )
+                runCatching { withTimeout(10.seconds) { r.readAvailable(ByteArray(1), 0, 1) } }
+                withTimeout(10.seconds) { while (!r.isClosedForRead) runCatching { r.awaitContent() } }
+                assertTrue(r.closedCause != null, "a reset is not a clean end")
+                assertTrue(
+                    generateSequence(r.closedCause) { it.cause }.none { it is ConnectionEndedException.LocalClose },
+                    "the read reports this side's end for the peer's reset: ${r.closedCause}",
+                )
+                c.close()
+                srv.awaitHandler(true)
+            } finally {
+                srv.close()
+            }
+        }
+
+    /** A write on [w] fails with the write side's LocalClose, never a cancellation. */
+    private suspend fun assertWriteLocalClose(w: ByteWriteChannel) {
+        val e =
+            runCatching {
+                withTimeout(10.seconds) {
+                    w.writeFully(ByteArray(10), 0, 10)
+                    w.flush()
+                }
+            }.exceptionOrNull()
+        assertTrue(e != null && e !is CancellationException, "the write failed with $e")
+        val end = generateSequence(e) { it.cause }.filterIsInstance<ConnectionEndedException>().firstOrNull()
+        assertIs<ConnectionEndedException.LocalClose>(end, "the write failed with $e")
+        assertEquals("the TLS socket is closed: nothing more is written", end.message)
+    }
+
     private fun writeAfterLocalEnd(
         awaitEnd: Boolean,
         aborted: Boolean = false,
@@ -380,7 +549,14 @@ class SocketTlsTest {
             try {
                 val c = withTimeout(20.seconds) { srv.client() }
                 val r = if (delivering) c.openDeliveringReadChannel() else c.openReadChannel()
-                val read = async(Dispatchers.Default) { runCatching { r.readAvailable(ByteArray(1), 0, 1) } }
+                val started = CompletableDeferred<Unit>()
+                // undispatched: the read runs here until it suspends, so it waits in awaitContent when [end] comes
+                val read =
+                    async(start = CoroutineStart.UNDISPATCHED) {
+                        started.complete(Unit)
+                        runCatching { r.readAvailable(ByteArray(1), 0, 1) }
+                    }
+                assertTrue(started.isCompleted && !read.isCompleted, "the read waits before the end")
                 end(c)
                 val failure = withTimeout(10.seconds) { read.await() }.exceptionOrNull()
                 assertTrue(failure !is CancellationException, "the pending read failed with $failure")

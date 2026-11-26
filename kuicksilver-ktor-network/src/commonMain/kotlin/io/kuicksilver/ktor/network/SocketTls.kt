@@ -157,6 +157,25 @@ public class TlsSocket private constructor(
     @Volatile private var closeBegun = false
 
     /**
+     * This side ended the socket: [close], [abort], or a failure of the application's own write channel ([failTls]). Only
+     * then is a read or write past the end a [ConnectionEndedException.LocalClose]: a reset or a broken pipe the write pump
+     * met first is the peer's end, and stays one ([transportFailure]).
+     */
+    @Volatile private var localEnd = false
+
+    /** The transport's failure that ended the socket ([failTls] for a failure the write pump met, not the application's). */
+    @Volatile private var transportFailure: Throwable? = null
+
+    /** The cause [endPump] failed the application's write channel with: the pump's own end, never a failed stream. */
+    @Volatile private var pumpEnd: Throwable? = null
+
+    /** Runs in [attachForReading] between its checks and the relay's publication (tests: a close or an abort there). */
+    @Volatile internal var beforeReadAttachForTest: (() -> Unit)? = null
+
+    /** Runs in [attachForWriting] between its checks and the pump's publication (tests: a close or an abort there). */
+    @Volatile internal var beforeWriteAttachForTest: (() -> Unit)? = null
+
+    /**
      * The bound of [close] in all; null: the close waits for the peer to take what is queued (then 3 s at most for its
      * close_notify). 3 s on a client ([Socket.tls]), none on a server ([Socket.tlsServer]): a server's fixed bound cut a slow
      * reader's last response short; whoever accepted the socket bounds it ([setCloseTimeout]).
@@ -184,41 +203,51 @@ public class TlsSocket private constructor(
      */
     @OptIn(InternalAPI::class)
     override fun attachForReading(channel: ByteChannel): WriterJob {
-        if (closeBegun || closing) return closedForReading(channel)
-        // the socket's job may have ended already, and a coroutine launched under a completed job never runs: its channel
-        // failed with "Parent job is Completed", a JobCancellationException, instead of the LocalClose. Attaching a child
-        // decides it atomically: the child is active only while the socket's job is, and holds that job open until the
-        // relay ends
-        val relayParent = Job(coroutineContext[Job])
-        if (!relayParent.isActive) return closedForReading(channel)
+        ended()?.let { return closedForReading(channel, it) }
+        // the relay runs under a job of its own, not under the socket's: a coroutine launched under a job that has ended, or
+        // that an abort cancels before the coroutine ran, never runs, and ktor fails its channel with that cancellation
+        // ("Parent job is Completed", a JobCancellationException) before this side's end could name itself. The socket's
+        // end reaches the relay through [endRelay] (close, abort) or the end of the session's input instead
+        if (coroutineContext[Job]?.isActive == false) return closedForReading(channel, ended() ?: readEnd())
+        val relayParent = Job()
+        beforeReadAttachForTest?.invoke()
         val job = relayTo(channel, relayParent)
         attachedReader = job
-        // a close that began meanwhile may have looked for the relay before it was set: it ends here then (both sides set
-        // their own flag before they read the other's, so one of them sees the other's). It cannot read alongside the
-        // close's drop either way: the close cancels the session's input (TlsConnection.cancelInput) once the relay it saw
-        // has ended, and a relay that came after reads only that cancelled input
-        if (closeBegun) endRelay(job)
+        // an end that came meanwhile (a close, an abort, a failed transport) may have looked for the relay before it was
+        // set: it ends here then (both sides set their own flag before they read the other's, so one of them sees the
+        // other's). It cannot read alongside the close's drop either way: the close cancels the session's input
+        // (TlsConnection.cancelInput) once the relay it saw has ended, and a relay that came after reads only that input
+        ended()?.let { endRelay(job, it) }
         return job
     }
 
+    /** Why the socket ended, once it did: this side's end ([readEnd]) or the transport's failure; null while it stands. */
+    private fun ended(): Throwable? = if (closeBegun || localEnd) readEnd() else transportFailure
+
     /**
-     * The application's channel of a socket this side ended: it fails at once, nothing is read for it. The channel fails
-     * here, before any coroutine: one launched under the socket's job, completed by then, would never run. The writer job
-     * returned, outside that job, has nothing left to do.
+     * The application's channel of a socket that ended: it fails at once with [cause], nothing is read for it. The channel
+     * fails here, before any coroutine: one launched under the socket's job, completed by then, would never run. The
+     * writer job returned, outside that job, has nothing left to do.
      */
-    private fun closedForReading(channel: ByteChannel): WriterJob {
-        channel.cancel(localEnd())
+    private fun closedForReading(
+        channel: ByteChannel,
+        cause: Throwable,
+    ): WriterJob {
+        channel.cancel(cause)
         @OptIn(DelicateCoroutinesApi::class)
         return GlobalScope.writer(Dispatchers.Unconfined, channel) {}
     }
 
     /**
-     * Stops [relay] for this side's end: its channel fails with [localEnd] first, so that the relay's cancellation, which
-     * the channel would otherwise take as its cause, finds it closed (ktor's channels keep their first cause). It may be
-     * called before the relay ran at all.
+     * Stops [relay] for the socket's end: its channel fails with [cause] first, so that the relay's cancellation, which the
+     * channel would otherwise take as its cause, finds it closed (ktor's channels keep their first cause). It may be called
+     * before the relay ran at all, and more than once.
      */
-    private fun endRelay(relay: WriterJob) {
-        relay.channel.cancel(localEnd())
+    private fun endRelay(
+        relay: WriterJob,
+        cause: Throwable,
+    ) {
+        relay.channel.cancel(cause)
         relay.job.cancel()
     }
 
@@ -248,11 +277,11 @@ public class TlsSocket private constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
-            // this side ended the socket ([abortTls] ends the session under the relay, a failed stream as well): the
-            // channel fails with that end, not with what the ended session reports (a clean end of its input, "connection
-            // closed")
-            if (closing) {
-                readDelivery.fail(channel, localEnd())
+            // this side ended the socket ([abortTls] ends the session under the relay, a failed stream of the application's
+            // as well): the channel fails with that end, not with what the ended session reports ("connection closed").
+            // A failure of the transport is reported as the session saw it
+            if (localEnd) {
+                readDelivery.fail(channel, readEnd())
                 throw CancellationException("the TLS socket is closed", e)
             }
             val failure = if (e is ClosedByteChannelException) e.sessionFailure() else e
@@ -260,20 +289,28 @@ public class TlsSocket private constructor(
             readDelivery.fail(channel, failure)
             throw failure
         }
-        // the session's input ended cleanly under this side's end ([abortTls] closes the session): not the peer's end
-        if (closing) {
-            readDelivery.fail(channel, localEnd())
-            throw CancellationException("the TLS socket is closed")
+        // the session's input ended cleanly under the socket's end ([abortTls] closes the session; the write pump met the
+        // transport's failure first): not the peer's close_notify
+        endOfRelay()?.let {
+            readDelivery.fail(channel, it)
+            throw CancellationException("the TLS socket ended")
         }
     }
 
+    /** What the relay reports once the socket ended under it: this side's end, else the transport's failure; null else. */
+    private fun endOfRelay(): Throwable? = if (localEnd) readEnd() else transportFailure
+
     /** This side ended the socket: what a read gets from then on. */
-    private fun localEnd(): ConnectionEndedException.LocalClose =
+    private fun readEnd(): ConnectionEndedException.LocalClose =
         ConnectionEndedException.LocalClose("the TLS socket is closed: nothing more is read")
 
+    /** This side ended the socket: what a write gets from then on. */
+    private fun writeEnd(): ConnectionEndedException.LocalClose =
+        ConnectionEndedException.LocalClose("the TLS socket is closed: nothing more is written")
+
     /**
-     * The relay above, once attached: [close] and [abortTls] end it. It may wait for room in the application's channel,
-     * as a child of the raw socket's job: an application that stopped reading held that job, and the socket, for good.
+     * The relay above, once attached: [close] and [abortTls] end it. It may wait for room in the application's channel:
+     * an application that stopped reading would hold it for good otherwise.
      */
     @Volatile private var attachedReader: WriterJob? = null
 
@@ -298,27 +335,63 @@ public class TlsSocket private constructor(
      * A channel opened once this side ended the socket ([close], [abort], a failed stream) fails at once with a
      * [ConnectionEndedException.LocalClose] and starts no pump: a pump launched under the socket's completed job never ran
      * (the application's write failed with a JobCancellationException), and one started while the close is under way
-     * met the session's closed output and failed the stream, which turns the graceful close into an alert.
+     * met the session's closed output and failed the stream, which turns the graceful close into an alert (RFC 9846
+     * section 6.1). Only a failure of the application's own channel fails the stream with internal_error: one the pump
+     * meets in the session's output while the socket ends (a close under way, an abort) is that end, and a transport
+     * failure (a reset, a broken pipe) is the peer's end, reported as such to the reader too.
      */
     @OptIn(InternalAPI::class)
     override fun attachForWriting(channel: ByteChannel): ReaderJob {
-        if (closeBegun || closing) return closedForWriting(channel)
-        // as for the read relay: the pump runs under a child attached while the socket's job is still active, or not at all
-        val pumpParent = Job(coroutineContext[Job])
-        if (!pumpParent.isActive) return closedForWriting(channel)
+        writeEnded()?.let { return closedForWriting(channel, it) }
+        // as for the read relay: the pump runs under a job of its own, ended by [endPump] (close, abort), its channel's end
+        // or the session's output
+        if (coroutineContext[Job]?.isActive == false) return closedForWriting(channel, writeEnded() ?: writeEnd())
+        val pumpParent = Job()
+        beforeWriteAttachForTest?.invoke()
         val pump =
             reader(coroutineContext + pumpParent, channel) {
+                var appFailure = false
                 try {
                     // ktor's copyTo, without its close of the destination with the failure: closing the TLS output sends
                     // close_notify, which would race the abort
                     while (true) {
-                        if (channel.readBuffer.exhausted() && !channel.awaitContent()) break
+                        val more =
+                            try {
+                                !channel.readBuffer.exhausted() || channel.awaitContent()
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Throwable) {
+                                appFailure = true
+                                throw e
+                            }
+                        if (!more) break
                         channel.readBuffer.transferTo(tls.output.writeBuffer)
                         tls.output.flush()
                     }
-                    channel.closedCause?.let { throw it }
+                    channel.closedCause?.let {
+                        appFailure = true
+                        throw it
+                    }
                 } catch (e: Throwable) {
-                    if (e !is CancellationException) failTls(e)
+                    val ours = pumpEnd?.let { end -> generateSequence(e) { it.cause }.any { it === end } } ?: false
+                    when {
+                        e is CancellationException || ours -> {}
+
+                        appFailure -> {
+                            failTls(e, applicationFailure = true)
+                        }
+
+                        // the session's output ended under this side's end (an abort closes it under the pump): no stream
+                        // failed, and the application's channel gets that end, not the closed output's "connection closed"
+                        closeBegun || localEnd -> {
+                            channel.cancel(pumpEndCause())
+                        }
+
+                        // the transport failed under the pump: the peer's end
+                        else -> {
+                            failTls(e, applicationFailure = false)
+                        }
+                    }
                     throw e
                 }
                 tls.output.flushAndClose()
@@ -326,15 +399,40 @@ public class TlsSocket private constructor(
         pump.job.invokeOnCompletion { pumpParent.complete() }
         attachedChannel = channel
         attachedWriter = pump
+        // an end that came meanwhile may have looked for the pump before it was set: it ends here then, without a failed
+        // stream (the pump writes nothing into the ended session, and a graceful close stays one)
+        writeEnded()?.let { endPump(pump, it) }
         return pump
     }
 
-    /** The application's write channel of a socket this side ended: it fails at once, nothing is sent from it. */
-    private fun closedForWriting(channel: ByteChannel): ReaderJob {
-        channel.cancel(ConnectionEndedException.LocalClose("the TLS socket is closed: nothing more is written"))
+    /** Why a write fails once the socket ended: this side's end ([writeEnd]) or the transport's failure; null while it stands. */
+    private fun writeEnded(): Throwable? = if (closeBegun || localEnd) writeEnd() else transportFailure
+
+    /** The application's write channel of a socket that ended: it fails at once with [cause], nothing is sent from it. */
+    private fun closedForWriting(
+        channel: ByteChannel,
+        cause: Throwable,
+    ): ReaderJob {
+        channel.cancel(cause)
         @OptIn(DelicateCoroutinesApi::class)
         return GlobalScope.reader(Dispatchers.Unconfined, channel) {}
     }
+
+    /**
+     * Stops [pump] for the socket's end: the application's channel fails with [cause] (a writer waiting for room gets it,
+     * not the pump's cancellation), and the pump, which then finds the channel failed by this side, fails no stream.
+     */
+    private fun endPump(
+        pump: ReaderJob,
+        cause: Throwable,
+    ) {
+        if (pumpEnd == null) pumpEnd = cause
+        pump.channel.cancel(pumpEnd)
+        pump.job.cancel()
+    }
+
+    /** The cause the write channel fails with for the socket's end, [pumpEnd] once one was chosen. */
+    private fun pumpEndCause(): Throwable = pumpEnd ?: (writeEnded() ?: writeEnd()).also { pumpEnd = it }
 
     /**
      * Graceful: pending plaintext is encrypted and flushed, `close_notify` is sent, then the raw socket closes; on a server
@@ -355,6 +453,7 @@ public class TlsSocket private constructor(
      */
     override fun close() {
         closeBegun = true
+        localEnd = true
         if (closing) return
         closing = true
         val bound = closeTimeout
@@ -373,7 +472,7 @@ public class TlsSocket private constructor(
                 // dropped, and the close comes under the rest); a relay attached as the close began fails on the cancelled
                 // input, so nothing reads it alongside the drop
                 attachedReader?.let {
-                    endRelay(it)
+                    endRelay(it, readEnd())
                     it.job.join()
                 }
                 tls.cancelInput(CancellationException("the TLS socket is closed: nothing more is read"))
@@ -410,19 +509,24 @@ public class TlsSocket private constructor(
      * Ends the connection at once ([abort], and [close] past its bound): the TLS session is released without
      * `close_notify`, which ends the pumps, and the raw socket is aborted. Cancelling the raw socket's job is not enough:
      * its descriptor closes only once `close()` was called and both of its loops have ended, and on the JVM a write loop
-     * facing a full send buffer does not see a cancellation (it spins in `SocketChannel.write`).
+     * facing a full send buffer does not see a cancellation (it spins in `SocketChannel.write`). [local] false: the
+     * transport failed ([transportFailure]), and the application's channels get that failure instead of a LocalClose.
      */
-    internal fun abortTls() {
+    internal fun abortTls(local: Boolean = true) {
+        if (local) localEnd = true
         closing = true
+        // the application's pumps first, so that their channels take this end before the closed session's own failure
+        attachedWriter?.let { endPump(it, writeEnded() ?: writeEnd()) }
+        attachedReader?.let { endRelay(it, ended() ?: readEnd()) }
         // the raw socket first: the session's close ends its output, and a raw writer still draining would send a FIN
         // ahead of the reset
         @OptIn(InternalKuicksilverApi::class)
         raw.abort()
         tls.close()
-        // and the application's pumps: the write pump waits for the application's next bytes, the read relay for room in
-        // its channel; both are children of the raw socket's job, which they held, and the socket, for good
-        attachedWriter?.job?.cancel()
-        attachedReader?.let(::endRelay)
+        // and the application's pumps once more (an attach that published meanwhile): the write pump waits for the
+        // application's next bytes, the read relay for room in its channel; neither would end otherwise
+        attachedWriter?.let { endPump(it, writeEnded() ?: writeEnd()) }
+        attachedReader?.let { endRelay(it, ended() ?: readEnd()) }
     }
 
     /**
@@ -431,12 +535,21 @@ public class TlsSocket private constructor(
      * sends a FIN (the peer fails on the alert, so a FIN cannot pass for a clean end), reads and drops what the peer still
      * sends until it closes ([lingerAfterAlert]: a reset over that input could erase the alert before the peer read it), and
      * closes; it is reset when it has not closed after [ALERT_CLOSE_TIMEOUT] (a peer that stopped reading). Where no alert can be sent, or the transport did
-     * not take it, the connection is reset at once (`abortTls`).
+     * not take it, the connection is reset at once (`abortTls`). [applicationFailure] false: the pump met the transport's
+     * failure (a reset, a broken pipe), which is the peer's end, not this side's: the reader gets it, not a LocalClose.
      */
-    private suspend fun failTls(cause: Throwable) {
+    private suspend fun failTls(
+        cause: Throwable,
+        applicationFailure: Boolean,
+    ) {
+        if (applicationFailure) {
+            localEnd = true
+        } else if (transportFailure == null) {
+            transportFailure = cause
+        }
         val alerted = runCatching { tls.abortOutput(cause, ALERT_CLOSE_TIMEOUT) }.getOrDefault(false)
         if (!alerted) {
-            abortTls()
+            abortTls(local = applicationFailure)
             return
         }
         closing = true
@@ -453,7 +566,7 @@ public class TlsSocket private constructor(
                     raw.close()
                     raw.socketContext.join()
                 }
-            if (closed == null) abortTls()
+            if (closed == null) abortTls(local = applicationFailure)
         }
     }
 
