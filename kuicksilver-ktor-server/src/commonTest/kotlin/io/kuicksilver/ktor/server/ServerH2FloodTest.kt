@@ -14,6 +14,7 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
@@ -26,6 +27,8 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TestTimeSource
 
@@ -101,6 +104,25 @@ class ServerH2FloodTest {
         return sent
     }
 
+    /**
+     * [flood] one frame at a time, [pause] apart on the real clock: a client slower than a timer of the server, which no
+     * event can stand for (tools/check/test-sleeps.allow).
+     */
+    private suspend fun RawH2Client.pacedFlood(
+        count: Int,
+        pause: Duration,
+        frame: (Int) -> ByteArray,
+    ): Int {
+        var sent = 0
+        while (sent < count) {
+            val one = batchOf(sent, 1, frame)
+            if (runCatching { write(one) }.isFailure) return sent
+            sent++
+            delay(pause)
+        }
+        return sent
+    }
+
     /** The frames [frame] makes for [from] until [from] + [n], one after another. */
     private fun batchOf(
         from: Int,
@@ -127,10 +149,45 @@ class ServerH2FloodTest {
 
     private fun hold(id: Int) = RawH2Client.frame(RawFrame.HEADERS, 0x5, id, RawH2Client.block(RawH2Client.get("/hold")))
 
+    /** Request [i] of a MadeYouReset flood: `/hold`, then a WINDOW_UPDATE of 0 on its stream (RFC 9113 section 6.9). */
+    private fun madeYouReset(i: Int): ByteArray {
+        val id = 1 + 2 * i
+        return hold(id) + RawH2Client.frame(RawFrame.WINDOW_UPDATE, 0, id, byteArrayOf(0, 0, 0, 0))
+    }
+
+    /**
+     * The client preface, then the server's SETTINGS read and acknowledged ([RawH2Client.readFrame]) before anything else
+     * is written: a flood that reads nothing would leave them unacknowledged, and the connection would end with
+     * SETTINGS_TIMEOUT (RFC 9113 section 6.5.3) after `settingsAckTimeout` (10 s) whenever the server takes longer than that
+     * to reach a flood limit, as on a slow simulator, instead of with the flood defence the test is about.
+     */
+    private suspend fun RawH2Client.prefaceAcknowledged() {
+        preface()
+        assertNotNull(await { it.type == RawFrame.SETTINGS && it.flags and 0x1 == 0 }, "the server's SETTINGS")
+    }
+
+    /**
+     * The limits of the MadeYouReset tests: a glitch budget of 50 that never refills, and 10 concurrent streams. With the
+     * defaults (10 000, 330 per second, 100 streams) a flood ends after anywhere from a few hundred requests (refused in a
+     * row while the reset streams' handlers still run) to more than 10 000 (each accepted and reset, at a pace above the
+     * refill), depending on how fast the handlers end: on a slow machine that takes longer than any deadline of the test.
+     * Here at most 51 requests are accepted, whatever the pace.
+     */
+    private fun KuicksilverApplicationEngine.Configuration.smallGlitchBudget(settingsAckTimeout: Duration = 10.seconds) {
+        http2Settings =
+            io.kuicksilver.http2.Http2Settings(
+                maxConcurrentStreams = MYR_STREAMS,
+                glitchBurst = MYR_GLITCHES,
+                glitchesPerSecond = 0,
+                settingsAckTimeout = settingsAckTimeout,
+            )
+    }
+
     /**
      * Rapid Reset (CVE-2023-44487): 10 000 requests each reset at once. Running handlers never pass
      * SETTINGS_MAX_CONCURRENT_STREAMS (a reset stream counts until its handler returns), the connection ends with
-     * ENHANCE_YOUR_CALM once the reset budget (1000, 33 per second) is spent, and no handler is left afterwards.
+     * ENHANCE_YOUR_CALM once the reset budget (1000, 33 per second) is spent, and no handler is left afterwards. The
+     * server's SETTINGS are acknowledged first ([prefaceAcknowledged]).
      */
     @Test fun negative_rapidResetDoesNotRunHandlersUnbounded() =
         serverTest {
@@ -138,7 +195,7 @@ class ServerH2FloodTest {
             val (server, port) = floodServer(handlers)
             try {
                 RawH2Client.connect(port).use { raw ->
-                    raw.preface()
+                    raw.prefaceAcknowledged()
                     raw.flood(10_000) { i ->
                         val id = 1 + 2 * i
                         hold(id) + RawH2Client.frame(RawFrame.RST_STREAM, 0, id, byteArrayOf(0, 0, 0, 8))
@@ -157,25 +214,95 @@ class ServerH2FloodTest {
 
     /**
      * MadeYouReset (CVE-2025-8671): requests the client makes the server reset itself (WINDOW_UPDATE of 0 on the open
-     * stream, a stream error of ours). Our resets take from the glitch budget, the handlers of reset streams count toward
-     * the concurrency limit, and the connection ends with ENHANCE_YOUR_CALM.
+     * stream, a stream error of the peer: RFC 9113 section 6.9), 20 000 of them written without reading. Our resets take
+     * from the glitch budget ([smallGlitchBudget]), the handlers of reset streams count toward the concurrency limit, and
+     * the connection ends with ENHANCE_YOUR_CALM, whichever limit the scheduler makes it reach first: the glitch budget
+     * (each request accepted and reset) or the refusals in a row (handlers still running). The server's SETTINGS are
+     * acknowledged first ([prefaceAcknowledged]), so no other limit can end it.
      */
-    @Test fun negative_madeYouResetBounded() =
+    @Test fun negative_madeYouResetBounded() = madeYouResetFlood(20_000, pause = Duration.ZERO)
+
+    /**
+     * MadeYouReset as a slow machine runs it, the CI failure this guards against (iosSimulatorArm64): one request every
+     * 30 ms, so the handlers mostly end in between and the requests are accepted and reset, and the flood takes longer
+     * than the server's `settingsAckTimeout` (1 s here). Unacknowledged SETTINGS ended such a flood with SETTINGS_TIMEOUT (0x4) before
+     * any flood limit; acknowledged ([prefaceAcknowledged]), it ends with ENHANCE_YOUR_CALM at the glitch budget.
+     */
+    @Test fun negative_madeYouResetSlowerThanTheSettingsTimeoutEndsCalm() =
+        madeYouResetFlood(4 * MYR_GLITCHES, pause = 30.milliseconds, settingsAckTimeout = 1.seconds)
+
+    /** [count] MadeYouReset requests written without reading, all at once or one every [pause] (the tests above). */
+    private fun madeYouResetFlood(
+        count: Int,
+        pause: Duration,
+        settingsAckTimeout: Duration = 10.seconds,
+    ) = serverTest {
+        val handlers = Handlers()
+        val (server, port) = floodServer(handlers) { smallGlitchBudget(settingsAckTimeout) }
+        try {
+            RawH2Client.connect(port).use { raw ->
+                raw.prefaceAcknowledged()
+                val sent =
+                    if (pause.isPositive()) raw.pacedFlood(count, pause, ::madeYouReset) else raw.flood(count, frame = ::madeYouReset)
+                raw.goAwaySeen()?.let { assertEquals(calm, it.errorCode, "GOAWAY after $sent requests") }
+            }
+            withTimeout(10.seconds) { server.engine.h2FloodEnds.first { it == 1L } }
+            withTimeout(10.seconds) { handlers.running.first { it == 0 } }
+            assertTrue(handlers.maxRunning.value <= MYR_STREAMS, "handlers at once: ${handlers.maxRunning.value}")
+            assertTrue(handlers.started.value <= MYR_GLITCHES + 1, "handlers started: ${handlers.started.value}")
+            assertServes(port)
+        } finally {
+            server.stop(100, 500)
+        }
+    }
+
+    /**
+     * MadeYouReset one request at a time: each WINDOW_UPDATE of 0 is answered with RST_STREAM(PROTOCOL_ERROR) before the
+     * next request goes out, so the server's reset count does not depend on how it batches its reads or on how fast
+     * handlers end. Each of our resets is a glitch: the 49 the budget has left after the client's SETTINGS are answered
+     * with RST_STREAM, and the request that would take one more is answered with GOAWAY(ENHANCE_YOUR_CALM) instead, never
+     * later. The client writes only after an answer, so nothing it sends can arrive after the server closed. Requests
+     * refused because handlers of reset streams still run (REFUSED_STREAM) are not the client's errors (those streams are
+     * closed for the protocol) and take nothing from the budget.
+     */
+    @Test fun negative_madeYouResetSpendsTheGlitchBudget() =
         serverTest {
             val handlers = Handlers()
-            val (server, port) = floodServer(handlers)
+            val (server, port) = floodServer(handlers) { smallGlitchBudget() }
             try {
                 RawH2Client.connect(port).use { raw ->
-                    raw.preface()
-                    raw.flood(20_000) { i ->
+                    raw.prefaceAcknowledged()
+                    var resets = 0
+                    var refused = 0
+                    var goAway: RawFrame? = null
+                    var i = 0
+                    while (goAway == null && i < 2_000) {
                         val id = 1 + 2 * i
-                        hold(id) + RawH2Client.frame(RawFrame.WINDOW_UPDATE, 0, id, byteArrayOf(0, 0, 0, 0))
+                        raw.write(madeYouReset(i))
+                        val answer =
+                            assertNotNull(
+                                raw.await { it.type == RawFrame.GOAWAY || (it.type == RawFrame.RST_STREAM && it.stream == id) },
+                                "no answer to stream $id",
+                            )
+                        if (answer.type == RawFrame.GOAWAY) {
+                            goAway = answer
+                        } else {
+                            when (answer.errorCode) {
+                                0x1L -> resets++
+                                0x7L -> refused++
+                                else -> error("stream $id reset with ${answer.errorCode}")
+                            }
+                        }
+                        i++
                     }
-                    raw.goAwaySeen()?.let { assertEquals(calm, it.errorCode) }
+                    val end = assertNotNull(goAway, "no GOAWAY after $resets resets and $refused refusals")
+                    assertEquals(calm, end.errorCode, "GOAWAY after $resets resets and $refused refusals")
+                    // the budget less the one the client's preface SETTINGS took (every SETTINGS frame is a glitch)
+                    assertEquals(MYR_GLITCHES - 1, resets, "resets before the GOAWAY ($refused refused)")
                 }
                 withTimeout(10.seconds) { server.engine.h2FloodEnds.first { it == 1L } }
                 withTimeout(10.seconds) { handlers.running.first { it == 0 } }
-                assertTrue(handlers.maxRunning.value <= 100, "handlers at once: ${handlers.maxRunning.value}")
+                assertTrue(handlers.maxRunning.value <= MYR_STREAMS, "handlers at once: ${handlers.maxRunning.value}")
                 assertServes(port)
             } finally {
                 server.stop(100, 500)
@@ -606,5 +733,13 @@ class ServerH2FloodTest {
             val f = assertNotNull(raw.await(within = 15.seconds) { (it.stream == 1 && it.endStream) || it.type == RawFrame.GOAWAY })
             assertEquals(1, f.stream, "$f")
         }
+    }
+
+    private companion object {
+        /** SETTINGS_MAX_CONCURRENT_STREAMS of [smallGlitchBudget]. */
+        const val MYR_STREAMS = 10
+
+        /** The glitch budget of [smallGlitchBudget]. */
+        const val MYR_GLITCHES = 50
     }
 }
