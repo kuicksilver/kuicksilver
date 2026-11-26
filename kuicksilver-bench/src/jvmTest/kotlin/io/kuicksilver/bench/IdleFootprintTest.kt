@@ -77,10 +77,11 @@ class IdleFootprintTest {
         // (docs/benchmarks.md, "Memory"); this ceiling catches that mode coming back. 88-104 K with 4 KiB reassembly
         // windows, 292 K with per-stream staging arrays
         const val HTTP3_CEILING = 80_000L
-        // 33 752 measured (2026-11-26, JVM 21, every run): +8 B, the core's slot for the local transport parameters a qlog
-        // trace logs with the peer's (quic-events-04 section 5.3); 33 928 on the macOS runner and here while the slot held
-        // them, a TransportParameters and its version array (+176), for the life of every connection, traced or not. Only
-        // a trace waiting for the peer's parameters keeps them now, and lets go once it logged both.
+        // 33 744 measured again (2026-11-26, JVM 21, every run): the local transport parameters a qlog trace logs with the
+        // peer's (quic-events-04 section 5.3) wait in the trace (QlogWriter.pendingLocalTp), which an untraced core lacks.
+        // 33 928 on the macOS runner and here while the core held them, a TransportParameters and its version array
+        // (+176) and the core's field (+8), for the life of every connection, traced or not; 33 752 with the field kept
+        // empty without a trace.
         // 33 744 measured (2026-11-26, JVM 21, every run): -2 320 B, three sent-packet records fewer (the Initial and
         // Handshake spaces, discarded, keep none; the acknowledged list let go of the one it still referenced: -2 232)
         // and each space's pool an array of 4 instead of an ArrayList of 10 (-144), less the idle mark and the

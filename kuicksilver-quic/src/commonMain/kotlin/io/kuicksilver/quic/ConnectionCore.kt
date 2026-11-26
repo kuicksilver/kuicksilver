@@ -691,11 +691,6 @@ public class ConnectionCore internal constructor(
     internal val builder = PacketBuilder(this)
     internal var peerTp: TransportParameters? = null
 
-    /**
-     * The transport parameters we gave TLS last ([buildLocalTp]), kept only while a qlog trace waits to log them with the
-     * peer's (then let go): an idle connection without a trace holds none.
-     */
-    internal var localTp: TransportParameters? = null
     internal var peerGreaseQuicBit = false
     internal var tlsDirty = false
     internal var handshakeDoneReceived = false

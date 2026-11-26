@@ -49,6 +49,12 @@ internal class QlogWriter(
 ) {
     private var written = 0L
     private var closed = false
+
+    /**
+     * The transport parameters the connection gave TLS last, until `transport:parameters_set` logs them with the peer's
+     * (then null): held by the trace, so a connection without one keeps no copy (P.5).
+     */
+    internal var pendingLocalTp: io.kuicksilver.quic.wire.TransportParameters? = null
     private var ending = false
     private var closeLogged = false
 

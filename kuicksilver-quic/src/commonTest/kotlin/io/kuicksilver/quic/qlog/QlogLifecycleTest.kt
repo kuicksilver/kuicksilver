@@ -120,6 +120,7 @@ class QlogLifecycleTest {
             }
         val p = CorePair(clientQuic = client, serverQuic = server)
         try {
+            assertTrue(p.client.qlog!!.pendingLocalTp != null, "the client's local parameters wait for the peer's")
             assertTrue(p.handshake())
             for (role in listOf(TlsRole.Client, TlsRole.Server)) {
                 val set =
@@ -138,19 +139,18 @@ class QlogLifecycleTest {
                 assertTrue(fromServer["original_destination_connection_id"] is String, "$role: the server names the ODCID")
                 assertTrue(fromServer["stateless_reset_token"] is String, "$role: the server's token")
             }
-            // logged, the local parameters are let go: a connection keeps no copy of them for its life
-            assertEquals(null, p.client.localTp, "the client's local parameters, logged")
-            assertEquals(null, p.server!!.localTp, "the server's local parameters, logged")
+            // logged, the local parameters are let go: a trace keeps no copy of them for the connection's life
+            assertEquals(null, p.client.qlog.pendingLocalTp, "the client's local parameters, logged")
+            assertEquals(null, p.server!!.qlog!!.pendingLocalTp, "the server's local parameters, logged")
         } finally {
             p.close()
         }
-        // an untraced connection never keeps them (the idle footprint, P.5)
+        // an untraced connection has no trace to keep them in (the idle footprint, P.5)
         val untraced = CorePair()
         try {
-            assertEquals(null, untraced.client.localTp, "an untraced client keeps none before the handshake")
             assertTrue(untraced.handshake())
-            assertEquals(null, untraced.client.localTp, "an untraced client")
-            assertEquals(null, untraced.server!!.localTp, "an untraced server")
+            assertEquals(null, untraced.client.qlog, "an untraced client")
+            assertEquals(null, untraced.server!!.qlog, "an untraced server")
         } finally {
             untraced.close()
         }

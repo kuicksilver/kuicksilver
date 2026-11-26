@@ -78,7 +78,7 @@ class DatagramApiTest {
         st.output.flush()
         // full as the core counts it: less room than MIN_WINDOW_DATAGRAM left (not bytes_in_flight >= cwnd, which a window
         // left with 974 bytes reached only at the next PTO, 16 s away in negative_datagramQueueCap)
-        while (c.stats.cwnd - c.stats.bytesInFlight >= MIN_WINDOW_DATAGRAM) {
+        while (c.stats.let { it.cwnd - it.bytesInFlight } >= MIN_WINDOW_DATAGRAM) {
             delay(5)
         }
         return st
@@ -463,8 +463,12 @@ class DatagramApiTest {
                         }
                     // the server's ACKs reach the client while the server's address is still held: the window opens, datagrams
                     // leave (into the hold) and the 33rd gets in
+                    val cwndBefore = c.stats.cwnd
                     p.net.release(p.clientIo.localAddress)
                     assertTrue(blocked.await(), "room came as datagrams left")
+                    // the late ACKs did come, before the server's release: they acknowledged the stream's first packets, and slow
+                    // start grows the window by what they acknowledged (RFC 9002 section 7.3.1)
+                    assertTrue(c.stats.cwnd > cwndBefore, "the late ACKs grew the window: ${c.stats.cwnd} after $cwndBefore")
                     p.net.release(p.server.localAddress)
                     val got = s.datagrams.take(33).toList()
                     assertEquals((0 until 33).toSet(), got.map { key(it) }.toSet(), "every datagram, the 33rd included")

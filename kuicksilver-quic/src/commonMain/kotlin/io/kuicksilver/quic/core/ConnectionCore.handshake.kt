@@ -13,6 +13,7 @@ import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.TransportError
 import io.kuicksilver.quic.VersionProfile
+import io.kuicksilver.quic.qlog.QlogWriter
 import io.kuicksilver.quic.recovery.LossDetection
 import io.kuicksilver.quic.recovery.Pacer
 import io.kuicksilver.quic.recovery.SpaceId
@@ -71,8 +72,8 @@ internal fun ConnectionCore.buildLocalTp(): TransportParameters {
     return tp
 }
 
-/** [buildLocalTp] as handed to TLS, kept in [ConnectionCore.localTp] only while a qlog trace waits to log it with the peer's. */
-internal fun ConnectionCore.localTpForTls(): TransportParameters = buildLocalTp().also { if (qlog != null) localTp = it }
+/** [buildLocalTp] as handed to TLS; a qlog trace keeps it until it logs it with the peer's ([QlogWriter.pendingLocalTp]). */
+internal fun ConnectionCore.localTpForTls(): TransportParameters = buildLocalTp().also { qlog?.pendingLocalTp = it }
 
 /** Re-encodes the local transport parameters (test hooks set after construction, before the first drive). */
 internal fun ConnectionCore.refreshLocalTp() {
@@ -552,10 +553,10 @@ internal class ConnectionHandshakeSink(
         // qlog transport:parameters_set (quic-events-04 section 5.3): ours and the peer's, once the peer's are accepted (a
         // forged Initial never gets here, so it opens no trace)
         core.qlog?.let { q ->
-            core.localTp?.let { q.parametersSet(local = true, tp = it, now = core.now) }
+            q.pendingLocalTp?.let { q.parametersSet(local = true, tp = it, now = core.now) }
+            q.pendingLocalTp = null
             q.parametersSet(local = false, tp = tp, now = core.now)
         }
-        core.localTp = null
         tp.statelessResetToken?.let { core.cids.setPeerResetToken(0, it) }
         tp.preferredAddressCid?.let { core.cids.adoptPreferredAddressCid(it, tp.preferredAddressToken!!) }
         // RFC 9000 section 7.4.1: while 0-RTT is in use only the remembered limits (and reset_stream_at) apply; settleZeroRtt

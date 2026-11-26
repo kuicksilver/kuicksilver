@@ -718,10 +718,10 @@ local; before = parent `c9513c37e`.
 | HTTP/3, after the exchange | 84.0-84.8 K (6 runs); 87.7 K on the CI runner | 78.00-78.41 K (16 runs, records 0, 0, 2) |
 | a space after N packets in flight, idle | N records | 2 records after about log2(N/2) idle periods |
 
-The core's figure is now 33 752 B (2026-11-26, every run): 8 B more, the core's field for the local
-transport parameters that a qlog trace logs with the peer's (`transport:parameters_set`). Until that field was
-cleared once logged and left empty without a trace, it held the parameters for the life of every connection, and
-the core held 33 928 B (on the macOS CI runner too), over the 33 900 B ceiling.
+The core's 33 744 B held again after a regression (2026-11-26): the local transport parameters that a qlog trace logs
+with the peer's (`transport:parameters_set`) were kept in a field of the core for the life of every connection,
+traced or not, and the core held 33 928 B (on the macOS CI runner too), over the 33 900 B ceiling. They wait in the
+trace now (`QlogWriter.pendingLocalTp`) until it logs them, so an untraced core holds none of it.
 
 ## msquic's goodput outlier
 
