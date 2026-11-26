@@ -95,11 +95,11 @@ wall served over HTTP/3 still checks the protocol.
 
 | Check | How | Pass when (from the client's own diagnostics) |
 |---|---|---|
-| HTTP/3 | `Http3DiscoveryMode.H3Only` GET | the response is `HTTP_3_0`, its `ProtocolDiagnostics.connection` is a `QuicConnectionSnapshot`, the connection listener heard a completed handshake with ALPN `h3` on a QUIC version we offered (the summary names it, v1 or v2); on Cloudflare the trace also says `http=http/3` (`http/1.1`, `http/2` or `h2` there fail; a missing or unknown value warns) |
+| HTTP/3 | `Http3Discovery.H3Only` GET | the response is `HTTP_3_0`, its `ProtocolDiagnostics.connection` is a `QuicConnectionSnapshot`, the connection listener heard a completed handshake with ALPN `h3` on a QUIC version we offered (the summary names it, v1 or v2); on Cloudflare the trace also says `http=http/3` (`http/1.1`, `http/2` or `h2` there fail; a missing or unknown value warns) |
 | Alt-Svc | `Auto`, a new client | the first answer came over TCP (HTTP/2 expected; HTTP/1.1 is a warning) with `h3` in `Alt-Svc`, and a later request went over HTTP/3 with `alternativeSource = AltSvc` |
-| 0-RTT | `earlyData = true`, the connection dropped after two requests | the new connection's `onZeroRtt` reports `Accepted`; `Rejected` or no early-data ticket is "n/a" (the server's choice, RFC 9001 section 4.6.2) |
+| 0-RTT | `http3 { earlyData { enabled = true } }`, the connection dropped after two requests | the new connection's `onZeroRtt` reports `Accepted`; `Rejected` or no early-data ticket is "n/a" (the server's choice, RFC 9001 section 4.6.2) |
 | Migration | `QuicConnection.migrate` to a new socket on a new local port | the next request goes on the same connection (`reused`) and `pathChanges` is at least 1; a server that sent `disable_active_migration` or uses zero-length connection IDs is "n/a"; a GOAWAY after the move, a path that did not validate, or no unused connection ID of the server's for the new path warns; any other failure of `migrate` fails |
-| ECH | Cloudflare only: the `ech` of the HTTPS record (DNS over HTTPS), `ech { configLists }`, `H3Only` | `/cdn-cgi/trace` says both `sni=encrypted` and `http=http/3`; `sni=plaintext` or a known other `http=` fails; a missing `http=` or `sni=` line, or a value the check does not know, warns |
+| ECH | Cloudflare only: the `ech` of the HTTPS record (DNS over HTTPS), `tls { ech { configLists } }`, `H3Only` | `/cdn-cgi/trace` says both `sni=encrypted` and `http=http/3`; `sni=plaintext` or a known other `http=` fails; a missing `http=` or `sni=` line, or a value the check does not know, warns |
 
 **Failure policy.** Each check is judged `pass`, `n/a`, `warn` or `FAIL`. A server that changed or could not be reached
 is a warning annotation and never a red job:

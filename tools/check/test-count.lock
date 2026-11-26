@@ -3976,6 +3976,7 @@ kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.cl
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.clientCaRequiredOnTheDeploymentPort
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.echKeysKeyReadsTheKeyFiles
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.guideApplicationConfStarts
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.guideFirstScreenConfStarts
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.guideQuicTransportBlockLoads
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.h1AllowBareLfKey
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.h2cKey

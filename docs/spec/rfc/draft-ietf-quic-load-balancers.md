@@ -54,9 +54,9 @@ Stateless Resets.
   both at most 19 bytes, an optional AES key as a `LoadBalancerKey` (the bytes go into `ksl` once through
   `QuicCrypto.newLoadBalancerKey`, which wipes them; Kotlin keeps a handle and a keyed fingerprint, and every endpoint
   that takes the configuration holds its own copy, `ksl_key_lb_dup`, so the caller's close never reaches it), an optional
-  `QuicLbNonceReservation`. `QuicEndpointConfig.loadBalancer` needs a server, a `connectionIdLength` equal to
+  `QuicLbNonceReservation`. `quicEndpointConfig { loadBalancer }` needs a server, a `connectionIdLength` equal to
   `1 + server ID + nonce` and at least 8, and a key when a `preferredAddress` is offered. The Ktor engine's
-  `quicLoadBalancer` and `updateLoadBalancer` (every listener checked before any changes), `Http3Endpoint.updateLoadBalancer`
+  `http3 { endpoint { loadBalancer } }` and `updateLoadBalancer` (every listener checked before any changes), `Http3Endpoint.updateLoadBalancer`
   and the sans-IO `EndpointCore.updateLoadBalancer` reach the same code.
 - `endpoint/QuicLb.kt`: `QuicLbCodec` writes `configId << 5 | (length - 1)` and the server ID and nonce, in clear or
   encrypted by `QuicLbCipher` (one AES-128-ECB block for 16 bytes, else the four-pass Feistel network with `expand` and

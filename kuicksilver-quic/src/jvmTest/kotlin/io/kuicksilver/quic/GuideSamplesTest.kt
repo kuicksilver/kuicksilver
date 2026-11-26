@@ -237,11 +237,11 @@ class GuideSamplesTest {
     @Test fun qlogSample() {
         val qlogDir = Files.createTempDirectory("qlog").toFile().path
         // guide:quic:qlog
-        val quicWithQlog = quicConfig { qlog = DirectoryQlogSink(qlogDir) }
-        assertTrue(quicWithQlog.qlog is DirectoryQlogSink)
+        val endpointWithQlog = quicEndpointConfig { observability { qlog = DirectoryQlogSink(qlogDir) } }
+        assertTrue(endpointWithQlog.qlog is DirectoryQlogSink)
         // guide:quic:qlog-async
-        val quicWithAsyncQlog = quicConfig { qlog = AsyncQlogSink(DirectoryQlogSink(qlogDir), sampleEvery = 10) }
-        val async = assertIs<AsyncQlogSink>(quicWithAsyncQlog.qlog)
+        val endpointWithAsyncQlog = quicEndpointConfig { observability { qlog = AsyncQlogSink(DirectoryQlogSink(qlogDir), sampleEvery = 10) } }
+        val async = assertIs<AsyncQlogSink>(endpointWithAsyncQlog.qlog)
         assertEquals(10, async.sampleEvery)
         async.close()
     }

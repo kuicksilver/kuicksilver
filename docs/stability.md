@@ -41,6 +41,12 @@ above it).
 - **Delicate** is not a stability level of its own: it marks API that can weaken security when misused (a custom
   verifier, key logging, a live internal array). It combines with the others: `keylogFile` and `TrustConfig.Custom` are
   stable and delicate, `ConnectionCore.glitchByFrameType` is experimental and delicate.
+- **Security-sensitive** is not a level either: `@SecuritySensitive` (`io.kuicksilver.annotations`, no opt-in, in the
+  API documentation) marks every configuration option whose wrong value weakens security, opens a denial of service or
+  leaks data (the threat model's reasoning); the [configuration reference](guide/configuration.md) shows it as 🔒.
+  Such an option that can only weaken its default (`allowBareLf`, `allowMisdirectedHosts`, `pacFullWebSocketUrl`,
+  `glitchProtection`, `allowToLoopback`, `rejectInitialFromReflectivePorts`, `refuseOwnAddresses`, `keylog`) is
+  delicate as well.
 - **Internal** declarations are public only because another Kuicksilver module needs them (the `Ksl` FFI facade,
   `KslUdpSocket`, the TCP session cache, `KtorVersionPolicy`, the soak probes). The opt-in is an error, they are left
   out of the ABI dumps, and they can change in any release.
@@ -49,7 +55,7 @@ above it).
 
 - **Sealed hierarchies and enums grow.** A minor release may add a member to a sealed type or an enum the library
   produces (`PathEvent`, `QuicException.ConnectionLost`, `Http3Exception`, `DatagramSendResult`, `VerifyReason`,
-  `TrustConfig`, `ProtocolReason`, `Http3DiscoveryMode`, …), listed in the CHANGELOG. Give a `when` over them an `else`
+  `TrustConfig`, `ProtocolReason`, `Http3Discovery`, …), listed in the CHANGELOG. Give a `when` over them an `else`
   branch rather than relying on exhaustiveness. Classes whose instances only the library creates (events, attempts,
   peer settings) have internal constructors, so new fields can be added.
 
@@ -239,7 +245,8 @@ work on every target above. What differs:
 | Kotlin/Native Apple | `macosArm64`, `iosArm64`, `iosSimulatorArm64` (no `macosX64`: deprecated by Kotlin; the JVM on Intel Macs is served by the JNI library) | macOS 12 or newer, iOS 15 or newer. The server runs on the accelerated `ksl` socket (ADR-0006): ECN and DF, no GSO/GRO (Darwin has none), `loops > 1` shares one socket in process (Darwin has no `SO_REUSEPORT` flow hashing). The test suites of every module run on the iOS simulator (`iosSimulatorArm64Test`), and `:kuicksilver-ktor-client:iosHostInteropTest` runs the simulator against a peer on the host (Ktor HTTP/3 and HTTP/1.1, raw QUIC in both directions, IPv4 and IPv6); network following through `NWPathMonitor` (`followDefaultNetwork`) is in `appleMain`. Not yet verified on a physical device. |
 | Kotlin/Native Windows | `mingwX64` | The server runs on the accelerated Winsock socket (`WSASendMsg`/`WSARecvMsg`; ECN where Windows accepts `IP_ECN`, probed when the socket opens and verified on Windows 11, USO/URO where granted), `loops > 1` shares one socket in process (exclusive bind, no `SO_REUSEPORT`). A `0.0.0.0` bind opens a dual-stack socket, as on Linux and Apple. `TrustConfig.Platform` verifies with CryptoAPI (the Windows root store, AIA, soft-fail revocation of the leaf). Cross-built on macOS/Linux and verified in a local Windows 11 VM (Parallels); the hosted CI's `windows` job runs the test executables on GitHub's Windows runners, and the release gate runs locally (`tools/ci/local-matrix.sh`). |
 
-Not in 0.2.x: HTTP/2 (ADR-0009, by decision; in 0.3.0 the client speaks it and the server serves it opt-in, ADR-0017),
+Not in 0.2.x: HTTP/2 (ADR-0009, by decision; in 0.3.0 the client speaks it and the server serves it, both on by default,
+ADR-0017 and ADR-0026),
 HTTP/3 server push (not planned), WebTransport (0.3.0, experimental), multipath (planned for 0.4.0, see the
 [roadmap](roadmap.md#040-planned)), OpenSSL 4.x. 0-RTT is available as an opt-in, experimental API and is off by default (ADR-0015).
 
@@ -247,6 +254,32 @@ HTTP/3 server push (not planned), WebTransport (0.3.0, experimental), multipath 
 
 Everything not listed here (and not internal) is stable. The list follows the annotations in the code; where a whole
 type is experimental, so are its members.
+
+### Configuration options
+
+The configuration (the builders of every module and the blocks of the two Ktor engines, ADR-0026) is marked per
+block: a block's class and the function or property that opens it carry the annotation, and every option inside an
+experimental block is experimental. `expert { }` is experimental by definition, wherever it is. An experimental option
+inside a stable block is allowed for two reasons only: its type is experimental (`network { dns }`, `tls {
+keyExchangeGroups }`, `http3 { migration }`, ...), or it is a feature turned on separately that has an ADR of its own
+(`http2 { priorKnowledge }` and `plainConnector { h2c }`, ADR-0018; `pool { coalescing }`, ADR-0018; `http3 {
+connectUdp }`, ADR-0024; `http2 { repeatOffenderPenalty }`, ADR-0017). Each such exception is listed in
+`tools/check/config-table.spec`, and the [configuration reference](guide/configuration.md) gives every option a
+*Status* column (`stable`, `experimental`, `delicate` or both) that `tools/check/config-table.sh` checks against the
+annotations; its [first screen](guide/configuration.md#first-screen), the options most applications set, is stable
+throughout.
+
+HTTP/2 is on by default since 0.3.0; its tuning API is experimental: `http2 { enabled }` is stable on both engines and
+the client's `pingInterval` too; `http2 { settings { } }` (`Http2Settings`) and the server's `repeatOffenderPenalty` are
+experimental.
+
+Stabilized in 0.3.0 with the configuration: `KuicksilverLogger` (`Default`, the platform's logger; `None`, `Stderr`,
+`platform(level)`, `stderr(level)`) and `LogLevel`, `Http3Discovery`, `ProxyProtocolConfig` and its builder,
+`KuicksilverPlainConnector`, `FileAltSvcStore(file)` on the JVM and Android, `QuicConfig.toBuilder()` and
+`QuicEndpointConfig.toBuilder()`. The readers of `QuicConfig`, `QuicEndpointConfig`, `Http3Settings` and `Http2Settings`
+(their properties) are internal: build a configuration with its DSL and change a copy with `toBuilder()`. `TlsConfig`
+keeps public readers, which `TrustConfig.Custom` implementations use. `RateLimit`, `RaceHeadStart`, `KnownServers` and
+`WebTransportProxyPolicy` are only used in experimental blocks and are experimental.
 
 ### `kuicksilver-native`
 
@@ -260,19 +293,19 @@ type is experimental, so are its members.
 |---|---|
 | `TlsIdentity.Reloadable`, `TlsIdentity.reloadable`, `TrustConfig.ReloadableCa`, `TrustConfig.reloadable` | rotating the server certificate and the client CA bundle without a restart |
 | `EarlyDataState`, `QuicSessionTicket`, `EarlyDataAdmission`, `TlsEvent.SessionTicket`, `QuicTlsSession.earlyDataAccepted`, `resume`, `enableEarlyData`, `QuicCrypto.newSession(config, earlyData)` | 0-RTT: the client's mode and the plumbing between TLS and QUIC (ADR-0015) |
-| `EchConfigList`, `EchKey`, `EchServerKeys` (`AutoCloseable`), `EchStatus`, `TlsException.EchRejected`, `TlsConfig.echConfigList`, `echGrease`, `echKeys` (and the builder's), `TlsConnection.echStatus`, `QuicTlsSession.echStatus` | Encrypted Client Hello (RFC 9849) |
+| `EchConfigList`, `EchKey`, `EchServerKeys` (`AutoCloseable`), `EchStatus`, `TlsException.EchRejected`, `TlsConfig.echConfigList`, `echGrease`, `echKeys` (the builder's `ech { configList, grease, keys }`), `TlsConnection.echStatus`, `QuicTlsSession.echStatus` | Encrypted Client Hello (RFC 9849) |
 | `CertificateVerifier.verify(chain, serverName, role, context)`, `VerificationContext` (`hiddenName`, `echPublicName`) | what a custom verifier is told about the name it checks (RFC 9849 sections 6.1.7 and 10.7) |
 
 ### `kuicksilver-quic`
 
 | API | Feature |
 |---|---|
-| `QuicClientConfig.earlyData`, `QuicServerConfig.earlyData`, `earlyDataContext`, `QuicEndpoint.connectEarly`, `QuicConnection.awaitHandshake`, `earlyDataAccepted`, `isHandshakeComplete`, `QuicStream.receivedEarly`, `ConnectionEvent.EarlyDataAccepted` / `EarlyDataRejected` / `SessionTicket`, `ConnectionCore.earlyDataAccepted` / `streamReceivedEarly`, `QuicException.ConnectionLost.ZeroRttRejected`, `QuicException.StreamError.EarlyDataRejected`, `ZeroRttOutcome` | 0-RTT |
+| `QuicClientConfig.earlyData`, `QuicServerConfig.acceptEarlyData`, `earlyDataContext`, `QuicEndpoint.connectEarly`, `QuicConnection.awaitHandshake`, `earlyDataAccepted`, `isHandshakeComplete`, `QuicStream.receivedEarly`, `ConnectionEvent.EarlyDataAccepted` / `EarlyDataRejected` / `SessionTicket`, `ConnectionCore.earlyDataAccepted` / `streamReceivedEarly`, `QuicException.ConnectionLost.ZeroRttRejected`, `QuicException.StreamError.EarlyDataRejected`, `ZeroRttOutcome` | 0-RTT |
 | `QuicServerConfig.newTokenLifetime`, `newTokenReplayCapacity`, `QuicClientConfig.tokenStore`, `QuicTokenStore` (to implement), `MemoryTokenStore`, `EndpointStats.newTokensIssued` / `newTokensAccepted` / `newTokensRejected` | NEW_TOKEN address-validation tokens (RFC 9000 section 8.1.3) |
-| `PreferredAddress`, `QuicServerConfig.preferredAddress`, `QuicConfig.followPreferredAddress`, `PathChangeReason.PreferredAddress` | the server's preferred address (RFC 9000 section 9.6) |
-| `QuicConfig.pmtudIcmpHints`, `EndpointStats.ptbAccepted` / `ptbIgnored` | ICMP Packet Too Big and EMSGSIZE as DPLPMTUD hints (RFC 8899 section 4.6) |
+| `PreferredAddress`, `QuicServerConfig.preferredAddress`, `PathChangeReason.PreferredAddress` (`quicConfig { migration { followPreferredAddress } }` is stable) | the server's preferred address (RFC 9000 section 9.6) |
+| `EndpointStats.ptbAccepted` / `ptbIgnored` (`quicConfig { pathMtu { icmpHints } }` is stable) | ICMP Packet Too Big and EMSGSIZE as DPLPMTUD hints (RFC 8899 section 4.6) |
 | `CongestionController` (to implement), `Bbr` | pluggable congestion control and BBRv3 (`Cubic` and `NewReno` are stable) |
-| `ConnectionCore`, `EndpointCore`, `QuicConnection.core`, `QuicConfig.toBuilder()`, `QuicEndpointConfig.toBuilder()` | the sans-IO core used directly |
+| `ConnectionCore`, `EndpointCore`, `QuicConnection.core` | the sans-IO core used directly |
 | `NetworkMigrator`, `MigrationEvent`, `QuicConnection.rebind` | automatic migration (`QuicConnection.migrate`, `addPath`, `probe`, `switchTo` are stable) |
 | Android: `QuicConnection.followDefaultNetwork(connectivityManager, scope)`, `ConnectivityManager.defaultNetworks()`, `DatagramIo.open(local, network, prefer)` | following the default network on Android |
 | Android: `qlogDirectory(context, name)` | a qlog directory in the app's cache directory |
@@ -281,7 +314,7 @@ type is experimental, so are its members.
 | `PathEvent.SocketLost`, `SocketDefunctException` | sockets the system took away (suspended iOS apps) |
 | `DatagramIo` (to implement), `DatagramSender`, `DatagramPacketWriter`, `ConnectionStats.datagramsDroppedSocket` | custom socket and datagram plumbing |
 | `QuicConnection.peerSupportsDatagrams` | whether the peer advertised `max_datagram_frame_size` above 0 (RFC 9221 section 3) |
-| 24 `EndpointStats` counters from `connectionsActive` to `listenerFailures`, `KuicksilverLogger`, `LogLevel`, `ConnectionListener`, `ConnectionInfo`, `QuicEndpointConfig.logger` / `listener`, `AsyncQlogSink` | observability (`QlogSink`, `DirectoryQlogSink`, `QuicConfig.qlog`, `QuicConnection.stats`, `QuicEndpoint.stats` and the first `EndpointStats` counters, `initialsDropped` to `connectionsCreated`, are stable) |
+| 24 `EndpointStats` counters from `connectionsActive` to `listenerFailures`, `ConnectionListener`, `ConnectionInfo`, `quicEndpointConfig { observability { connectionListener } }`, `AsyncQlogSink` | observability (`KuicksilverLogger`, `LogLevel`, `QlogSink`, `DirectoryQlogSink`, `observability { logger; qlog }`, `QuicConnection.stats`, `QuicEndpoint.stats` and the first `EndpointStats` counters, `initialsDropped` to `connectionsCreated`, are stable) |
 | `QuicEndpoint.shutdown(grace, code, reason)` | graceful shutdown |
 | `ConnectionCore.glitchByFrameType` (delicate) | glitch accounting per frame type |
 | `QuicStream.sentFinalSize` / `receivedFinalSize`, `ConnectionEvent.StreamFinalSize`, `QuicStream.receivedOffset`, `QuicStream.sendReleased`, `ConnectionCore.maxSendBuffer` | the final size of each stream half, the highest offset received and the bytes the send buffer released (RFC 9000 sections 4.1, 4.5) |
@@ -290,12 +323,12 @@ type is experimental, so are its members.
 
 | API | Feature |
 |---|---|
-| `Http3Endpoint.connectEarly`, `Http3Request.allowEarlyData`, `Http3Settings.earlyData`, `Http3EarlyDataPolicy`, `Http3ServerRequest.receivedEarly` | 0-RTT |
+| `Http3Endpoint.connectEarly`, `Http3Request.allowEarlyData`, `http3Settings { earlyData }`, `Http3EarlyDataPolicy`, `Http3ServerRequest.receivedEarly` | 0-RTT |
 | `Http3Endpoint.shutdown` | graceful shutdown (`Http3Endpoint.stats` is stable, its counters as in `kuicksilver-quic`) |
 
 ### `kuicksilver-http2`
 
-The whole module is experimental in 0.3.0 (ADR-0017): `Http2Settings`, `Http2ErrorCode` and `Http2Exception` (what a
+The whole module is experimental in 0.3.0 (ADR-0017): `Http2Settings` (`http2Settings { }`), `RateLimit`, `Http2ErrorCode` and `Http2Exception` (what a
 call over HTTP/2 fails with) are `@ExperimentalKuicksilverApi`; the coroutine runtime (`io.kuicksilver.http2.runtime`
 connections and streams) is `@InternalKuicksilverApi`, for the engines only; the frame codec, HPACK, the message rules and
 the connection core are internal.
@@ -304,23 +337,21 @@ the connection core are internal.
 
 | API | Feature |
 |---|---|
-| `http3 { earlyData }` | 0-RTT |
+| the blocks `http3 { earlyData { } stall { } webTransport { } expert { } }`, `http1 { }`, `proxies { }`, `tls { ech { } }` and the exceptions of the stable blocks (Status column of the [configuration reference](guide/configuration.md#ktor-client)) | 0-RTT, stall detection, WebTransport, HTTP/1.1 known servers, proxies, Encrypted Client Hello |
 | `HttpClient.clearAlternativeServices`, `AltSvcStore.clear`, `AltSvcStore.networkId`, `Http3ConnectionMigration.networks` | removing Alt-Svc information with origin data (RFC 7838 section 9.4) and the network it was learned on (section 2.2) |
-| `maxConnectionsCount`, `maxConnectionsPerRoute`, `idleTimeout`, `maxConnectionLifetime` | connection limits and idle cleanup |
-| `logger`, `eventListener`, `KuicksilverEventListener`, `ProtocolReason`, `http3 { qlog; connectionListener }` | observability |
-| `http2 { enabled; settings; pingInterval }`, `Http2ClientConfig`, `FallbackReason.H2Refused` | HTTP/2 on the TCP path |
-| JVM and Android: `FileAltSvcStore(file)` | the persistent Alt-Svc store from a `java.io.File` (Android API 24 and up) |
-| `ech { }`, `EchClientConfig` (`configLists`, `grease`, `fromHttpsRecords`) | Encrypted Client Hello (RFC 9849, RFC 9848) |
+| `KuicksilverEventListener`, `ProtocolReason`, `observability { eventListener; connectionListener }` | observability (`observability { logger; qlog; protocolChoiceLogLevel }` is stable) |
+| `http2 { priorKnowledge; settings { } }`, `FallbackReason.H2Refused` | h2c and HTTP/2 tuning (`http2 { enabled; pingInterval }` is stable) |
 
 ### `kuicksilver-ktor-server`
 
 | API | Feature |
 |---|---|
-| `quicEarlyData`, `ApplicationRequest.receivedEarly` | 0-RTT |
-| `identityReloadInterval` | `EngineMain` watching the certificate and client CA files |
-| `logger`, `qlog`, `connectionListener`, `eventListener`, `KuicksilverServerEventListener` | observability |
-| `http2`, `http2Settings` | HTTP/2 on TLS connectors (opt-in) |
-| `KuicksilverTlsConnector.echKeys` and its builder's `echKeys`; `EngineMain`'s `kuicksilver.tls.echKeys` | Encrypted Client Hello keys of a server (RFC 9849) |
+| the blocks `http3 { earlyData { } webTransport { } endpoint { expert { } } }` and the exceptions of the stable blocks (Status column of the [configuration reference](guide/configuration.md#ktor-server)) | 0-RTT, WebTransport, QUIC admission internals |
+| `ApplicationRequest.receivedEarly` | 0-RTT |
+| `KuicksilverServerEventListener`, `observability { connectionListener; eventListener }` | observability (`observability { logger; qlog }` is stable) |
+| `http2 { settings { }; repeatOffenderPenalty }` | HTTP/2 tuning (HTTP/2 itself, `http2 { enabled }`, is stable and on by default) |
+| `tls { echKeys }`; `EngineMain`'s `kuicksilver.tls.echKeys` | Encrypted Client Hello keys of a server (RFC 9849) |
+| `engine.http3Advertising`, `http3Stats`, `http3Status`, `updateLoadBalancer` | run-time control of HTTP/3 |
 
 ### `kuicksilver-ktor-network`
 
@@ -331,5 +362,6 @@ No experimental API. `TlsSocket`, `Socket.tls()` and `Socket.tlsServer()` are st
 
 These are stable, but read their KDoc before relying on them:
 
-- `QuicEndpointConfig.loops > 1` throws `UnsupportedOperationException` without the accelerated socket (and no `io`),
+- `quicEndpointConfig { loops }` above 1 throws `UnsupportedOperationException` without the accelerated socket (and no
+  `runtime { io }`),
   and a QUIC server on Kotlin/Native needs the accelerated socket.

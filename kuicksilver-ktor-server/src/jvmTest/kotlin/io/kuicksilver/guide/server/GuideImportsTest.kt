@@ -22,6 +22,7 @@ import io.kuicksilver.http3.Http3EarlyDataPolicy
 import io.kuicksilver.http3.UdpProxy
 import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.ktor.network.websocket.PerMessageDeflate
+import io.kuicksilver.ktor.server.H2cMode
 import io.kuicksilver.ktor.server.Http3Advertising
 import io.kuicksilver.ktor.server.Kuicksilver
 import io.kuicksilver.ktor.server.KuicksilverServerEventListener
@@ -36,8 +37,12 @@ import io.kuicksilver.quic.qlog.AsyncQlogSink
 import io.kuicksilver.quic.qlog.DirectoryQlogSink
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.ClientAuth
+import io.kuicksilver.tls.EchKey
+import io.kuicksilver.tls.EchServerKeys
+import io.kuicksilver.tls.ServerTlsOverride
 import io.kuicksilver.tls.TlsException
 import io.kuicksilver.tls.TlsIdentity
+import io.kuicksilver.tls.TlsVersions
 import io.kuicksilver.tls.TrustConfig
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -106,6 +111,14 @@ fun everyServerImport(
                 connectUdp(UdpProxy())
             }
         }
+    embeddedServer(Kuicksilver, configure = {
+        tls {
+            versions = TlsVersions.Tls12And13
+            echKeys = EchServerKeys(listOf(EchKey(File(keyFile).readBytes())))
+            sniSelector = { ServerTlsOverride(identity) }
+        }
+        plainConnector { h2c = H2cMode.WithHttp11 }
+    }, module = module)
     server.engine.http3Advertising = Http3Advertising.Drain
     kotlinx.coroutines.runBlocking {
         withTimeoutOrNull(1.minutes) { while (server.engine.http3Stats.sumOf { it.connectionsActive } > 0) delay(1.seconds) }

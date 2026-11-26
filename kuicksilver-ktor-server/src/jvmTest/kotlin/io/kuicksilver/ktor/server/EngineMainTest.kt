@@ -95,7 +95,8 @@ class EngineMainTest {
                     .map { File(it, "docs/guide/ktor.md") }
                     .first { it.exists() }
                     .readText()
-            val block = guide.substringAfter("```hocon\n").substringBefore("```")
+            val block =
+                guide.substringAfter("### EngineMain and configuration keys").substringAfter("```hocon\n").substringBefore("```")
             val chain = File(dir, "fullchain.pem").apply { writeText(TestCerts.toPem("CERTIFICATE", TestCerts.server)) }
             val key = File(dir, "privkey.pem").apply { writeText(TestCerts.toPem("PRIVATE KEY", TestCerts.serverKey)) }
             val conf =
@@ -118,6 +119,49 @@ class EngineMainTest {
                     4096,
                     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class) c.http3.endpoint.maxConnectionsPerIp,
                 )
+                val resp =
+                    rawHttp(
+                        server.engine
+                            .resolvedConnectors()
+                            .first()
+                            .port,
+                        get,
+                    )
+                assertTrue(resp.endsWith("engine main") && resp.contains("Alt-Svc: h3="), resp)
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * The first screen's `application.conf` of docs/guide/ktor.md ("Minimal example"), loaded as it stands: only the port
+     * (with a loopback host), the module and the two file paths are replaced.
+     */
+    @Test fun guideFirstScreenConfStarts() =
+        serverTest {
+            val guide =
+                generateSequence(File("").absoluteFile) { it.parentFile }
+                    .map { File(it, "docs/guide/ktor.md") }
+                    .first { it.exists() }
+                    .readText()
+            val block = guide.substringAfter("**Minimal example.**").substringAfter("```hocon\n").substringBefore("```")
+            val chain = File(dir, "fullchain.pem").apply { writeText(TestCerts.toPem("CERTIFICATE", TestCerts.server)) }
+            val key = File(dir, "privkey.pem").apply { writeText(TestCerts.toPem("PRIVATE KEY", TestCerts.serverKey)) }
+            val conf =
+                block
+                    .replace("ktor.deployment.port = 443", "ktor.deployment.port = 0\nktor.deployment.host = \"127.0.0.1\"")
+                    .replace("com.example.ApplicationKt.module", module)
+                    .replace("/etc/letsencrypt/live/example.com/fullchain.pem", chain.invariantSeparatorsPath)
+                    .replace("/etc/letsencrypt/live/example.com/privkey.pem", key.invariantSeparatorsPath)
+            assertTrue(
+                conf.contains("ktor.deployment.port = 0") && conf.contains(chain.invariantSeparatorsPath) && conf.contains(module),
+                conf,
+            )
+            val file = File(dir, "application.conf").apply { writeText(conf) }
+            val server = EngineMain.createServer(arrayOf("-config=${file.path}"))
+            server.startSuspend(false)
+            try {
+                assertEquals(1.hours, server.engine.configuration.tls.reloadInterval)
                 val resp =
                     rawHttp(
                         server.engine

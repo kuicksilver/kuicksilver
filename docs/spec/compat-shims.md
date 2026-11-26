@@ -19,8 +19,8 @@ behaviour that is legal but unusual. A borderline entry says why it is listed.
 
 | # | Shim | Peers | On by default | Kind |
 |---|---|---|---|---|
-| 1 | [WebTransport draft-02 and draft-14 codepoints](#1-webtransport-draft-02-and-draft-14) | Chrome, Firefox (draft-02); Safari (draft-14) | no (`webTransport`) | older drafts next to draft-17 |
-| 2 | [The draft-02 response field `sec-webtransport-http3-draft`](#2-the-draft-02-response-field) | Chrome | no (`webTransport`) | a field no draft defines |
+| 1 | [WebTransport draft-02 and draft-14 codepoints](#1-webtransport-draft-02-and-draft-14) | Chrome, Firefox (draft-02); Safari (draft-14) | no (`webTransport { enabled }`) | older drafts next to draft-17 |
+| 2 | [The draft-02 response field `sec-webtransport-http3-draft`](#2-the-draft-02-response-field) | Chrome | no (`webTransport { enabled }`) | a field no draft defines |
 | 4 | [Pre-IANA `reset_stream_at` codepoint](#4-pre-iana-reset_stream_at-codepoint) | Google QUICHE (knows only this one); quic-go and picoquic send both | no (`resetStreamAt`, on with WebTransport) | a second, unregistered codepoint |
 | 9 | [HTTP/2: a stream that depends on itself is a stream error](#9-http2-a-stream-that-depends-on-itself-is-a-stream-error) | h2spec 2.6.0 (RFC 7540 checks); nghttp2 and Go keep the same error | yes (client and server) | retained RFC 7540 error, stricter than RFC 9113 (borderline) |
 | T1 | [Interop client: request and FIN in one STREAM frame](#t1-interop-client-request-and-fin-in-one-stream-frame) | quiche's hq server | test only | not shipped in the library |
@@ -58,7 +58,7 @@ them goes beyond what draft-17 describes, though in the spirit of its §7.1; the
 
 **Justification (kept, hardening audit 2026-11-21, S1).** draft-ietf-webtrans-http3 §7.1 has endpoints announce every
 draft they support; Chrome and Firefox (draft-02) and Safari 26.4+ (draft-14) are the only WebTransport clients in the
-field; the whole feature is opt-in (`webTransport`), and draft-02 and draft-14 sessions run their own draft's rules in
+field; the whole feature is opt-in (`webTransport { enabled }`), and draft-02 and draft-14 sessions run their own draft's rules in
 full. Draft-17 (November 2026) keeps that model (§7.1 above) and changes nothing for these two drafts. Without the shim
 no browser can open a session: a page's `new WebTransport()` rejects, with no fallback. Security impact: none either way.
 
@@ -69,7 +69,7 @@ no browser can open a session: a page's `new WebTransport()` rejects, with no fa
 `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtSessionImpl.kt:878` (the client's draft-02
 request field).
 
-**On by default.** No: only with `Http3Settings.webTransport` (false by default) or the Ktor server's `webTransport`
+**On by default.** No: only with `http3Settings { webTransport { enabled } }` (false by default) or the Ktor server's `http3 { webTransport { enabled } }`
 (false by default), and on the client per `HttpClient.webTransport` call.
 
 **Tests.** `webtransport.WtDraftVersionsTest.eachDraftClientIsServedInItsDraft`, `.eachDraftServerGetsACONNECTOfItsDraft`,
@@ -90,7 +90,7 @@ greater than "1"" as declaring flow control, and its `SETTINGS_WT_INITIAL_*` def
 (Safari) that sends `SETTINGS_WT_MAX_SESSIONS` above 1 and no initial limits therefore gets a session where our side may
 open no stream and send no stream data until the client sends WT_MAX_STREAMS and WT_MAX_DATA; one that never does
 leaves our sends waiting (we send WT_STREAMS_BLOCKED and WT_DATA_BLOCKED once per limit). We cannot avoid this and
-conform. Escape hatch: with all three `Http3Settings.webTransportInitialMax*` at 0 we never declare flow control, and a
+conform. Escape hatch: with all three `Http3Settings` `webTransport { initialMax* }` limits at 0 we never declare flow control, and a
 connection carries one session, as before pooling. Safari 27.2 does not meet it: it sends `SETTINGS_WT_MAX_SESSIONS=1`
 with `SETTINGS_WT_INITIAL_MAX_DATA=8388608` and 100 streams each way, which declare flow control with credit (run of
 2026-11-25).
@@ -133,7 +133,7 @@ value at `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransp
 
 ## 4. Pre-IANA `reset_stream_at` codepoint
 
-**What it does.** With `QuicConfig.resetStreamAt` the transport parameter is sent twice, as 0x1d and as
+**What it does.** With `quicConfig { expert { resetStreamAt } }` the transport parameter is sent twice, as 0x1d and as
 0x17f7586d2cb571, the codepoint of earlier versions of the draft, and either one received enables RESET_STREAM_AT (a
 non-empty value of either is `TRANSPORT_PARAMETER_ERROR`).
 
@@ -158,7 +158,7 @@ and picoquic announce and accept both; RFC 9000 §7.4.2 makes the extra codepoin
 **Where.** `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/wire/TransportParametersCodec.kt:44` (the
 codepoint), :133 (sent), :332 (accepted).
 
-**On by default.** No: `QuicConfig.resetStreamAt` is false by default; WebTransport turns it on (server and client).
+**On by default.** No: `quicConfig { expert { resetStreamAt } }` is false by default; WebTransport turns it on (server and client).
 
 **Tests.** `wire.TransportParametersTest.resetStreamAtBothCodepoints`.
 
@@ -323,7 +323,7 @@ the data.
     the server rejects it with 400 in a request head and a trailer section (§5.2 lets it reject or replace);
   - a bare LF as a line end (§2.2 MAY): the client takes it in a response head and a trailer section, kept on purpose: the
     client is the final recipient, so no second parser behind it can read the line otherwise, and Go and curl do the
-    same; the server refuses it (400) unless the application sets `h1AllowBareLf`, since a server sits behind proxies
+    same; the server refuses it (400) unless the application sets `http1 { allowBareLf }`, since a server sits behind proxies
     (§11.2), as llhttp; the chunk-size line takes CRLF alone on both sides;
   - the request-line whitespace §3 lets a recipient accept (HTAB, VT, FF, a bare CR as SP, whitespace around the line): not
     accepted since 0.3.0, the server takes exactly one SP, as Go and llhttp;
@@ -351,7 +351,7 @@ the data.
   refuses a server's GOAWAY that names an even stream, as nghttp2 does; a server's value names pushes, which we never make,
   and refusing Go's would reset the requests its shutdown waits for ([details](rfc/9113.md#s6-8-goaway)).
 - **SOCKS5 empty password**: refused (RFC 1929 §2, PASSWD has 1 to 255 octets), stricter than curl and Go.
-- **Greasing** (`Http3Settings.grease`, `grease_quic_bit`): excluded by definition.
+- **Greasing** (`http3Settings { expert { grease } }`, `grease_quic_bit`): excluded by definition.
 - **Android API levels** (`java.nio.file`, `DnsResolver.rawQuery`): platform APIs, not a peer's protocol.
 - **The interop runner's trust** (`InteropTrust`, `KSL_INTEROP_EXPECTED_NAME`): the runner's self-signed test
   certificates, test code.

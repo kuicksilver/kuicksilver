@@ -66,10 +66,10 @@ runtime is a set of coroutines over `QuicConnection` streams. The code blocks be
 
 Header compression uses the static table always and the dynamic table only when both sides allow it:
 
-- What we advertise to the peer (`Http3Settings.qpackMaxTableCapacity`, `qpackBlockedStreams`) defaults to 0/0, like
-  most implementations: the peer's encoder then sends static references and literals only. `enableQpackDynamicTable()`
+- What we advertise to the peer (`http3Settings { qpack { maxTableCapacity, blockedStreams } }`) defaults to 0/0, like
+  most implementations: the peer's encoder then sends static references and literals only. `qpack { enableDynamicTable() }`
   advertises 4096 bytes and 16 blocked streams.
-- Our own encoder uses at most `encoderMaxTableCapacity` (4096 by default) of whatever the peer advertises, and blocks
+- Our own encoder uses at most `qpack { encoderMaxTableCapacity }` (4096 by default) of whatever the peer advertises, and blocks
   at most min(peer's `SETTINGS_QPACK_BLOCKED_STREAMS`, 100) streams. Without a blocking budget it still inserts
   entries, but references them only once the peer has acknowledged them.
 - At most 1000 sections wait for the peer's acknowledgment; above that the encoder sends static references and
@@ -87,7 +87,7 @@ Header compression uses the static table always and the dynamic table only when 
 - An encoder-stream instruction the transport delivers in pieces is reassembled in linear time: once its length is
   known the decoder only appends bytes until it is complete (at most 2 x 64 KiB + 64 bytes are held).
 - A field section that references entries still in flight on the peer's encoder stream waits for them (at most
-  `qpackBlockedStreams` such streams; one more closes the connection with `QPACK_DECOMPRESSION_FAILED`). If the peer
+  `qpack { blockedStreams }` such streams; one more closes the connection with `QPACK_DECOMPRESSION_FAILED`). If the peer
   resets a stream while it waits, the decoder sends a Stream Cancellation.
 
 ```kotlin
@@ -124,7 +124,7 @@ close or a stream reset. Every exception is copyable (`CopyableThrowable`), and 
 
 `Http3Endpoint` binds a QUIC endpoint and speaks HTTP/3 on it. Its TLS configurations must offer ALPN `h3`; a server
 closes accepted connections that negotiated anything else. `SETTINGS_H3_DATAGRAM` follows the transport: it is sent as
-1 only when `QuicConfig.maxDatagramFrameSize` is not 0.
+1 only when the QUIC datagrams are on (`quicConfig { datagrams { maxFrameSize } }` not null).
 
 ```kotlin
 // guide:http3:endpoints
@@ -174,7 +174,7 @@ coroutine) resets the stream with `H3_REQUEST_CANCELLED`; the connection keeps s
 OPTIONS) without a body. Every other request waits for the handshake. If the server answers `425 Too Early`, the client
 repeats the request once after the handshake (RFC 8470 section 5.2).
 
-On the server, bind with `quicServerConfig(tls) { earlyData = true }`. The endpoint binds its SETTINGS into its tickets,
+On the server, bind with `quicServerConfig(tls) { acceptEarlyData = true }`. The endpoint binds its SETTINGS into its tickets,
 so changed SETTINGS refuse 0-RTT (RFC 9114 section 7.2.4.2). A request that arrived in 0-RTT before the handshake
 completed is handled by `Http3Settings.earlyData`:
 
@@ -234,7 +234,7 @@ wait for it too, at most until `maxHeaderBlockTime` ends the waiting streams. Wi
 WebTransport streams must send their signal and Session ID within the same time, or are reset with
 `WT_BUFFERED_STREAM_REJECTED`. A peer's unidirectional stream must send its type within it too, or is stopped with
 `H3_STREAM_CREATION_ERROR`; one stalled stream per control or QPACK stream the peer has not opened yet is spared while
-its bytes so far could still be that stream's type. The Ktor server bounds `maxHeaderBlockTime` by `requestHeaderTimeoutSeconds`.
+its bytes so far could still be that stream's type. The Ktor server bounds `maxHeaderBlockTime` by its `requestHeaderTimeout`.
 
 ## Shutdown and GOAWAY
 
@@ -261,7 +261,7 @@ sends application code 0, which HTTP/3 does not define); `Http3Endpoint.shutdown
 A peer that keeps sending frames nobody needs (unknown frames on the control stream or on a request stream; reserved
 GREASE frames and empty DATA frames beyond the first 8 of a stream, the control stream included;
 unidirectional streams that end or are reset before their type, PRIORITY_UPDATE floods) spends tokens of a glitch bucket (1000 tokens, 33 per second); an empty bucket closes the
-connection with `H3_EXCESSIVE_LOAD`. `Http3Settings.glitchProtection = false` turns this off.
+connection with `H3_EXCESSIVE_LOAD`. `http3Settings { expert { glitchProtection = false } }` (delicate) turns this off.
 
 ## qlog
 
@@ -390,7 +390,7 @@ Reading pauses while `receiveQueue` capsules (16) wait for the collector, which 
 so collect `capsules` even when only datagrams matter, or list no `knownTypes`. `send`, `close()` and a falling-back
 `sendDatagram` have no deadline of their own while the peer withholds flow-control credit; cancelling `close()` leaves
 the writer running in the connection, so bound them with `withTimeout` and `reset` the stream when it expires. Options:
-[configuration reference](configuration.md#capsuleconfig-experimental). The Capsule Protocol is only available on HTTP/3;
+[configuration reference](configuration.md#low-level). The Capsule Protocol is only available on HTTP/3;
 HTTP/1.1 and HTTP/2 upgrades are not supported. CONNECT-UDP builds on it: [CONNECT-UDP](#connect-udp-experimental).
 
 ## CONNECT-UDP (experimental)
@@ -400,8 +400,8 @@ sends an Extended CONNECT with `:protocol` `connect-udp` whose path names the ta
 travel as HTTP datagrams with Context ID 0 (section 5), QUIC DATAGRAM frames when both sides negotiated HTTP/3 datagrams
 and DATAGRAM capsules otherwise. Both sides are here, over HTTP/3 only: HTTP/1.1 (`Upgrade: connect-udp`, section 3.2)
 and HTTP/2 (sections 3.4, 3.5) are not supported, as the Capsule Protocol is not on those versions here (ADR-0024). The Ktor
-engines offer it too: the server engine's `connectUdp` ([Ktor: CONNECT-UDP over HTTP/3](ktor.md#connect-udp-over-http3-experimental))
-and the client engine's `connectUdpProxy` ([Ktor: HTTP/3 through a CONNECT-UDP proxy](ktor.md#http3-through-a-connect-udp-proxy-experimental)).
+engines offer it too: the server engine's `http3 { connectUdp }` ([Ktor: CONNECT-UDP over HTTP/3](ktor.md#connect-udp-over-http3-experimental))
+and the client engine's `proxies { connectUdp }` ([Ktor: HTTP/3 through a CONNECT-UDP proxy](ktor.md#http3-through-a-connect-udp-proxy-experimental)).
 
 A server serves it with a `UdpProxy`; the HTTP/3 settings need `enableConnectProtocol` (and `h3Datagram`, on by
 default). Authenticate the client before `serve`: "HTTP servers that support UDP proxying ought to restrict its use to
@@ -441,8 +441,8 @@ does (`Unavailable` without the privilege and on Apple platforms and Windows, wh
 message leaves from the address the target sent to: the default sockets (wildcard, accelerated) report it per datagram,
 and a `socketFactory` binding one address answers from it; a wildcard portable socket cannot, so it sends none
 (`stats.packetTooBigNoSource`); one the raw socket does not send (no socket for the family opened, the kernel refused
-it, or the sender ruled out its addresses) is counted in `stats.packetTooBigFailed`. Against floods (section 7, CWE-400): `packetRate` (20 000 a second, a burst of `packetBurst` 2000) per
-tunnel and `clientPacketRate` (50 000, burst 5000) per client over all its tunnels, a client being its IPv4 address or
+it, or the sender ruled out its addresses) is counted in `stats.packetTooBigFailed`. Against floods (section 7, CWE-400): `packets` (`RateLimit(20_000, 2_000)`: 20 000 a second, a burst of 2000) per
+tunnel and `clientPackets` (`RateLimit(50_000, 5_000)`) per client over all its tunnels, a client being its IPv4 address or
 its IPv6 /64 (`clientIpv6Prefix`); `unansweredLimit` (256 payloads a client sends to a target that has not answered yet,
 across its tunnels); `maxTunnels` (4096; one more is 503) and `maxTunnelsPerClient` (64; one more is 429), both with
 `connection_limit_reached`. A target datagram above `linkMtu` bytes is dropped whole, never forwarded cut; an ICMP port
@@ -452,7 +452,7 @@ unreachable is ignored and counted in `stats.ignoredUnreachable`). The system re
 with its socket, when the client ends the stream (our side ends too), resets it or its connection is gone; when the
 socket fails (the stream is reset and stopped with `H3_CONNECT_ERROR`); or after `idleTimeout` without traffic (two
 minutes, the floor section 3.1 sets; FIN and `STOP_SENDING H3_NO_ERROR`). `activeTunnels` and `stats` show what it does.
-Options: [configuration reference](configuration.md#udpproxyconfig-experimental).
+Options: [configuration reference](configuration.md#low-level).
 
 A client opens a tunnel with `connectUdp` on a connection to the proxy. The template is checked against section 2 when
 it is parsed and the target against section 3 before anything is sent (`IllegalArgumentException`); an answer other than
@@ -491,9 +491,9 @@ closing the inner endpoint closes its tunnel.
 ## WebTransport (experimental)
 
 WebTransport over HTTP/3 (draft-ietf-webtrans-http3-17) is experimental (`@ExperimentalKuicksilverApi`): sessions,
-their streams and datagrams, close and drain. Both sides set `webTransport = true` in `http3Settings` (it needs
+their streams and datagrams, close and drain. Both sides set `webTransport { enabled = true }` in `http3Settings { }` (it needs
 `enableConnectProtocol` and `h3Datagram`; `Http3Endpoint.bind` refuses it when QUIC datagrams are off, and
-`Http3Endpoint` turns `QuicConfig.resetStreamAt` on with it). Browsers and other libraries do not speak draft-17 yet, so
+`Http3Endpoint` turns the QUIC `expert { resetStreamAt }` on with it; the Ktor engines derive all of these). Browsers and other libraries do not speak draft-17 yet, so
 a server also announces the SETTINGS of draft-16 (webtransport-go, picoquic), draft-14 (Safari) and draft-02 (Chrome,
 Firefox), and takes each draft's own `:protocol` token (`webtransport-h3` for draft-17 and draft-16, `webtransport`
 for draft-14 and draft-02; another is answered with 400); a client announces draft-17,
@@ -519,12 +519,12 @@ offer fails `webTransport` with `WebTransportException.Alpn` (a `WT-Protocol` th
 String is ignored).
 
 WebTransport flow control (draft-ietf-webtrans-http3-17 section 5) is on when both sides declare it in their SETTINGS,
-which `webTransport` does by default with `webTransportInitialMaxStreamsBidi`, `webTransportInitialMaxStreamsUni` and
-`webTransportInitialMaxData` (24, 24 and 3 932 160 bytes per session). Each side keeps to the other's stream and data
+which `webTransport { }` does by default with `initialMaxStreamsBidi`, `initialMaxStreamsUni` and
+`initialMaxData` (24, 24 and 3 932 160 bytes per session). Each side keeps to the other's stream and data
 limits; the receiver raises its own as the peer's streams end and as their bytes are consumed (WT_MAX_STREAMS,
 WT_MAX_DATA), a blocked sender says so once per limit, and a peer that breaks a limit gets its session closed with
 WT_FLOW_CONTROL_ERROR (`WebTransportException.FlowControl`). Several sessions then share a connection: a server takes up
-to `webTransportMaxSessions` (4) at once and refuses one more with `H3_REQUEST_REJECTED` before the application sees it
+to `webTransport { maxSessions }` (4) at once and refuses one more with `H3_REQUEST_REJECTED` before the application sees it
 (the client gets `Http3Exception.RequestNotProcessed` and can open it on another connection), and a client puts at most
 as many on one connection (`WebTransportException.ConnectionFull` beyond). A server also takes new sessions on a
 connection at a bounded rate (section 5.2): a burst of 32, then 8 a second; one more is refused the same way.
@@ -574,18 +574,18 @@ Section 5 sets no order, so a sender of another implementation may serve its str
 comes back only as the application reads: when the peer is not this library, when its session is incremental, or when
 the application reads a session's streams out of the order they were opened, read them concurrently (a coroutine per accepted stream), or give the session
 enough data credit for what its peer sends at once; a strictly sequential reader under a tight
-`webTransportInitialMaxData` can otherwise stall the session.
+`initialMaxData` can otherwise stall the session.
 
 Sessions
 sharing a connection take turns for its stream credit and its send buffer (section 8): a weighted round robin in which
 a session's weight follows its CONNECT stream's urgency (8 − urgency), so a more urgent session gets the larger share
 but none waits more than a round, and a PRIORITY_UPDATE takes effect at once. Each session also holds at most its part
-of the connection's send buffer (`maxSendBuffer`): a reserve stays free for a session that joins, and the rest is split
+of the connection's send buffer (`flowControl { maxSendBuffer }`): a reserve stays free for a session that joins, and the rest is split
 between the open sessions, so a session alone gets nearly all of it while one whose peer never reads a stream cannot
 stall the others. Datagrams are outside these turns: one session's burst can push other sessions' datagrams out of the
 connection's datagram queue (which drops the oldest), never stall their streams. The connection's receive window is
 kept at what the open sessions may have in flight together. `Http3Endpoint` refuses settings whose sessions do not fit
-the QUIC limits (`maxBidiStreams`, `maxUniStreams`, `maxConnectionWindow`). All three initial limits at 0 turn flow
+the QUIC limits (`maxBidiStreams`, `expert { maxUniStreams }`, `flowControl { maxConnectionWindow }`). All three initial limits at 0 turn flow
 control off: a connection then carries one session (section 5.1), and a second CONNECT is refused the same way.
 
 A draft-14 client (Safari) that declares flow control only with `SETTINGS_WT_MAX_SESSIONS` above 1 starts every

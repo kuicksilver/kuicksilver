@@ -19,40 +19,56 @@ observability).
 - Platforms: JVM 17 or newer, Android `minSdk` 24, iOS 15, macOS 12 (macOS 11 on the JVM), Linux, Windows
   ([Platforms](../stability.md#platforms)).
 - A server needs a certificate chain and private key (PEM). A client needs none: it trusts the platform's store unless you
-  set `trust`.
+  set `tls { trust }`.
 
 <a id="minimal-example"></a>
-**Minimal example.** A server with one route, and a client that makes one request to it (run the client inside a coroutine, for example
-`runBlocking { }`):
+**Minimal example.** The first screen of each engine: the few options most applications set, every one of them stable
+(no opt-in; the [configuration reference](configuration.md#first-screen) lists them). A server with a certificate from
+files, renewals picked up, on one port for TCP and UDP:
 
 ```kotlin
-val chainPem = File("fullchain.pem").readText()
-val keyPem = File("privkey.pem").readText()
-// guide:ktor:minimal-server
-val server = embeddedServer(Kuicksilver, configure = {
-    tlsConnector {
-        tls { identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray()) }
-        port = 8443
-    }
-}) {
-    routing {
-        get("/") { call.respondText("hello") }
-    }
+// guide:ktor:first-screen-server
+fun main() {
+    embeddedServer(Kuicksilver, configure = {
+        tls {
+            pemFiles(
+                "/etc/letsencrypt/live/example.com/fullchain.pem", // the key must be unencrypted PKCS#8
+                "/etc/letsencrypt/live/example.com/privkey.pem", // (-----BEGIN PRIVATE KEY-----)
+            )
+            reloadInterval = 1.hours // pick up certbot renewals
+        }
+        tlsConnector { port = 443 } // TCP 443: HTTP/2 and HTTP/1.1; UDP 443: HTTP/3, announced with Alt-Svc
+    }, module = Application::module).start(wait = true)
 }
-server.start(wait = true)
+// Open 443/tcp AND 443/udp. Check: curl -sI https://example.com | grep -i alt-svc; curl --http3-only -sI https://example.com
 ```
 
+The same server from `application.conf`, with `mainClass = io.kuicksilver.ktor.server.EngineMain` (the keys follow the
+DSL: [EngineMain and configuration keys](#enginemain-and-configuration-keys)):
+
+```hocon
+ktor.deployment.port = 443
+ktor.application.modules = [ com.example.ApplicationKt.module ]
+kuicksilver.tls {
+    certificateChain = "/etc/letsencrypt/live/example.com/fullchain.pem"
+    privateKey       = "/etc/letsencrypt/live/example.com/privkey.pem"
+    reloadInterval   = 1h
+}
+```
+
+The most common client configures nothing; the first request to a host goes over TCP (HTTP/2 or HTTP/1.1), HTTP/3 from
+the next one once the server sent `Alt-Svc` (run it inside a coroutine, for example `runBlocking { }`):
+
 ```kotlin
-val url = "https://example.com:8443/"   // the host name in the certificate
-// guide:ktor:minimal-client
-val client = HttpClient(Kuicksilver)
-println(client.get(url).bodyAsText())
+// guide:ktor:first-screen-client
+val client = HttpClient(Kuicksilver) // explicit engine: HttpClient() may pick OkHttp/Android first (ServiceLoader)
+println(client.get("https://example.com/").bodyAsText())
 client.close()
 ```
 
-The client trusts the platform's store, so the server's certificate must chain to a CA it knows and name the host in the URL. The complete server
-is under [Server](#server), the complete client under [Client](#client), and both with client certificates under
-[Mutual TLS](#mutual-tls-client-certificates).
+A mobile app with its own API (HTTP/3 from the first request, a remote kill switch, connection migration) is the first
+screen of [Client](#client); recipes for common deployments open [Server](#server). Client certificates on both sides are
+under [Mutual TLS](#mutual-tls-client-certificates), pinning under [Certificate pinning](#certificate-pinning).
 
 <a id="imports"></a>
 **Imports.** The code blocks on this page start after their imports; these are the imports they use, and the test that
@@ -82,6 +98,7 @@ import io.kuicksilver.http3.Http3EarlyDataPolicy
 import io.kuicksilver.http3.UdpProxy
 import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.ktor.network.websocket.PerMessageDeflate
+import io.kuicksilver.ktor.server.H2cMode
 import io.kuicksilver.ktor.server.Http3Advertising
 import io.kuicksilver.ktor.server.Kuicksilver
 import io.kuicksilver.ktor.server.KuicksilverServerEventListener
@@ -96,8 +113,12 @@ import io.kuicksilver.quic.qlog.AsyncQlogSink
 import io.kuicksilver.quic.qlog.DirectoryQlogSink
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.ClientAuth
+import io.kuicksilver.tls.EchKey
+import io.kuicksilver.tls.EchServerKeys
+import io.kuicksilver.tls.ServerTlsOverride
 import io.kuicksilver.tls.TlsException
 import io.kuicksilver.tls.TlsIdentity
+import io.kuicksilver.tls.TlsVersions
 import io.kuicksilver.tls.TrustConfig
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -132,12 +153,19 @@ import io.kuicksilver.http2.http2Settings
 import io.kuicksilver.http3.UdpProxyTemplate
 import io.kuicksilver.ktor.client.ConnectFailure
 import io.kuicksilver.ktor.client.ConnectUdpProxy
+import io.kuicksilver.ktor.client.Dns
+import io.kuicksilver.ktor.client.FileAltSvcStore
+import io.kuicksilver.ktor.client.HostPort
+import io.kuicksilver.ktor.client.Http3ConnectionMigration
 import io.kuicksilver.ktor.client.Http3Discovery
+import io.kuicksilver.ktor.client.HttpsRecordSource
+import io.kuicksilver.ktor.client.IpAddress
 import io.kuicksilver.ktor.client.Kuicksilver
 import io.kuicksilver.ktor.client.KuicksilverEventListener
 import io.kuicksilver.ktor.client.ProtocolReason
 import io.kuicksilver.ktor.client.ProxyCredentials
 import io.kuicksilver.ktor.client.ProxyResolver
+import io.kuicksilver.ktor.client.ProxyResolvers
 import io.kuicksilver.ktor.client.QuicConnectionSnapshot
 import io.kuicksilver.ktor.client.ResolvedProxy
 import io.kuicksilver.ktor.client.TcpConnectionSnapshot
@@ -153,20 +181,22 @@ import io.kuicksilver.quic.LogLevel
 import io.kuicksilver.quic.qlog.AsyncQlogSink
 import io.kuicksilver.quic.qlog.DirectoryQlogSink
 import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.EchConfigList
 import io.kuicksilver.tls.SpkiSha256
 import io.kuicksilver.tls.TlsIdentity
 import io.kuicksilver.tls.TrustConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.io.readString
+import java.io.File
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 ```
 
-The Android sample under [Connection migration](#connection-migration) also needs `android.net.ConnectivityManager`,
-`io.kuicksilver.ktor.client.Http3ConnectionMigration` and `io.kuicksilver.ktor.client.followDefaultNetwork` (an
-Android-only extension; the iOS and macOS one, without arguments, has the same name). A file that uses both engines (a
+The Android samples (the mobile first screen, [Connection migration](#connection-migration)) also need
+`android.net.ConnectivityManager` and `io.kuicksilver.ktor.client.followDefaultNetwork` (an Android-only extension; the
+iOS and macOS one, without arguments, has the same name). A file that uses both engines (a
 test, a gateway) imports at least one of them under another name:
 
 ```kotlin
@@ -185,58 +215,54 @@ val client = HttpClient(KuicksilverClient)
 
 Kuicksilver plugs into Ktor 3.6 as a server engine (`io.kuicksilver:kuicksilver-ktor-server`) and a client engine
 (`io.kuicksilver:kuicksilver-ktor-client`). Both speak HTTP/1.1 over TLS 1.3 (`kuicksilver-ktor-network`) and HTTP/3
-(`kuicksilver-http3`); both also speak HTTP/2 over TLS (`kuicksilver-http2`, ADR-0017), opt-in on the server ([HTTP/2 on the server](#http2-on-the-server)). The code blocks below compile and run as `GuideSamplesTest`
-(`kuicksilver-ktor-server/src/jvmTest` and `kuicksilver-ktor-client/src/jvmTest`); the engines' other tests run on every
+(`kuicksilver-http3`); both also speak HTTP/2 over TLS (`kuicksilver-http2`, ADR-0017), on by default on both since
+0.3.0 ([HTTP/2 on the server](#http2-on-the-server)): one port serves HTTP/1.1, HTTP/2 and HTTP/3. The code blocks below compile and run as `GuideSamplesTest`
+(`kuicksilver-ktor-server/src/jvmTest` and `kuicksilver-ktor-client/src/jvmTest`), and the first screens compile in a
+source set that opts in to nothing and fails on a warning (`src/jvmFirstScreenTest`), so they stay free of experimental
+API; the engines' other tests run on every
 target (see "Compatibility"). Every engine option with its default is in the [configuration
 reference](configuration.md); common failures are in [troubleshooting](troubleshooting.md).
 
 ## Server
 
-The first screen: a certificate from files (renewals picked up) and one port for TCP and UDP. Every option here is
-stable.
+The server's first screen is the [Minimal example](#minimal-example): `tls { pemFiles(…) }` and one
+`tlsConnector { port = 443 }`. Its second line, the recipes for common deployments, is stable too:
 
 ```kotlin
-// guide:ktor:first-screen-server
-val server =
-    embeddedServer(Kuicksilver, configure = {
-        tls {
-            pemFiles(
-                "/etc/letsencrypt/live/example.com/fullchain.pem", // the key must be unencrypted PKCS#8
-                "/etc/letsencrypt/live/example.com/privkey.pem", // (-----BEGIN PRIVATE KEY-----)
-            )
-            reloadInterval = 1.hours // pick up certbot renewals
-        }
-        tlsConnector { port = 443 } // TCP 443: HTTP/1.1 (and HTTP/2); UDP 443: HTTP/3, announced with Alt-Svc
-    }, module = Application::module)
+// guide:ktor:first-screen-server-recipes
+embeddedServer(Kuicksilver, configure = {
+    http3 { endpoint { maxConnectionsPerIp = null } } // behind a NAT or kube-proxy
+    tcp { maxConnectionsPerIp = 256 } // facing the internet directly
+    tlsConnector { proxyProtocol { trust("10.0.0.0/8") } } // behind an L4 load balancer
+    tls { versions = TlsVersions.Tls12And13 } // old clients without TLS 1.3
+}, module = Application::module)
 ```
+
+With the certificate in memory and a route of its own:
 
 ```kotlin
 // guide:ktor:server
 val server = embeddedServer(Kuicksilver, configure = {
+    tls { identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray()) }   // the key array is zeroed after import
     tlsConnector {
-        tls { identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray()) }   // the key array is zeroed after import
-        port = 443
-        tls {
-            clientAuth = ClientAuth.Optional              // ask for a client certificate without requiring one
-            clientTrust = TrustConfig.AnchoredCa(listOf(clientCa))
-        }
+        port = 443   // no host: every interface, IPv6 and IPv4
     }
 }) {
     routing {
-        get("/") { call.respondText("hello, ${call.request.peerCertificates.size} certificates") }
+        get("/") { call.respondText("hello") }
     }
 }
 server.start(wait = true)
 ```
 
-- A `tlsConnector` serves HTTP/1.1 over TLS on TCP; Ktor's HTTP/1.1 parser (`ktor-http-cio`) and a copy of the CIO
+- A `tlsConnector` serves HTTP/2 and HTTP/1.1 over TLS on TCP; for HTTP/1.1 Ktor's HTTP/1.1 parser (`ktor-http-cio`) and a copy of the CIO
   engine's connection pipeline handle requests, so keep-alive, pipelining, chunked bodies and `100-continue` behave as
   in the CIO engine. Request framing follows RFC 9112 section 6 more strictly than CIO: a request with both
   Content-Length and Transfer-Encoding is refused with 400 and the connection closed, a request with neither has no
   body (also with `Connection: close`), and a chunked trailer section is accepted when each line is a field line (its
   fields are discarded). Lines of the request head and of a trailer section end with CRLF: a bare LF gets 400 and the
-  connection closed, unless `h1AllowBareLf` (*experimental*) is on (RFC 9112 section 2.2 lets a server take it; leave it
-  off behind a proxy that forwards a bare LF, which would read the head otherwise). A
+  connection closed, unless `http1 { allowBareLf }` (*delicate*) is on (RFC 9112 section 2.2 lets a server take it; leave
+  it off behind a proxy that forwards a bare LF, which would read the head otherwise). A
   chunk-size line must follow RFC 9112 section 7.1 exactly (hex digits, extensions by their grammar, no whitespace
   right before the CRLF, which 0.2.0 and Go's net/http tolerate): anything else, such as a bare CR or LF in it, makes the handler's receive of the body fail with
   `BadRequestException` (Ktor answers 400 unless the application handles it) and the connection closes. An HTTP/1.1
@@ -244,19 +270,24 @@ server.start(wait = true)
   The engine cannot act as a CONNECT proxy (not supported in 0.3.0): a CONNECT reaches the application, but a 2xx answer
   goes out as `501 Not Implemented` with a warning in the application log, since a 2xx would promise a tunnel; every
   CONNECT ends its connection (RFC 9931 section 8). The engine's own 400 has the fixed body `Bad Request`
-  (Ktor CIO sends the parser's message, which can quote the request's header fields). ALPN on TCP is `http/1.1`. A
-  connector speaks TLS 1.3 only unless it allows TLS 1.2: [TLS 1.2 on the server](#tls-12-on-the-server).
-- `configuration.identity = ...` turns plain connectors into TLS ones, so `embeddedServer(Kuicksilver, port = 443,
-  configure = { identity = ... })` works as expected. Without an identity a plain `connector { port = ... }` serves
-  cleartext HTTP/1.1 (behind a TLS-terminating proxy, for tests).
+  (Ktor CIO sends the parser's message, which can quote the request's header fields). ALPN on TCP offers `h2`, then
+  `http/1.1`: HTTP/2 is on by default since 0.3.0 ([HTTP/2 on the server](#http2-on-the-server)). A connector speaks TLS 1.3 only unless it allows TLS 1.2: [TLS 1.2 on the server](#tls-12-on-the-server).
+- An identity in the engine's `tls { }` (`identity`, or `pemFiles(…)`) turns Ktor's own connectors into TLS ones, so
+  `embeddedServer(Kuicksilver, port = 443, configure = { tls { identity = ... } })` works as expected; a `tlsConnector`
+  takes the engine's `tls { }` and may override any of it with a `tls { }` of its own (another identity on another
+  port, client certificates on one port). Without an identity a plain `connector { port = ... }` or `plainConnector { }`
+  serves cleartext HTTP/1.1 (behind a TLS-terminating proxy, for tests). A `tlsConnector` or `plainConnector` without a
+  `host` binds every interface, IPv6 and IPv4, with one dual-stack socket on `::` (Ktor logs `Responding at
+  https://:::443`), or `0.0.0.0` where the host has no IPv6 (logged at Info); Ktor's own `connector { }` and
+  `ktor.deployment.host` keep Ktor's default, `0.0.0.0`.
 - On the JVM, Ktor's `sslConnector(keyStore, alias, ...) {}` (and the `ktor.security.ssl.*` keys) is accepted: the key
   and chain under the alias become the identity, and a trust store makes client certificates required, as in Ktor's
   Netty and Jetty engines. Its `enabledProtocols` (`ktor.security.ssl.enabledProtocols`) choose the TLS versions:
   unset or `TLSv1.3` alone is TLS 1.3 only, `TLSv1.2` with `TLSv1.3` allows TLS 1.2 as well ([TLS 1.2 on the
   server](#tls-12-on-the-server)); anything else (TLS 1.2 alone, TLS 1.0 or 1.1) fails the start with
   `TlsException.Config`. Ktor's connector cannot express a stapled OCSP response or a trusted gateway: it staples
-  nothing and answers `421 Misdirected Request` for hosts its certificate does not name; for either, set `ocspStapling`
-  or `trustedGateway` on `tlsConnector(identity)` in code, or serve the port with the `kuicksilver.tls.*` keys of
+  nothing and answers `421 Misdirected Request` for hosts its certificate does not name; for either, set
+  `tls { ocspStapling }` or `tlsConnector { allowMisdirectedHosts }` in code, or serve the port with the `kuicksilver.tls.*` keys of
   `EngineMain` ([below](#enginemain-and-configuration-keys)). Any other HTTPS connector type fails with
   `TlsException.Config` rather than serving cleartext.
 - `call.request.local.remoteAddress` and `remoteHost` (and `localAddress`, `localHost`) are IP literals over HTTP/1.1,
@@ -266,13 +297,13 @@ server.start(wait = true)
 - `call.request.peerCertificates` is the client certificate chain as the TLS layer validated it (empty without client
   authentication). Ktor has no equivalent. Requiring client certificates, and presenting one from the client:
   [Mutual TLS](#mutual-tls-client-certificates).
-- Slow and silent clients (slowloris): a client has `requestHeaderTimeoutSeconds` (*experimental*, 30 s) to send a
+- Slow and silent clients (slowloris): a client has `requestHeaderTimeout` (30 s) to send a
   complete request head, counted from the accepted TCP connection for the first request (the TLS handshake included)
   and from the end of the previous response on a keep-alive connection; header bytes trickling in do not extend it. One
   that sent part of a head by then gets `408 Request Timeout` with `Connection: close`; one that sent nothing (or never
   finished the TLS handshake) is closed without a response. Over HTTP/2 and HTTP/3 the same deadline bounds each
-  request head (`maxHeaderBlockTime` of `http2Settings` and `http3Settings`, 10 s by default): an HTTP/3 head that misses
-  it is reset with `H3_REQUEST_REJECTED`. `connectionIdleTimeoutSeconds` (45 s) closes a connection
+  request head (`maxHeaderBlockTime` of `http2 { settings { } }` and `http3 { settings { } }`, 10 s by default): an
+  HTTP/3 head that misses it is reset with `H3_REQUEST_REJECTED`. `http1 { idleTimeout }` (45 s) closes a connection
   without requests in both directions, and a request body that sends no byte for that long gets `408 Request Timeout`
   and ends the connection, unless the application or StatusPages answers the failed read itself (a slow but moving
   upload is read in full; after `Expect: 100-continue` the wait starts once `100 Continue` is sent). `Expect:
@@ -298,18 +329,18 @@ server.start(wait = true)
 
 ### Connection limits
 
-Each TCP connector holds at most `maxTcpConnections` (*experimental*, 10,000) connections at once, and, when it is set,
-at most `maxTcpConnectionsPerIp` (*experimental*, off by default) from one client address, HTTP/1.1 and HTTP/2 alike. A
+Each TCP connector holds at most `tcp { maxConnections }` (10,000) connections at once, and, when it is set, at most
+`tcp { maxConnectionsPerIp }` (null, off, by default) from one client address, HTTP/1.1 and HTTP/2 alike. A
 connection counts from `accept` (its TLS handshake included) until its socket is released (a socket whose release hangs
 is given up after the abort wait, so for that moment the descriptors in use can briefly exceed the limit).
 
-- At `maxTcpConnections` the connector stops accepting, as Go's `netutil.LimitListener`, Jetty's `ConnectionLimit` and
+- At `maxConnections` the connector stops accepting, as Go's `netutil.LimitListener`, Jetty's `ConnectionLimit` and
   nginx's `worker_connections` do: new clients wait in the OS backlog (their connect succeeds, nothing is read from
   them) and are accepted as connections close; the server spends no descriptor or TLS work on them. Once the backlog is
   full too (511 on the JVM, 50 on Kotlin/Native), the OS drops further connection attempts (Linux by default, with
   `tcp_abort_on_overflow` 0: the client's TCP retries its SYN) or resets them. Waiting clients are not reported to the
   event listener.
-- `maxTcpConnectionsPerIp` is off by default, as in nginx, Caddy, Go, Jetty, Netty, Envoy and HAProxy. Behind a reverse
+- `maxConnectionsPerIp` is off by default, as in nginx, Caddy, Go, Jetty, Netty, Envoy and HAProxy. Behind a reverse
   proxy, a load balancer, Kubernetes source NAT or any NAT every client shares one address, and an HTTP/1.1 proxy opens
   an upstream connection per request in flight (plus one per WebSocket or SSE stream). Enable it (256, say) only when
   the server faces its clients directly. Over it, a connection is reset right after `accept`, before its TLS handshake
@@ -320,22 +351,25 @@ is given up after the abort wait, so for that moment the descriptors in use can 
   IPv4-mapped client counts as its IPv4 address, an IPv6 client by its whole address, as QUIC's `maxConnectionsPerIp`
   counts HTTP/3 clients, so a client that holds a /64 gets around it.
 - The checks run cheapest first: the connection slot before `accept`, the per-address count right after it, then
-  `http2RepeatOffenderPenalty` (when on), and only then the TLS handshake.
+  `http2 { repeatOffenderPenalty }` (when on), and only then the TLS handshake.
 - The default 10,000 does not protect a process whose descriptor limit is lower (`ulimit -n`: 256 in a macOS shell,
-  often 1024 on Linux): raise that limit, or set `maxTcpConnections` below it, leaving room for the UDP sockets, files
+  often 1024 on Linux): raise that limit, or set `tcp { maxConnections }` below it, leaving room for the UDP sockets, files
   and outgoing connections the application opens. Above it `accept()` fails with EMFILE; the engine then backs off
   (5 ms doubling to 1 s) instead of spinning, but clients wait until descriptors free up.
-- `EngineMain` keys `kuicksilver.maxTcpConnections` and `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off).
-- HTTP/3 has its own limits in the QUIC endpoint, `quicMaxConnections` and `quicMaxConnectionsPerIp` (the same 10,000
-  and 256, but the per-address one on by default), and `quicAcceptQueue` (128): *experimental* since 0.3.0, `EngineMain`
-  keys `kuicksilver.quicMaxConnections`, `kuicksilver.quicMaxConnectionsPerIp` (`0` is off) and
-  `kuicksilver.quicAcceptQueue`. Behind a NAT or `kube-proxy` raise the per-address one
-  ([deployment guide](deployment.md#quic-connection-limits)); `engine.http3Stats` counts the clients they refused.
+- `EngineMain` keys `kuicksilver.tcp.maxConnections` and `kuicksilver.tcp.maxConnectionsPerIp` (`off` is off, `0` is
+  refused).
+- HTTP/3 has its own limits in the QUIC endpoint, `http3 { endpoint { maxConnections } }` and
+  `http3 { endpoint { maxConnectionsPerIp } }` (the same 10,000 and 256, but the per-address one on by default), and
+  `http3 { endpoint { acceptQueue } }` (128); `EngineMain` keys `kuicksilver.http3.endpoint.maxConnections`,
+  `kuicksilver.http3.endpoint.maxConnectionsPerIp` (`off` is off) and `kuicksilver.http3.endpoint.acceptQueue`. Behind a
+  NAT or `kube-proxy` turn the per-address one off (`maxConnectionsPerIp = null`): the first refusal by it logs a
+  warning that says so, then one at most every 5 minutes ([deployment guide](deployment.md#quic-connection-limits));
+  `engine.http3Stats` counts the clients they refused.
 
 ### TLS 1.2 on the server
 
 A TLS connector speaks TLS 1.3 only by default: a client without it is refused with a `protocol_version` alert.
-`versions = TlsVersions.Tls12And13` (*experimental*, since 0.3.0) on `tlsConnector(identity) { … }`, the `EngineMain`
+`tls { versions = TlsVersions.Tls12And13 }` (on the engine, or in one `tlsConnector`'s `tls { }`), the `EngineMain`
 key `kuicksilver.tls.versions = tls12And13` for the deployment port, or `enabledProtocols = listOf("TLSv1.2",
 "TLSv1.3")` on Ktor's `sslConnector` (JVM) serves TLS 1.2 clients too (RFC 9325 section 3.1.1: "Implementations MUST
 support TLS 1.2"). Turn it on only for clients that have no TLS 1.3 (older devices, embedded HTTP stacks, some
@@ -349,10 +383,10 @@ proxies and scanners): any client can then end up on TLS 1.2.
   first, then ChaCha20-Poly1305 (first when the client prefers it), then AES-128-GCM.
 - An ECDSA certificate serves the TLS 1.2 clients that offer an ECDHE-ECDSA suite (most do); a client that offers only
   RSA suites, such as `TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256`, the suite RFC 9113 makes mandatory for HTTP/2 over
-  TLS 1.2 deployments, needs a connector with an RSA certificate (2048 bits or more). With `http2 = true` the start
-  logs a warning for a TLS 1.2 connector whose own certificate has no rsaEncryption key (an EC or an RSA-PSS key; identities an `sniSelector` returns are
+  TLS 1.2 deployments, needs a connector with an RSA certificate (2048 bits or more). With HTTP/2 on (the default) the
+  start logs a warning for a TLS 1.2 connector whose own certificate has no rsaEncryption key (an EC or an RSA-PSS key; identities an `sniSelector` returns are
   not checked).
-- With `http2 = true`, HTTP/2 is offered over TLS 1.2 too (RFC 9113 section 9.2); a client's attempt to renegotiate
+- With HTTP/2 on (the default), HTTP/2 is offered over TLS 1.2 too (RFC 9113 section 9.2); a client's attempt to renegotiate
   ends an HTTP/2 connection with GOAWAY PROTOCOL_ERROR, an HTTP/1.1 one goes on with the renegotiation refused.
 - Client certificates, `sniSelector` and tickets work as over TLS 1.3. A TLS 1.2 session resumes for at most
   `SessionTicketConfig.ticketLifetime` after its full handshake (12 hours by default, at most half of `rotateEvery`),
@@ -370,7 +404,8 @@ every other time with the UDP port picked first and TCP taking the same number, 
 HTTP/1.1 alone with a warning. A fixed port whose UDP side is taken fails the start. HTTP/1.1
 responses then carry `Alt-Svc: h3=":<port>"; ma=86400` so clients can switch (RFC 7838) — unless the application set
 its own `Alt-Svc`, or the response is a 421; HTTP/2 responses carry it too, with an ALTSVC frame besides (see
-[HTTP/2 on the server](#http2-on-the-server)); `altSvc = false` turns both off.
+[HTTP/2 on the server](#http2-on-the-server)); `http3 { altSvc = false }` turns both off. At the start the engine logs
+at Info that HTTP/3 is advertised for the UDP port, which must be open.
 
 In an HTTP/3 call `call.request.httpVersion` is `"HTTP/3"`, `call.request.local.scheme` is the request's `:scheme`
 (`"https"` from browsers and the Kuicksilver client; `"http"` when a client sends that), `serverPort` without a port in
@@ -378,13 +413,18 @@ In an HTTP/3 call `call.request.httpVersion` is `"HTTP/3"`, `call.request.local.
 network. Responses never carry `Transfer-Encoding` or other connection-specific headers: bodies of unknown length are
 simply a sequence of DATA frames.
 
-Knobs, named after Ktor's Netty engine where one exists: `http3` (on), `quic` (transport settings), `quicMaxIdleTimeout`
-(applies while `quic` is not assigned), `udpSocketCount` (endpoint loops on the UDP port, every platform with a QUIC server), `quicAdmission`
-(Retry policy, Ktor-Netty's `quicTokenHandler`), `quicLoadBalancer` (QUIC-LB connection IDs, experimental;
-`engine.updateLoadBalancer` changes them, [QUIC: Behind a load balancer](quic.md#behind-a-load-balancer)), `http3Settings`. UDP socket buffer sizes are not configurable yet.
+The options are in the `http3 { }` block: `enabled` (true), `altSvc` (true), `quic { }` (the transport, `QuicConfig.Builder`:
+idle timeout, streams, windows, path MTU), `settings { }` (`Http3Settings.Builder`: QPACK, field sections) and
+`endpoint { }` for each listener's QUIC endpoint: `loops` (endpoint loops on the UDP port, every platform with a QUIC
+server), `maxConnections`, `maxConnectionsPerIp`, `acceptQueue`, `admission` (Retry policy, Ktor-Netty's
+`quicTokenHandler`), `maxConnectionLifetime`, `loadBalancer` (QUIC-LB connection IDs, experimental;
+`engine.updateLoadBalancer` changes them, [QUIC: Behind a load balancer](quic.md#behind-a-load-balancer); the connection
+ID length follows it) and `expert { }`. The engine derives what follows from other options (`expert { maxUniStreams }`,
+`resetStreamAt`, `cancelErrorCode` in `quic { }`; `enableConnectProtocol`, `h3Datagram`, `webTransport`, `earlyData` in
+`settings { }`) and refuses them when assigned, naming the option. UDP socket buffer sizes are not configurable yet.
 
 The engine serves HTTP/3 on every target, Kotlin/Native Linux, Apple and Windows included (the accelerated `ksl` socket,
-ADR-0006); `udpSocketCount > 1` works wherever HTTP/3 does: a socket per loop with `SO_REUSEPORT` on Linux and Android,
+ADR-0006); `http3 { endpoint { loops } }` above 1 works wherever HTTP/3 does: a socket per loop with `SO_REUSEPORT` on Linux and Android,
 one socket routed by connection ID in process on macOS, iOS and Windows ([QUIC: Several loops on one port](quic.md#several-loops-on-one-port)).
 Where a QUIC server cannot run, the engine logs a warning and serves
 HTTP/1.1 only, without `Alt-Svc`. A `tlsConnector` with an `sniSelector` serves HTTP/3 too: the same selector picks the
@@ -395,7 +435,7 @@ arrive over HTTP/3): [Deploying the HTTP/3 server](deployment.md).
 
 ### Encrypted Client Hello on the server
 
-*Experimental.* With `echKeys` the TLS connector decrypts Encrypted Client Hello (RFC 9849, shared mode) on TCP and HTTP/3
+*Experimental.* With `tls { echKeys }` the TLS connectors decrypt Encrypted Client Hello (RFC 9849, shared mode) on TCP and HTTP/3
 alike, so the name a client asks for never crosses the network in the clear. Make a key with OpenSSL 4 and publish its
 ECHConfigList in the `ech` parameter of the HTTPS record of every name the connector serves (RFC 9848):
 
@@ -410,11 +450,11 @@ val ech2 = File("/etc/kuicksilver/ech-2.pem")
 val keys = EchServerKeys(listOf(EchKey(ech1.readBytes())))
 val server =
     embeddedServer(Kuicksilver, configure = {
-        tlsConnector {
-            tls { this.identity = identity }
-            port = 443
-            tls { echKeys = keys }
+        tls {
+            this.identity = identity
+            echKeys = keys
         }
+        tlsConnector { port = 443 }
     }) { routing { get("/") { call.respondText("hidden") } } }
 // later: a new key; the old one still decrypts for clients that hold it, but is not sent in retry configurations
 keys.rotate(listOf(EchKey(ech2.readBytes()), EchKey(ech1.readBytes(), inRetryConfigs = false)))
@@ -439,9 +479,11 @@ keys.rotate(listOf(EchKey(ech2.readBytes()), EchKey(ech1.readBytes(), inRetryCon
 
 ### HTTP/2 on the server
 
-`http2 = true` (experimental; off by default in 0.3.0; `EngineMain` key `kuicksilver.http2`) makes every TLS connector
-offer `h2` before `http/1.1` in ALPN, so a client that offers both gets HTTP/2 (RFC 9113) and one that offers only
-`http/1.1` (WebSockets included) gets HTTP/1.1 on the same port, as before. Plain connectors serve HTTP/2 only with
+On by default; turn it off with `http2 { enabled = false }` for a middlebox that breaks it (`EngineMain` key
+`kuicksilver.http2.enabled = false`). Every TLS connector offers `h2` before `http/1.1` in ALPN, so a client that offers
+both (browsers, OkHttp, the JDK's client, curl, the Kuicksilver client) gets HTTP/2 (RFC 9113), where 0.2 gave it
+HTTP/1.1, and one that offers only `http/1.1` gets HTTP/1.1 on the same port. `http2 { enabled }` is stable; the
+tuning in `http2 { settings { } }` and `repeatOffenderPenalty` are experimental. Plain connectors serve HTTP/2 only with
 their own opt-in ([h2c on the server](#h2c-on-the-server)); without it a client's `PRI * HTTP/2.0` preface is refused with
 `505 HTTP Version Not Supported`. HTTP/2 runs over
 TLS 1.3, and over TLS 1.2 on a connector that allows it ([TLS 1.2 on the server](#tls-12-on-the-server); RFC 9113
@@ -456,8 +498,7 @@ val server = embeddedServer(Kuicksilver, configure = {
         port = 443
     }
     http2 {
-        enabled = true                                              // offer h2 before http/1.1 in ALPN
-        settings { maxConcurrentStreams = 50 }  // windows and flood limits are Http2Settings'
+        settings { maxConcurrentStreams = 50 }  // windows and flood limits are Http2Settings.Builder's
     }
 }, module = Application::module)
 ```
@@ -475,7 +516,7 @@ does), the field those that read only the header (curl, Kuicksilver clients befo
 the same reading of the value. An application's own `Alt-Svc` header, and a 421, are left as they are. Requests are checked against RFC 9113 section 8 before the application sees them:
 a malformed one (an uppercase or invalid field name, a connection-specific field, `te` other than `trailers`, a missing,
 repeated or unknown pseudo-header field, `host` that differs from `:authority`, content that does not match
-`content-length`) is reset with PROTOCOL_ERROR and the connection goes on; a field section above `maxHeaderListSize` is
+`content-length`) is reset with PROTOCOL_ERROR and the connection goes on; a field section above `maxFieldSectionSize` is
 answered 431. A CONNECT is answered 501 (the engine has no tunnels), and so is an Extended CONNECT for a protocol other
 than `websocket`; WebSockets come over HTTP/2 too ([WebSockets over HTTP/2](#websockets-over-http2)). A request with
 `Expect: 100-continue` gets an interim 100 as the handler starts (RFC 9110 §10.1.1: immediate), unless the request has no
@@ -492,19 +533,19 @@ indexed must keep that representation: pass its name to `neverIndex` on the mess
 Over HTTP/3 the same API carries QPACK's 'N' bit (RFC 9204 section 4.5.4); over HTTP/1.1 the list is empty and
 `neverIndex` changes nothing.
 
-`http2Settings` (`Http2Settings`) holds the windows, SETTINGS_MAX_CONCURRENT_STREAMS (100) and the field-section and
-flood limits of the core ([configuration reference](configuration.md#ktor-server-engine)). The engine's deadlines apply:
-the client's connection preface must arrive within `requestHeaderTimeoutSeconds` of the accepted connection (TLS
-included), else GOAWAY and close; each field block must arrive within it too (else GOAWAY with ENHANCE_YOUR_CALM); a
-request body that sends no byte for `connectionIdleTimeoutSeconds` fails the handler's read and is answered 408 when
-nothing else answered; a connection without requests for `connectionIdleTimeoutSeconds` gets GOAWAY and closes; a
+`http2 { settings { } }` (`Http2Settings.Builder`) holds the windows, `maxConcurrentStreams` (100), the field-section
+limit and, in `floodLimits { }`, the flood limits of the core ([configuration reference](configuration.md#ktor-server)).
+The engine's deadlines apply: the client's connection preface must arrive within `requestHeaderTimeout` of the accepted
+connection (TLS included), else GOAWAY and close; each field block must arrive within it too (else GOAWAY with
+ENHANCE_YOUR_CALM); a request body that sends no byte for `http1 { idleTimeout }` fails the handler's read and is
+answered 408 when nothing else answered; a connection without requests for that long gets GOAWAY and closes; a
 response that gets no window from the client for the longer of that and 5 minutes resets its stream. Request content is
 credited to the client only as the handler reads it. A client's RST_STREAM cancels the handler of that request; a
 request still arriving when its handler is done with a complete response is stopped with RST_STREAM NO_ERROR (RFC 9113
 section 8.1). `eventListener` reports these connections and calls with `HTTP_2_0`.
 
-Flood defences (threat model, section 3.23): each connection is held to the core's limits (`http2Settings`: the reset
-budget against Rapid Reset, the glitch budget against MadeYouReset and PING, SETTINGS or PRIORITY floods, 8 CONTINUATION
+Flood defences (threat model, section 3.23): each connection is held to the core's limits (`http2 { settings {
+floodLimits { } } }`: the reset budget `resets` against Rapid Reset, the glitch budget `glitches` against MadeYouReset and PING, SETTINGS or PRIORITY floods, 8 CONTINUATION
 frames per field block, 10 000 queued control frames), and a broken limit ends it with GOAWAY ENHANCE_YOUR_CALM. A
 stream the client reset cancels its handler and counts toward SETTINGS_MAX_CONCURRENT_STREAMS until the handler
 returns, so no more handlers run at once than that limit. A connection that is over gets what it still has to write
@@ -512,8 +553,8 @@ sent for as long as the client takes it; after the send-stall deadline without p
 seconds when it ended in an error, such as a broken flood limit: only its GOAWAY is left to deliver). These
 per-connection limits are the defence by default.
 
-`http2RepeatOffenderPenalty` (experimental, `EngineMain` key `kuicksilver.http2RepeatOffenderPenalty`, e.g. `30s`; off
-by default) adds a backoff by address: one whose HTTP/2 connections end in a flood limit's ENHANCE_YOUR_CALM three
+`http2 { repeatOffenderPenalty }` (experimental, a `Duration?`; `EngineMain` key `kuicksilver.http2.repeatOffenderPenalty`,
+e.g. `30s`; null, `off` in the file, by default) adds a backoff by address: one whose HTTP/2 connections end in a flood limit's ENHANCE_YOUR_CALM three
 times within a minute has its TCP connections (HTTP/1.1 too) closed at accept, before the TLS handshake, for that long,
 with a warning logged at most every 10 seconds per connector. An IPv4 client counts by its address (also when a
 dual-stack listener reports it as `::ffff:a.b.c.d`), an IPv6 client by its /56; a slow field block is no strike. Turn it
@@ -522,7 +563,8 @@ the source address). Never behind a NAT, CGNAT, an L4 load balancer or Kubernete
 addresses (`externalTrafficPolicy: Cluster`) or a TCP proxy such as HAProxy in TCP mode: every client there shares one
 address, and one flooder would lock them all out.
 
-The server passes h2spec 2.6.0 (all 146 cases, `tools/interop/h2spec.sh`, over TLS and over h2c). HTTP/2 on the server is still experimental and off by default in 0.3.0.
+The server passes h2spec 2.6.0 (all 146 cases, `tools/interop/h2spec.sh`, over TLS and over h2c), with its default
+configuration. HTTP/2 is on by default since 0.3.0; its tuning API is experimental.
 
 ### h2c on the server
 
@@ -542,9 +584,10 @@ val server = embeddedServer(Kuicksilver, configure = {
 }, module = Application::module)
 ```
 
-`EngineMain` takes `kuicksilver.h2c = off | withHttp11 | only` for the cleartext deployment port (not together with the
-`kuicksilver.tls.*` identity files: a TLS port negotiates `h2` by ALPN, `kuicksilver.http2`). A connector that the
-configuration's `identity` turns into a TLS one refuses h2c at the start (IllegalArgumentException).
+`EngineMain` takes `kuicksilver.connector.h2c = off | withHttp11 | only` for the cleartext deployment port (not
+together with the `kuicksilver.tls.*` identity files: a TLS port negotiates `h2` by ALPN, `kuicksilver.http2.enabled`).
+A connector that an identity in the engine's `tls { }` turns into a TLS one refuses h2c at the start
+(IllegalArgumentException).
 
 - **One port or two.** `WithHttp11` tells the two apart by the client connection preface (`PRI * HTTP/2.0
 
@@ -554,7 +597,7 @@ SM
   RFC 9113 section 3.4), as Go's `golang.org/x/net/http2/h2c` handler and Netty's `CleartextHttp2ServerUpgradeHandler`
   do: the first octets are looked at as they arrive, none is consumed, and the first one that differs from the preface
   hands the connection to HTTP/1.1 at once, so a request shorter than the 24 octets is never held back. The wait is part
-  of the first request head's deadline (`requestHeaderTimeoutSeconds`): a client that sends part of the preface and
+  of the first request head's deadline (`requestHeaderTimeout`): a client that sends part of the preface and
   stops is closed then, as a slow HTTP/1.1 head is. When the server stops during that wait, a connection
   that has sent nothing is closed at once, and one that has started is treated as a request head that started on
   HTTP/1.1: waited for within the request-head deadline and the stop's grace period. A whole preface is HTTP/2, which
@@ -567,13 +610,13 @@ SM
   the close), never an HTTP/1.1 answer. A dedicated port per protocol is two connectors.
 - **`Upgrade: h2c` is not taken.** RFC 9113 section 3.1 deprecates the HTTP/1.1 upgrade to h2c; a request that offers
   it is served as HTTP/1.1, as any `Upgrade` the server does not take (RFC 9110 section 7.8), never answered 101.
-- **Everything else is HTTP/2 on the server, unchanged**: `http2Settings`, the deadlines, the flood defences and
-  `http2RepeatOffenderPenalty`, RFC 9218 priorities, WebSockets over HTTP/2 (`ws://`, RFC 8441, with
-  `webSocketsOverHttp2`), the two-step GOAWAY at a stop, `maxTcpConnections`, the event listener and the probe. The
+- **Everything else is HTTP/2 on the server, unchanged**: `http2 { settings { } }`, the deadlines, the flood defences
+  and `http2 { repeatOffenderPenalty }`, RFC 9218 priorities, WebSockets over HTTP/2 (`ws://`, RFC 8441, with
+  `webSockets { overHttp2 }`), the two-step GOAWAY at a stop, `tcp { maxConnections }`, the event listener and the probe. The
   call's `request.local.scheme` is `http`. No `Alt-Svc` and no ALTSVC frame: HTTP/3 is for `https` origins.
 - **`:scheme https` over h2c** (a proxy that terminated TLS and forwards the original scheme) is a misdirected request
   on a plain connection (RFC 9110 section 7.4): 421, unless the connector's clients are trusted gateways
-  (`trustedGateway = true`, [Misdirected requests](#misdirected-requests)).
+  (`plainConnector { allowMisdirectedHosts = true }`, [Misdirected requests](#misdirected-requests)).
 
 **Cleartext.** Nothing authenticates the client or protects the bytes (CWE-319): serve h2c only behind a trusted network
 or proxy (a loopback hop, a private network, a sidecar that does mTLS), never on a port the internet reaches. When the
@@ -595,7 +638,7 @@ val server = embeddedServer(Kuicksilver, configure = {
         port = 443
     }
 }, module = Application::module)
-// later, when the remote configuration says so: clients fall back to HTTP/1.1 over TLS
+// later, when the remote configuration says so: clients fall back to HTTP/2 or HTTP/1.1 over TLS
 server.engine.http3Advertising = Http3Advertising.Drain
 // and when the incident is over
 server.engine.http3Advertising = Http3Advertising.On
@@ -615,7 +658,7 @@ cached alternative service entries".
 - Every response reads the value as its head goes out, so the next response on a keep-alive connection follows a
   change; every new client Initial is checked when the QUIC endpoint admits it. The setter returns at once.
 - The `Alt-Svc` part (header or HTTP/2 frame) applies where the engine sends `Alt-Svc` at all: on a TLS connector that serves HTTP/3, with
-  `altSvc = true`. With `altSvc = false` no `Alt-Svc` is sent in any mode, but `Drain` still sends GOAWAY and refuses new
+  `http3 { altSvc = true }`. With `altSvc = false` no `Alt-Svc` is sent in any mode, but `Drain` still sends GOAWAY and refuses new
   QUIC connections. An `Alt-Svc` the application sets itself is left as it is in every mode, and a 421 gets none.
 - `Clear` stops the advertising and withdraws it: a client drops the alternative at its next response, over HTTP/1.1 or
   HTTP/3. A connection it already has may go on serving it (RFC 7838 section 2.2 lets a client keep using one); to move
@@ -629,13 +672,13 @@ cached alternative service entries".
 - A new client is refused with a stateless Initial CONNECTION_CLOSE carrying CONNECTION_REFUSED, as RFC 9000 section
   5.2.2 asks: "If a server refuses to accept a new connection, it SHOULD send an Initial packet containing a
   CONNECTION_CLOSE frame with error code CONNECTION_REFUSED" (sections 10.2.3 and 20.1). It is under the endpoint's
-  stateless rate limit, runs before `quicAdmission` (which is not asked), unless a hard limit (`maxConnections`,
-  `maxConnectionsPerIp`) drops the Initial first, and `EndpointStats.connectionsRefusedAdmission` counts it. A refused client falls back to TCP at once instead of waiting for
-  its handshake timeout, and its next HTTP/1.1 response clears its cached alternative. A Kuicksilver client does not
+  stateless rate limit, runs before `http3 { endpoint { admission } }` (which is not asked), unless a hard limit
+  (`maxConnections`, `maxConnectionsPerIp`) drops the Initial first, and `EndpointStats.connectionsRefusedAdmission` counts it. A refused client falls back to TCP at once instead of waiting for
+  its handshake timeout, and its next HTTP/2 or HTTP/1.1 response clears its cached alternative. A Kuicksilver client does not
   mark the alternative broken for the refusal ([Racing and fallback](#racing-and-fallback)), so once the instance (or
   another one) serves HTTP/3 and announces it again, the client is back on HTTP/3 with its next call.
 - The UDP socket stays bound under `Drain`: releasing the port and binding it again on `On` would race other processes
-  for it (and, with `udpSocketCount > 1` on Linux and Android, for each of its sockets), and a closed port answers with nothing or an ICMP
+  for it (and, with `endpoint { loops }` above 1 on Linux and Android, for each of its sockets), and a closed port answers with nothing or an ICMP
   error that clients only notice at their handshake timeout. To block UDP outright, use the firewall.
 - Back to `On` (or `Clear`), new QUIC connections are accepted again. GOAWAY cannot be taken back (RFC 9114 section 5.2),
   so connections drained before keep closing; their clients open new ones.
@@ -670,8 +713,8 @@ Ktor's `WebSockets` plugin and `webSocket("/path") {}` routes work as on Ktor's 
   bytes in base64, and on every protocol exactly one `Sec-WebSocket-Version: 13`. Otherwise the route's answer becomes
   `400 Bad Request`, or for another version `426 Upgrade Required` over HTTP/1.1 (400 over HTTP/2 and HTTP/3), with
   `Sec-WebSocket-Version: 13`; the handler does not run.
-- A client's uncompressed frame or message larger than the engine's `webSocketMaxMessageSize` (16 MiB by default,
-  *experimental*) closes the connection with 1009 from the frame's header, before its payload is read (section 10.4);
+- A client's uncompressed frame or message larger than the engine's `webSockets { maxMessageSize }` (16 MiB by default)
+  closes the connection with 1009 from the frame's header, before its payload is read (section 10.4);
   a compressed one closes it as it inflates past the limit (and a compressed frame claiming more than 8 times the limit
   plus 64 KiB, from its header). Ktor's own `maxFrameSize` (unlimited on the server by default) applies on top. The
   engine decompresses permessage-deflate itself, whichever extension negotiated it (`PerMessageDeflate` or Ktor's
@@ -689,13 +732,13 @@ The client engine applies the same rules to what servers send ([Client](#client)
 
 ### WebSockets over HTTP/3
 
-With `webSocketsOverHttp3 = true` (the default) the HTTP/3 listener advertises `SETTINGS_ENABLE_CONNECT_PROTOCOL` and
+With `webSockets { overHttp3 = true }` (the default) the HTTP/3 listener advertises `SETTINGS_ENABLE_CONNECT_PROTOCOL` and
 accepts Extended CONNECT with `:protocol = websocket` (RFC 9220). Such a request reaches Ktor's pipeline as the HTTP/1.1
 upgrade request the `WebSockets` plugin knows — `GET` with `Connection: Upgrade`, `Upgrade: websocket` and a
 `Sec-WebSocket-Key` — so ordinary `webSocket("/path") {}` routes serve it unchanged; the upgrade is answered with
 `:status 200` and the frames travel on the request stream. The protocol name matches in any case (RFC 9110 section 7.8).
 Extended CONNECT with any other protocol is answered 501 (WebTransport aside when it is on, below), and so is a WebSocket
-with `webSocketsOverHttp3 = false`, also when `webTransport = true` advertises Extended CONNECT. A route other than
+with `overHttp3 = false`, also when `http3 { webTransport { enabled = true } }` advertises Extended CONNECT. A route other than
 `webSocket` that answers the WebSocket CONNECT with a 2xx (a `get` on the same path) gets 501 instead: a 2xx would open a
 tunnel nobody accepted (RFC 9110 section 9.3.6), and `call.response.status()` reports the 501. An accepted upgrade
 reports 101, as on HTTP/1.1, while `:status 200` goes out. A plain HTTP/1.1 `Upgrade` on an HTTP/3 request is meaningless (RFC 9114
@@ -703,7 +746,7 @@ section 4.5) and gets 501 too.
 
 ### WebSockets over HTTP/2
 
-With `http2 = true`, `webSocketsOverHttp2 = true` (the default) has the HTTP/2 connections advertise
+With HTTP/2 on (the default), `webSockets { overHttp2 = true }` (the default too) has the HTTP/2 connections advertise
 `SETTINGS_ENABLE_CONNECT_PROTOCOL` and accept Extended CONNECT with `:protocol = websocket` (RFC 8441), as over HTTP/3:
 the request reaches Ktor's pipeline as the HTTP/1.1 upgrade request the `WebSockets` plugin knows, ordinary
 `webSocket("/path") {}` routes serve it unchanged (`call.request.httpVersion` is `"HTTP/2"`), and the upgrade is answered
@@ -716,13 +759,13 @@ session. The request must carry one `sec-websocket-version: 13` (RFC 6455 sectio
 with `sec-websocket-version: 13` (not 426, which needs an Upgrade field that HTTP/2 does not have). A route that is not a WebSocket one answering
 the CONNECT with a 2xx gets 501 instead (no session was accepted), an Extended CONNECT for another protocol 501, and
 a HEADERS frame on the stream after its request (RFC 9113 section 8.5) a stream error PROTOCOL_ERROR. A WebSocket stream
-counts toward `Http2Settings.maxConcurrentStreams` while it is open, and keeps its connection from being idle. With
-`webSocketsOverHttp2 = false` the parameter is not sent and a `:protocol` request is malformed: clients keep opening their
+counts toward `http2 { settings { maxConcurrentStreams } }` while it is open, and keeps its connection from being idle.
+With `webSockets { overHttp2 = false }` the parameter is not sent and a `:protocol` request is malformed: clients keep opening their
 WebSockets over HTTP/1.1 on the same port.
 
 ### WebTransport over HTTP/3 (experimental)
 
-With `webTransport = true` the HTTP/3 listener speaks WebTransport (draft-ietf-webtrans-http3-17, plus the SETTINGS of
+With `http3 { webTransport { enabled = true } }` the HTTP/3 listener speaks WebTransport (draft-ietf-webtrans-http3-17, plus the SETTINGS of
 draft-16, which other libraries send, and of draft-02 and draft-14, which browsers send; see the [HTTP/3 guide](http3.md#webtransport-experimental)), and a
 `webTransport("/path") { session -> }` route serves the sessions. It matches only a WebTransport Extended CONNECT over
 HTTP/3, never an HTTP/1.1 request (a request of another method to the path gets Ktor's 405); a WebTransport request
@@ -733,7 +776,7 @@ origin and clients that send none (browsers always send one; pass your own check
 server picks the first of the route's `protocols` the client offers. Then the session is accepted and the handler
 runs; when it returns the session is closed with code 0, when it throws with `WEB_TRANSPORT_HANDLER_FAILED` (1) and
 an empty reason. With WebTransport flow control (on by default, see the [HTTP/3 guide](http3.md#webtransport-experimental))
-a connection carries up to `http3Settings.webTransportMaxSessions` (4) sessions; one more, or one beyond the rate a
+a connection carries up to `http3 { webTransport { maxSessionsPerConnection } }` (4) sessions; one more, or one beyond the rate a
 connection takes new sessions at (a burst of 32, then 8 a second), is refused before any route runs. A draft-14 client that leaves a session without flow-control credit for ten seconds is logged once, as a warning,
 through the application's log.
 
@@ -797,7 +840,7 @@ prints `ok` on the page and the Gradle run passes once the page has posted its r
 
 ### CONNECT-UDP over HTTP/3 (experimental)
 
-With `connectUdp = true` the HTTP/3 listener takes CONNECT-UDP requests (RFC 9298, MASQUE: an Extended CONNECT with
+With `http3 { connectUdp = true }` the HTTP/3 listener takes CONNECT-UDP requests (RFC 9298, MASQUE: an Extended CONNECT with
 `:protocol` `connect-udp`) into Ktor's pipeline, and a `connectUdp(proxy)` route serves them with a `UdpProxy` of
 `kuicksilver-http3` ([HTTP/3, CONNECT-UDP](http3.md#connect-udp-experimental)): the proxy reads the target from the path
 with its `pathTemplate`, checks it with its `targetFilter` (`UdpTargetFilter.PublicOnly` by default: loopback, private,
@@ -859,13 +902,13 @@ tlsConnector {
 A plain connector has no certificate at all, so a request whose target is an absolute `https://` URI
 (`GET https://example.com/ HTTP/1.1`) gets 421 there too. Origin-form requests (`GET / HTTP/1.1` with any `Host`), which
 a gateway in front of the server sends, are served as before. A gateway that forwards absolute `https` targets to a plain
-port needs `plainConnector { trustedGateway = true }` (experimental) instead of Ktor's `connector { }`.
+port needs `plainConnector { allowMisdirectedHosts = true }` (delicate) instead of Ktor's `connector { }`.
 
 ### PROXY protocol
 
 Behind an L4 load balancer or a TCP proxy (HAProxy, AWS NLB, Envoy, nginx `stream`) the server's TCP peer is the proxy.
-A proxy that speaks the PROXY protocol (HAProxy's, versions 1 and 2; *experimental* here) sends the client's address
-first on each connection, and a connector with `proxyProtocol` reports that client as `call.request.origin`:
+A proxy that speaks the PROXY protocol (HAProxy's, versions 1 and 2) sends the client's address first on each
+connection, and a connector with `proxyProtocol { }` reports that client as `call.request.origin`:
 
 ```kotlin
 // guide:ktor:proxy-protocol
@@ -887,18 +930,18 @@ get("/") {
 }
 ```
 
-`tlsConnector(identity) { proxyProtocol { … } }` takes the header before the TLS handshake (HAProxy `send-proxy-v2`
+`tlsConnector { proxyProtocol { … } }` takes the header before the TLS handshake (HAProxy `send-proxy-v2`
 on a TCP-mode backend). The rules ([ADR-0022](../adr/0022-proxy-protocol.md), the details in
 [spec-haproxy-proxy-protocol.md](../spec/rfc/spec-haproxy-proxy-protocol.md)):
 
-- Only the `trustedSources` may send the header, and every connection to the connector must come from one of them: any
+- Only the sources given to `trust(…)` may send the header, and every connection to the connector must come from one of them: any
   other peer is closed at accept, before a byte is read (an event `connectionRefused` with the reason
   `PROXY protocol untrusted source`, and a warning at most every 10 s). A client that reaches the port around the proxy
   can therefore not choose its own address. List the proxies' own addresses, as the server sees them; an IPv4 proxy
   matches an IPv4 entry also on a dual-stack listener. Where a firewall alone decides who reaches the port, list
   `0.0.0.0/0` and `::/0`: every peer must then send a header.
 - Every connection must start with a valid version 1 or 2 header, complete within `headerTimeout` (5 s, at least 3 s, the
-  spec's bound for a TCP retransmit; `requestHeaderTimeoutSeconds` must then be at least 3 too, or the start fails); otherwise it is reset (reason `PROXY protocol header`). Health checks of the proxy
+  spec's bound for a TCP retransmit; `requestHeaderTimeout` must then be at least 3 s too, or the start fails); otherwise it is reset (reason `PROXY protocol header`). Health checks of the proxy
   must send one too (HAProxy sends LOCAL with `send-proxy-v2`); a LOCAL header, whatever family and length it carries, or
   an `UNKNOWN` one leaves the origin as the connection's.
 - `call.request.local` stays the TCP connection, for logs that need the real hop. `XForwardedHeaders` and
@@ -906,14 +949,14 @@ on a TCP-mode backend). The rules ([ADR-0022](../adr/0022-proxy-protocol.md), th
   from the client: install them only when an HTTP proxy in front of the server sets or strips them. `call.request.proxyHeader` gives the whole header:
   version, command, family, both addresses and ports, and the version 2 TLVs (`alpn`, `authority`, `uniqueId`, `ssl`,
   `netns`, any other by type); a CRC32c TLV is verified before the connection is served.
-- `http2RepeatOffenderPenalty` counts the client the header names and never the proxy (a flood behind a header that names
-  no client strikes nobody); `maxTcpConnectionsPerIp` counts TCP peers, so on such a connector it limits each proxy's
+- `http2 { repeatOffenderPenalty }` counts the client the header names and never the proxy (a flood behind a header that
+  names no client strikes nobody); `tcp { maxConnectionsPerIp }` counts TCP peers, so on such a connector it limits each proxy's
   connections: leave it off there, or size it for a proxy.
-- HTTP/3 on a TLS connector's port takes no header (UDP): its requests report their UDP peer. Set `altSvc = false`
+- HTTP/3 on a TLS connector's port takes no header (UDP): its requests report their UDP peer. Set `http3 { altSvc = false }`
   unless the proxy forwards UDP on the same port number.
-- `EngineMain`: `kuicksilver.proxyProtocol.trustedSources` (a list or a comma-separated string),
-  `kuicksilver.proxyProtocol.headerTimeout` and `kuicksilver.proxyProtocol.maxHeaderSize` turn it on for the deployment
-  port; next to Ktor's `-sslPort` connector the start fails.
+- `EngineMain`: `kuicksilver.connector.proxyProtocol.trustedSources` (a list or a comma-separated string),
+  `kuicksilver.connector.proxyProtocol.headerTimeout` and `kuicksilver.connector.proxyProtocol.maxHeaderSize` turn it on
+  for the deployment port; next to Ktor's `-sslPort` connector the start fails.
 
 ### Certificate per name (SNI)
 
@@ -924,15 +967,17 @@ response, for it:
 ```kotlin
 // guide:ktor:sni-server
 tlsConnector {
-    tls { identity = defaultIdentity }
     port = 443
-    tls { sniSelector = { hello ->
-        when (hello.serverName) {
-            "api.example.com" -> ServerTlsOverride(apiIdentity)
-            "admin.example.com" -> ServerTlsOverride(adminIdentity, clientAuth = ClientAuth.Required, trust = adminCa)
-            else -> null // a name not served here: the handshake ends with unrecognized_name
+    tls {
+        identity = defaultIdentity
+        sniSelector = { hello ->
+            when (hello.serverName) {
+                "api.example.com" -> ServerTlsOverride(apiIdentity)
+                "admin.example.com" -> ServerTlsOverride(adminIdentity, clientAuth = ClientAuth.Required, trust = adminCa)
+                else -> null // a name not served here: the handshake ends with unrecognized_name
+            }
         }
-    } }
+    }
 }
 ```
 
@@ -941,7 +986,7 @@ protocol, and the `Alt-Svc` its TCP responses carry leads to a QUIC endpoint tha
 function: it may look the identity up (a cache, a store); on QUIC it runs off the connection's loop while that handshake
 waits, and a handshake that times out meanwhile cancels it. On QUIC it runs for each new connection's ClientHello, before
 the client's address is validated (as RFC 9001 section 4.3 notes, a server that parses the ClientHello to decide can
-require a Retry first): keep it cheap, or let `quicAdmission` ask unvalidated clients for a Retry. A ClientHello without a server name (a client that connected
+require a Retry first): keep it cheap, or let `http3 { endpoint { admission } }` ask unvalidated clients for a Retry. A ClientHello without a server name (a client that connected
 to an address) reaches it with `serverName == null`, and `null` from it then means the connector's own identity
 (`defaultIdentity`). An answer's `alpn` restricts its name: without one the name gets every protocol of the connector;
 with one TCP negotiates from that list without `h3` (which identifies HTTP/3 over QUIC only, RFC 9114 section 3.1; a list
@@ -958,7 +1003,7 @@ that throws ends that handshake (on QUIC with `internal_error`; the exception's 
 Session tickets resume only under the name and the certificate they were issued under: a client that comes back with a
 ticket of another name, or after the selector started answering with another certificate, runs one full handshake (no
 0-RTT) and gets a new ticket. A name whose answer asks for client certificates gets no 0-RTT and no tickets on HTTP/3
-(`quicEarlyData` applies to the other names). Requests on a connection must be for the name its identity was chosen for:
+(`http3 { earlyData { enabled } }` applies to the other names). Requests on a connection must be for the name its identity was chosen for:
 see [Misdirected requests](#misdirected-requests).
 
 ### Certificate rotation
@@ -987,12 +1032,14 @@ progress and open connections keep the old ones. A key that does not match its
 certificate fails in `fromPem`, and `reload` refuses an expired leaf and one not valid yet (`TlsException.Config`): the
 identity in use stays. Session tickets are bound to the certificate they were issued under, so after a reload clients
 run one full handshake and see the new certificate (see [Rotating the server certificate](tls.md#rotating-the-server-certificate)
-for ownership, resumption and key compromise). The same works for `identity` in the engine configuration (plain
+for ownership, resumption and key compromise). The same works for the engine's `tls { identity }` (Ktor's own
 connectors served over TLS); on the JVM, an `sslConnector` keystore is read once, so build the identity with
 `TlsIdentity.fromKeyStore` and wrap it yourself instead.
 
-With `embeddedServer` the application decides when to reload. A check of the files once an hour, from the application's
-own coroutine scope (it ends when the server stops):
+PEM files need no code of yours: `tls { pemFiles(chain, key); reloadInterval = 1.hours }` (the [first
+screen](#minimal-example)) has the engine watch them, with the rules of `EngineMain` below. For a source of your own the
+application decides when to reload; a check of the files once an hour, from the application's own coroutine scope (it
+ends when the server stops):
 
 ```kotlin
 val chainFile = File("/etc/letsencrypt/live/example.com/fullchain.pem")
@@ -1051,9 +1098,9 @@ val server = embeddedServer(Kuicksilver, configure = {
 logs it, below). To see from outside which certificate a server presents, `openssl s_client -connect <host>:443
 -servername <host> </dev/null | openssl x509 -noout -dates -serial` shows the dates and serial of the leaf served over TCP.
 
-With `EngineMain`, set `kuicksilver.tls.reloadInterval` (`1h`, `30m`, ...; off by default) and the engine checks the
-PEM files of `kuicksilver.tls.certificateChain` and `kuicksilver.tls.privateKey` that often (the configuration's
-`identityReloadInterval`). It reloads when the chain file holds other certificates than those served: a chain read
+With `tls { pemFiles(…) }` and `reloadInterval` in code, or `kuicksilver.tls.reloadInterval` (`1h`, `30m`, ...; `off`
+by default) with `EngineMain`, the engine checks the PEM files (`kuicksilver.tls.certificateChain` and
+`kuicksilver.tls.privateKey`) that often. It reloads when the chain file holds other certificates than those served: a chain read
 twice a second apart with the same content, and a key that matches it. Tools that write the chain before the key
 (certbot) or swap a symlinked directory (Kubernetes secrets) are covered: a pair that does not match yet keeps the old
 identity and is tried again after 1 s, then 2 s, 4 s and so on up to the interval. Failures are logged as warnings
@@ -1062,12 +1109,12 @@ read once more a second later, so a chain whose writer paused longer than that i
 whole on every check and refused above 1 MiB; a chain file that also holds a private key is refused, at startup too (keep
 the key in its own file). The stop waits at most a second for a check in progress (a read on a hung network file system
 cannot be interrupted). Polling once an hour means a renewed certificate may wait an hour to be served; certbot's `--deploy-hook`
-(or a restart) is the alternative when it must take effect at once. With `kuicksilver.tls.reloadInterval` set, the
-files at startup get the same checks as a reload, so an expired or not yet valid certificate fails the start; without
-it, `EngineMain` serves the files as they are, as before. The identity `EngineMain` made is closed when the server stops.
+(or a restart) is the alternative when it must take effect at once. With `reloadInterval` set, the files at startup get the same checks as a reload, so an expired or not yet valid
+certificate fails the start; without it, the engine serves the files as they are, as before. The identity the engine
+read from files is closed when the server stops.
 
 **The client CA.** A connector that asks for client certificates ([Mutual TLS](#mutual-tls-client-certificates)) can
-rotate the CA bundle it verifies them with in the same way: give it `trust = TrustConfig.reloadable(TrustConfig.AnchoredCa(roots))`
+rotate the CA bundle it verifies them with in the same way: give it `tls { clientTrust = TrustConfig.reloadable(TrustConfig.AnchoredCa(roots)) }`
 (alone or as the `base` of `Pinned`) and call `reload(TrustConfig.AnchoredCa(newRoots))`. Handshakes whose ClientHello
 arrives after `reload` returns, HTTP/1.1 and HTTP/2 over TCP and HTTP/3 over QUIC, verify client certificates against the
 new bundle. After `reload` returns, no handshake accepts a certificate that only a removed CA vouches for: one in progress
@@ -1080,22 +1127,20 @@ valid now ([Rotating the client CA](tls.md#rotating-the-client-ca)).
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val clientCa = TrustConfig.reloadable(TrustConfig.AnchoredCa(Certificate.parsePem(caBundlePem)))
 val server = embeddedServer(Kuicksilver, configure = {
-    tlsConnector {
-        tls { this.identity = identity }
-        port = 443
-        tls {
-            clientAuth = ClientAuth.Required
-            clientTrust = clientCa
-        }
+    tls {
+        this.identity = identity
+        clientAuth = ClientAuth.Required
+        clientTrust = clientCa
     }
+    tlsConnector { port = 443 }
 }, module = Application::module)
 // later: new TCP and QUIC handshakes verify client certificates against the new bundle
 clientCa.reload(TrustConfig.AnchoredCa(Certificate.parsePem(renewedBundlePem)))
 ```
 
-With `EngineMain`, `kuicksilver.tls.clientAuth` (`optional` or `required`) and `kuicksilver.tls.clientCa` (a PEM file of
-CA certificates) ask for client certificates on the deployment port. With `kuicksilver.tls.reloadInterval` set, the CA
-file is watched at that interval with the rules above: a changed bundle is used once two reads a second apart agree. A
+In code, `tls { clientCaFile(path) }` reads a PEM file of CA certificates as `clientTrust`; with `EngineMain`,
+`kuicksilver.tls.clientAuth` (`optional` or `required`) and `kuicksilver.tls.clientCa` ask for client certificates on
+the deployment port. With `reloadInterval` (`kuicksilver.tls.reloadInterval`) set, the CA file is watched at that interval with the rules above: a changed bundle is used once two reads a second apart agree. A
 file holding a private key, a damaged file and a bundle with no certificate valid now keep the bundle in use, and so do
 they at startup (where they fail the start). A reload is logged at info level, a failure as a warning, and so is a bundle
 holding certificates that are not CA certificates (each is an anchor: a client presenting exactly it is accepted). The
@@ -1105,33 +1150,61 @@ takes client certificates from its `trustStore` instead, and the start is refuse
 ### EngineMain and configuration keys
 
 `io.kuicksilver.ktor.server.EngineMain` reads the usual `ktor.deployment.*` keys (and on the JVM `-sslPort` with
-`ktor.security.ssl.*`). Its own keys work on every platform:
+`ktor.security.ssl.*`). Its own keys work on every platform, and in `application.yaml` as in `application.conf`. A key is
+the path of its option in the engine's DSL under `kuicksilver.` (`kuicksilver.http3.endpoint.maxConnections` is
+`http3 { endpoint { maxConnections } }`), except the TLS files under `kuicksilver.tls` (the DSL reads them with
+`pemFiles`, `clientCaFile` and `ocspStaplingFile`), the `kuicksilver.connector` block for the deployment port (a Ktor
+connector, which has no DSL block) and Ktor's own `ktor.deployment.connectionIdleTimeoutSeconds`.
+
+- **Strict.** Every key under `kuicksilver.` must be one of the table's: any other fails the start with an
+  `IllegalArgumentException` that names it and the key to use, `kuicksilver.http3.quic.maxConnections is not a Kuicksilver
+  key; did you mean kuicksilver.http3.endpoint.maxConnections?`. A key of 0.2.x or of an earlier 0.3.0 snapshot is never
+  read: `kuicksilver.altSvc was replaced in 0.3.0 by kuicksilver.http3.altSvc`, and the 0.2.x switch
+  `kuicksilver.http3 = true` gives `kuicksilver.http3 = true|false was replaced in 0.3.0 by kuicksilver.http3.enabled`
+  (the old and new keys: [configuration reference](configuration.md#migrating-from-02x)). HOCON keeps the last of two
+  definitions of one path, so a file with both `kuicksilver.http3 = true` and a `kuicksilver.http3 { }` block is read
+  as whichever comes last: write the block only.
+- **Values.** A switch is `true` or `false`, nothing else; a duration is what `kotlin.time.Duration.parse` reads (`30s`,
+  `1h`, `PT30S`); an enumeration's name in any case (`required`, `tls12And13`, `withHttp11`). "None" or "no limit" is
+  `off` for the keys that have one, where `0` is refused with "use off instead of 0". A value the option refuses fails
+  the start with the key in front of the option's message.
 
 | Key | Meaning |
 |---|---|
-| `kuicksilver.tls.certificateChain`, `kuicksilver.tls.privateKey` | PEM files; the deployment port then serves TLS and HTTP/3 |
-| `kuicksilver.tls.reloadInterval` | how often those PEM files, and the `kuicksilver.tls.clientCa` file, are checked for a renewed certificate or CA bundle (`30m`, `1h`; `0` or unset: never; at least `1s`); see [Certificate rotation](#certificate-rotation) |
-| `kuicksilver.tls.clientAuth` | ask for a client certificate on the deployment port: `none` (unset), `optional` or `required`; anything but `none` needs `kuicksilver.tls.clientCa` |
-| `kuicksilver.tls.clientCa` | PEM file of the CA certificates client certificates are verified against; needs the identity files and `kuicksilver.tls.clientAuth` `optional` or `required` |
-| `kuicksilver.tls.versions` | the TLS versions of the deployment port: `tls13` (unset) or `tls12And13`; needs the identity files, and is refused next to `-sslPort`, whose key is `ktor.security.ssl.enabledProtocols`; see [TLS 1.2 on the server](#tls-12-on-the-server) |
-| `kuicksilver.tls.keyExchangeGroups` | the key-exchange groups of the deployment port, the server's most preferred first: a list of `KeyExchangeGroups` names (`["X25519MLKEM768", "x25519", "secp256r1"]`, case ignored), or one string of them separated by `:` or `,` (`-P:` keys, `${?ENV}`); unset: the default list; needs the identity files, and is refused next to `-sslPort`; an unknown name or a duplicate fails the start; see [TLS: Key exchange groups](tls.md#key-exchange-groups) |
-| `kuicksilver.tls.ocspStapling` | a file with a DER OCSP response (RFC 6960) for the identity's certificate, stapled on TCP and QUIC when it is fresh and for the certificate sent; read again every `kuicksilver.tls.reloadInterval` (put a fresh response in place before nextUpdate; without the interval, a restart reads it); a response that is not stapled is logged as a warning at startup, and so is one that stops being stapled (expired, or for a certificate that was reloaded); needs the identity files, and is refused next to `-sslPort`; see [Certificate revocation](tls.md#certificate-revocation) |
-| `kuicksilver.tls.trustedGateway` | `true`: every client of the deployment port is a trusted gateway (RFC 9110 section 7.4), so no request is answered `421 Misdirected Request`: with the identity files, for a host the certificate does not name; without them, for an absolute-form `https` target on the cleartext port behind a TLS-terminating proxy (`false`); with the identity files it is refused next to `-sslPort`, and without them it is accepted there but exempts only the cleartext port, never Ktor's `-sslPort` connector; see [Misdirected requests](#misdirected-requests) |
-| `kuicksilver.tls.echKeys` | Encrypted Client Hello keys of the deployment port: a list of PEM files, each what `openssl ech -public_name <name>` writes (the private key and its ECHConfigList; every one is sent in retry configurations), or one comma-separated string; read once at startup (rotate in code with `EchServerKeys.rotate`); needs the identity files, and is refused next to `-sslPort`; see [Encrypted Client Hello on the server](#encrypted-client-hello-on-the-server) |
-| `kuicksilver.http3` | serve HTTP/3 (`true`) |
-| `kuicksilver.http2` | serve HTTP/2 on TLS connectors (`false`); see [HTTP/2 on the server](#http2-on-the-server) |
-| `kuicksilver.h2c` | HTTP/2 over cleartext TCP with prior knowledge on the plain deployment port: `off` (unset), `withHttp11` (both on one port, told apart by the preface) or `only`; refused with the identity files; see [h2c on the server](#h2c-on-the-server) |
-| `kuicksilver.http2RepeatOffenderPenalty` | refuse an address that keeps flooding HTTP/2 for this long (`0`, off; e.g. `30s`); see [HTTP/2 on the server](#http2-on-the-server) |
-| `kuicksilver.maxTcpConnections` | TCP connections a connector holds at once (`10000`); see [Connection limits](#connection-limits) |
-| `kuicksilver.maxTcpConnectionsPerIp` | TCP connections of one client address on a connector (`0` or unset: off; e.g. `256` for a server that faces clients directly); see [Connection limits](#connection-limits) |
-| `kuicksilver.altSvc` | announce HTTP/3: `Alt-Svc` on HTTP/1.1 and HTTP/2 responses, plus ALTSVC frames on HTTP/2 (`true`) |
-| `kuicksilver.webSocketsOverHttp3` | accept RFC 9220 WebSockets (`true`) |
-| `kuicksilver.webSocketsOverHttp2` | accept RFC 8441 WebSockets on HTTP/2 connections (`true`); see [WebSockets over HTTP/2](#websockets-over-http2) |
-| `kuicksilver.h1AllowBareLf` | let a bare LF end a line of an HTTP/1.1 request head or trailer section (`false`: 400); see [Server](#server) |
-| `kuicksilver.udpSocketCount` | endpoint loops on the UDP port (`1`) |
-| `kuicksilver.proxyProtocol.trustedSources`, `.headerTimeout`, `.maxHeaderSize` | the PROXY protocol on the deployment port: the proxies allowed to send the header (a list, or one comma-separated string; unset: off), how long it may take (`5s`) and its largest size in bytes (`4096`); refused next to `-sslPort`; see [PROXY protocol](#proxy-protocol) |
-| `kuicksilver.quic.initialUdpPayloadSize`, `.maxSendUdpPayloadSize`, `.maxUdpPayloadSize`, `.pmtud`, `.maxIdleTimeout`, `.handshakeTimeout`, `.keepAlive`, `.maxBidiStreams`, `.maxUniStreams`, `.allowMigration` | the QUIC transport of the HTTP/3 listeners, each the `QuicConfig` option of its name (unset: its default); an unknown key under `kuicksilver.quic` or a value out of range fails the start; see [QUIC transport keys](configuration.md#quic-transport-keys) and, for tunnels, [Tunnels and NAT paths](quic.md#tunnels-and-nat-paths-wireguard) |
-| `ktor.deployment.connectionIdleTimeoutSeconds` | idle HTTP/1.1 keep-alive timeout (`45`) |
+| `kuicksilver.requestHeaderTimeout` | `requestHeaderTimeout`: the time for a complete request head on every protocol (`30s`); see [Server](#server) |
+| `kuicksilver.tls.certificateChain`, `kuicksilver.tls.privateKey` | PEM files (`tls { pemFiles(…) }`); the deployment port then serves TLS, HTTP/2 and HTTP/3 |
+| `kuicksilver.tls.reloadInterval` | `tls { reloadInterval }`: how often those PEM files, and the `kuicksilver.tls.clientCa` and `kuicksilver.tls.ocspStapling` files, are checked for a renewed certificate, CA bundle or response (`30m`, `1h`; `off` or unset: never; at least `1s`); see [Certificate rotation](#certificate-rotation) |
+| `kuicksilver.tls.clientAuth` | `tls { clientAuth }`: ask for a client certificate on the deployment port: `none` (unset), `optional` or `required`; anything but `none` needs `kuicksilver.tls.clientCa` |
+| `kuicksilver.tls.clientCa` | `tls { clientCaFile(…) }`: PEM file of the CA certificates client certificates are verified against; needs the identity files and `kuicksilver.tls.clientAuth` `optional` or `required` |
+| `kuicksilver.tls.versions` | `tls { versions }`: the TLS versions of the deployment port: `tls13` (unset) or `tls12And13`; needs the identity files, and is refused next to `-sslPort`, whose key is `ktor.security.ssl.enabledProtocols`; see [TLS 1.2 on the server](#tls-12-on-the-server) |
+| `kuicksilver.tls.keyExchangeGroups` | `tls { keyExchangeGroups }`: the key-exchange groups of the deployment port, the server's most preferred first: a list of `KeyExchangeGroups` names (`["X25519MLKEM768", "x25519", "secp256r1"]`, case ignored), or one string of them separated by `:` or `,` (`-P:` keys, `${?ENV}`); unset: the default list; needs the identity files, and is refused next to `-sslPort`; an unknown name or a duplicate fails the start; see [TLS: Key exchange groups](tls.md#key-exchange-groups) |
+| `kuicksilver.tls.ocspStapling` | `tls { ocspStaplingFile(…) }`: a file with a DER OCSP response (RFC 6960) for the identity's certificate, stapled on TCP and QUIC when it is fresh and for the certificate sent; read again every `kuicksilver.tls.reloadInterval` (put a fresh response in place before nextUpdate; without the interval, a restart reads it); a response that is not stapled is logged as a warning at startup, and so is one that stops being stapled (expired, or for a certificate that was reloaded); needs the identity files, and is refused next to `-sslPort`; see [Certificate revocation](tls.md#certificate-revocation) |
+| `kuicksilver.tls.echKeys` | `tls { echKeys }`: Encrypted Client Hello keys of the deployment port: a list of PEM files, each what `openssl ech -public_name <name>` writes (the private key and its ECHConfigList; every one is sent in retry configurations), or one comma-separated string; read once at startup (rotate in code with `EchServerKeys.rotate`); needs the identity files, and is refused next to `-sslPort`; see [Encrypted Client Hello on the server](#encrypted-client-hello-on-the-server) |
+| `kuicksilver.connector.allowMisdirectedHosts` | `true`: every client of the deployment port is a trusted gateway (RFC 9110 section 7.4), so no request is answered `421 Misdirected Request`: with the identity files, for a host the certificate does not name; without them, for an absolute-form `https` target on the cleartext port behind a TLS-terminating proxy (`false`); with the identity files it is refused next to `-sslPort`, and without them it is accepted there but exempts only the cleartext port, never Ktor's `-sslPort` connector; see [Misdirected requests](#misdirected-requests) |
+| `kuicksilver.connector.h2c` | HTTP/2 over cleartext TCP with prior knowledge on the plain deployment port: `off` (unset), `withHttp11` (both on one port, told apart by the preface) or `only`; refused with the identity files; see [h2c on the server](#h2c-on-the-server) |
+| `kuicksilver.connector.proxyProtocol.trustedSources`, `.headerTimeout`, `.maxHeaderSize` | the PROXY protocol on the deployment port: the proxies allowed to send the header (a list, or one comma-separated string; unset: off), how long it may take (`5s`) and its largest size in bytes (`4096`); the other two need `trustedSources`; refused next to `-sslPort`; see [PROXY protocol](#proxy-protocol) |
+| `kuicksilver.http1.allowBareLf` | `http1 { allowBareLf }`: let a bare LF end a line of an HTTP/1.1 request head or trailer section (`false`: 400); see [Server](#server) |
+| `kuicksilver.http2.enabled` | `http2 { enabled }`: serve HTTP/2 on TLS connectors (`true`); see [HTTP/2 on the server](#http2-on-the-server) |
+| `kuicksilver.http2.repeatOffenderPenalty` | `http2 { repeatOffenderPenalty }`: refuse an address that keeps flooding HTTP/2 for this long (`off`; e.g. `30s`); see [HTTP/2 on the server](#http2-on-the-server) |
+| `kuicksilver.http3.enabled` | `http3 { enabled }`: serve HTTP/3 (`true`) |
+| `kuicksilver.http3.altSvc` | `http3 { altSvc }`: announce HTTP/3: `Alt-Svc` on HTTP/1.1 and HTTP/2 responses, plus ALTSVC frames on HTTP/2 (`true`) |
+| `kuicksilver.http3.earlyData.enabled` | `http3 { earlyData { enabled } }`: accept 0-RTT (`false`); the policy (`replayable`, a predicate) is code only; see [0-RTT](#0-rtt-opt-in-experimental) |
+| `kuicksilver.http3.endpoint.loops` | `http3 { endpoint { loops } }`: endpoint loops on the UDP port (`1`) |
+| `kuicksilver.http3.endpoint.maxConnections` | `http3 { endpoint { maxConnections } }`: QUIC connections each HTTP/3 listener holds (`10000`); see [Connection limits](#connection-limits) |
+| `kuicksilver.http3.endpoint.maxConnectionsPerIp` | `http3 { endpoint { maxConnectionsPerIp } }`: QUIC connections of one client IP (`256`; `off` behind a NAT or kube-proxy) |
+| `kuicksilver.http3.endpoint.acceptQueue` | `http3 { endpoint { acceptQueue } }`: handshaken connections waiting for the accept loop (`128`) |
+| `kuicksilver.http3.quic.maxIdleTimeout`, `.handshakeTimeout`, `.keepAlive`, `.maxBidiStreams` | `http3 { quic { … } }`: the idle timeout (`30s`; `off` advertises none), the handshake deadline (`10s`), the PING interval of a quiet connection (`off`) and the request streams a client may have open (`100`) |
+| `kuicksilver.http3.quic.pathMtu.maxReceive`, `.initial`, `.maxSend`, `.discovery` | `http3 { quic { pathMtu { … } } }`: the advertised `max_udp_payload_size` (1200..1500, the endpoint's datagram slots), the datagram size a connection starts with, the largest datagram sent and DPLPMTUD; see [Tunnels and NAT paths](quic.md#tunnels-and-nat-paths-wireguard) |
+| `kuicksilver.http3.quic.migration.allow` | `http3 { quic { migration { allow } } }`: follow a client to a new address (`true`) |
+| `kuicksilver.webSockets.overHttp2`, `.overHttp3` | `webSockets { overHttp2, overHttp3 }`: accept RFC 8441 and RFC 9220 WebSockets (`true`); see [WebSockets over HTTP/2](#websockets-over-http2) |
+| `kuicksilver.webSockets.maxMessageSize` | `webSockets { maxMessageSize }`: the largest WebSocket message a client may send, in bytes (`16777216`) |
+| `kuicksilver.tcp.maxConnections` | `tcp { maxConnections }`: TCP connections a connector holds at once (`10000`); see [Connection limits](#connection-limits) |
+| `kuicksilver.tcp.maxConnectionsPerIp` | `tcp { maxConnectionsPerIp }`: TCP connections of one client address on a connector (`off`; e.g. `256` for a server that faces clients directly); see [Connection limits](#connection-limits) |
+| `ktor.deployment.connectionIdleTimeoutSeconds` | Ktor's key, read into `http1 { idleTimeout }` (`45`) |
+
+The QUIC transport keys set `http3 { quic { } }` as the DSL does; `kuicksilver.quic.maxUniStreams` of 0.3.0 snapshots is
+refused, since the engine derives it (HTTP/3 needs at least 3). Every key with its type and release is in the
+[configuration reference](configuration.md#hocon-keys).
 
 An `application.conf` (HOCON) for a TLS and HTTP/3 server on port 443 whose certificate certbot renews; every key not
 set keeps the default of the table above. The `kuicksilver-ktor-server` tests load this block as it stands (with their
@@ -1140,7 +1213,7 @@ own paths, port and module), so its keys stay current:
 ```hocon
 ktor {
     deployment {
-        port = 443                     # TCP for HTTP/1.1 over TLS and UDP for HTTP/3, the same number
+        port = 443                     # TCP for HTTP/2 and HTTP/1.1 over TLS and UDP for HTTP/3, the same number
     }
     application {
         modules = [ com.example.ApplicationKt.module ]
@@ -1168,15 +1241,8 @@ parameter, but encrypted keys are refused with `TlsException.Config` whatever it
 
 ## Client
 
-The most common case is to configure nothing:
-
-```kotlin
-// guide:ktor:first-screen-client
-val client = HttpClient(Kuicksilver) // explicit engine: HttpClient() may pick OkHttp/Android first (ServiceLoader)
-```
-
-The first request to a host goes over TCP (HTTP/2 or HTTP/1.1); HTTP/3 from the next one, once the server sent
-`Alt-Svc`. A mobile app talking to its own API sets a handful of options, all stable but `migration`:
+The client's first screen for the most common case, configuring nothing, is in the [Minimal example](#minimal-example).
+A mobile app talking to its own API sets a handful of options, all stable but `migration`:
 
 ```kotlin
 @file:OptIn(ExperimentalKuicksilverApi::class)   // only for http3 { migration }
@@ -1197,18 +1263,24 @@ val client = HttpClient(Kuicksilver) {
 }
 ```
 
+The default logger, `KuicksilverLogger.Default`, is the platform's (SLF4J on the JVM, Logcat on Android, `NSLog` on Apple
+platforms, standard error elsewhere) at warnings and up: the line per call that says why HTTP/3 was not used is Info
+([Why did this request not use HTTP/3?](#why-did-this-request-not-use-http3)), hence the `LogLevel.Info` logger while you
+debug. Every option, with its block, type, default and stability, is in the [configuration reference](configuration.md#ktor-client).
+With Ktor's timeouts:
+
 ```kotlin
 // guide:ktor:client
 val client = HttpClient(Kuicksilver) {
     engine {
-        tls { trust = TrustConfig.Pinned(setOf(SpkiSha256.parse("sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")), base = TrustConfig.Platform) }
-        http3 { discovery = Http3Discovery.Auto }    // the default: HTTP/1.1 first, HTTP/3 after Alt-Svc
+        http3 { discovery = Http3Discovery.Auto }    // the default: TCP first, HTTP/3 after Alt-Svc
     }
     install(HttpTimeout) { connectTimeoutMillis = 5_000; socketTimeoutMillis = 15_000 }
 }
 ```
 
-- `https://` and `wss://` go over TLS 1.3 with the same `trust`, `identity` and `tls {}` settings whatever the protocol;
+- `https://` and `wss://` go over TLS 1.3 with the same `tls { }` (trust, client certificate, versions, suites) whatever
+  the protocol;
   SNI and verification use the URL's host. Over TCP, `https://` is HTTP/2 when the server picks `h2` in ALPN and
   HTTP/1.1 otherwise ([HTTP/2 on the client](#http2-on-the-client)). `http://` and `ws://` are plain HTTP/1.1 over TCP. On Android they follow
   the app's Network Security Configuration as OkHttp does: a host for which `NetworkSecurityPolicy.isCleartextTrafficPermitted`
@@ -1224,7 +1296,7 @@ val client = HttpClient(Kuicksilver) {
   a host beginning with a dot, and a name with non-ASCII characters: the engine does not map an internationalised name
   to its A-label, so the URL must carry the A-label (`xn--...`), as the `<domain>` entry does.
 - HTTP/1.1 requests are written and responses parsed with Ktor's CIO code (vendored, see `docs/ktor-internal-api.md`):
-  chunked bodies, `Expect: 100-continue`, keep-alive with at most `maxIdleConnectionsPerRoute` idle connections per route
+  chunked bodies, `Expect: 100-continue`, keep-alive with at most `pool { maxIdleConnectionsPerRoute }` idle connections per route
   (a pooled connection the server already closed is replaced once, transparently, for idempotent requests; a POST
   that failed on one is reported, never sent again). Requests on one connection are
   sequential; `pipelining` is not used. Limits and idle cleanup: see "Connection pool" below. A response head (status
@@ -1261,8 +1333,8 @@ val client = HttpClient(Kuicksilver) {
   wrong direction (RFC 6455 section 5.1: a server's frames are never masked, a client's always are), a malformed
   control frame, fragment, length or Close frame fails the connection with code 1002; a text message or a Close reason
   that is not UTF-8 with 1007, after permessage-deflate, which the engine decompresses itself whichever extension
-  negotiated it; an uncompressed frame or message over the engine's `webSocketMaxMessageSize` (16 MiB by default,
-  *experimental*) with 1009, from the frame's header, before its payload is read, and a compressed one as it inflates
+  negotiated it; an uncompressed frame or message over the engine's `webSockets { maxMessageSize }` (16 MiB by default)
+  with 1009, from the frame's header, before its payload is read, and a compressed one as it inflates
   past the limit. The engine hands the session a Close
   frame with that code in place of the bad frame, Ktor's session answers it, so the code goes on the wire and is the
   session's `closeReason`, and `incoming` ends without the bad frame (a raw `webSocketRaw` session sees the Close in
@@ -1282,8 +1354,7 @@ val client = HttpClient(Kuicksilver) {
 val client = HttpClient(Kuicksilver) {
     engine {
         http2 {
-            enabled = true                                      // the default: offer h2 on every TLS connection over TCP
-            pingInterval = 30.seconds                           // a keep-alive PING; Duration.INFINITE (the default): none
+            pingInterval = 30.seconds                           // a keep-alive PING; null (the default): none
             settings { initialStreamWindow = 1 shl 20 }  // our windows and limits (threat model 3.23)
         }
     }
@@ -1293,8 +1364,9 @@ val client = HttpClient(Kuicksilver) {
 Every `https://` connection over TCP offers `h2` and `http/1.1` in ALPN (RFC 9113 section 3.2); when the server picks
 `h2` the responses report `HttpProtocolVersion.HTTP_2_0` and one connection per route carries the requests as streams.
 This holds directly, through an HTTP CONNECT tunnel and through SOCKS5 (ALPN is inside the TLS session with the origin,
-as with OkHttp), in every `http3 { discovery }` mode but `H3Only`, and whatever `http3Allowed` says: the HTTP/3 kill
-switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1.1`, as in 0.2.
+as with OkHttp), in every `http3 { discovery }` mode but `H3Only`, with `http3 { enabled = false }`, and whatever `http3 { allowed }` says: the HTTP/3 kill
+switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1.1`, as in 0.2. The `http2` block is stable; `priorKnowledge` (h2c) and
+`settings { }` are experimental.
 
 - **Not HTTP/2.** `http://`, unless its origin is listed for h2c ([h2c on the client](#h2c-on-the-client)). A WebSocket opens no HTTP/2 connection of its own: see
   WebSockets below. No server push (the client sends SETTINGS_ENABLE_PUSH = 0; a PUSH_PROMISE
@@ -1319,7 +1391,7 @@ switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1
   list is empty and `neverIndex` changes nothing.
 - **Responses** are checked against RFC 9113 section 8: a malformed one (an invalid field, a content-length that does
   not match the content) fails with `Http2Exception.MalformedMessage`. A response field section above
-  `settings.maxHeaderListSize` (64 KiB) fails its call, not the connection.
+  `settings { maxFieldSectionSize }` (64 KiB) fails its call, not the connection.
 - **Flow control follows the application's reading**: the server gets window back as the body is read, so a body the
   application does not read stops the server at the stream window (512 KiB, growing to 6 MiB while the application
   keeps up) instead of filling memory.
@@ -1330,12 +1402,12 @@ switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1
 - **Deadlines.** The server's SETTINGS (its preface) must arrive within what the connect timeout left after TCP and TLS,
   else the connection ends with SETTINGS_TIMEOUT: the call fails with `ConnectTimeoutException` when its request had no
   content or the content had not started, else with `Http2Exception.ConnectionClosed` (a request whose body went out is
-  not one that never left). Ours must be acknowledged within `settings.settingsAckTimeout` (10 s) of the server's
+  not one that never left). Ours must be acknowledged within `settings { settingsAckTimeout }` (10 s) of the server's
   preface. A connection quiet for 10 s is checked with a PING before it takes a
   request (half the connect timeout at most, 5 s; one PING per connection, shared by the requests that wait); one that
   does not answer takes no new request and the request goes to a new connection. Calls still running on it are not cut:
   the connection gets GOAWAY and closes once they are done (or closes at once when none run). With
-  `maxConnectionsPerRoute = 1` such a connection keeps the route's only slot until those calls end, and new requests
+  `pool { maxConnectionsPerRoute = 1 }` such a connection keeps the route's only slot until those calls end, and new requests
   wait for it within their connect timeout. Within an exchange, a response or a send window that stays shut is bounded by the socket timeout
   (`HttpTimeout`), and with `pingInterval` a connection whose PING is still unanswered at the next one is closed and its
   calls fail; with neither, a connection that dies mid-exchange holds the call until TCP gives up, as over HTTP/1.1.
@@ -1394,7 +1466,7 @@ grpc-go's `insecure.NewCredentials()` is per channel.
   frame); only a server that ends the connection with HTTP_1_1_REQUIRED gets HTTP/1.1, as over TLS.
 - **Never for `https://`** (section 3.3: HTTP/2 over TLS "MUST use protocol negotiation in TLS"), and never HTTP/3: an
   `http://` origin learns no alternative, neither from `Alt-Svc` fields nor from ALTSVC frames on an h2c connection.
-  With `http3 { httpsRecords }` an HTTPS record still upgrades the request to `https://` first (RFC 9460 section 9.5).
+  With `network { httpsRecords }` an HTTPS record still upgrades the request to `https://` first (RFC 9460 section 9.5).
 - **Proxies.** Through an HTTP proxy the h2c connection goes in a CONNECT tunnel (an absolute-form request would be
   HTTP/1.1), as OkHttp does; through SOCKS5 as any other connection. The tunnel is a CONNECT to the origin's cleartext
   port (80, say), which many proxies refuse (squid's default `SSL_ports` allows CONNECT to 443 only): such a proxy fails
@@ -1413,39 +1485,40 @@ grpc-go's `insecure.NewCredentials()` is per channel.
 
 ```kotlin
 // guide:ktor:pool
-@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val client = HttpClient(Kuicksilver) {
     engine {
-        pool { maxConnections = 1000 }                 // TCP connections (HTTP/1.1, HTTP/2) of the engine, idle ones included
-        pool { maxConnectionsPerRoute = 100 }               // ... to one route (scheme, host, port, proxy)
-        pool { maxIdleConnectionsPerRoute = 4 }             // idle keep-alive connections kept per route
-        pool { idleTimeout = 5.minutes }                    // idle HTTP/1.1, HTTP/2 and HTTP/3 connections are closed after this
-        pool { maxConnectionLifetime = null }  // age after which a connection takes no new requests
+        pool {
+            maxConnections = 1000              // TCP connections (HTTP/1.1, HTTP/2) of the engine, idle ones included
+            maxConnectionsPerRoute = 100       // ... to one route (scheme, host, port, proxy)
+            maxIdleConnectionsPerRoute = 4     // idle keep-alive connections kept per route
+            idleTimeout = 5.minutes            // idle HTTP/1.1, HTTP/2 and HTTP/3 connections are closed after this
+            maxConnectionLifetime = null       // age after which a connection takes no new requests; null: none
+        }
     }
 }
 ```
 
 | Setting | Default | Compared with |
 |---|---|---|
-| `maxConnectionsCount` | 1000 | CIO `maxConnectionsCount` 1000; OkHttp `Dispatcher.maxRequests` 64 (requests, not sockets) |
+| `maxConnections` | 1000 | CIO `maxConnectionsCount` 1000; OkHttp `Dispatcher.maxRequests` 64 (requests, not sockets) |
 | `maxConnectionsPerRoute` | 100 | CIO `endpoint.maxConnectionsPerRoute` 100; OkHttp `maxRequestsPerHost` 5 |
 | `maxIdleConnectionsPerRoute` (idle per route) | 4 | OkHttp `ConnectionPool` 5 idle in all |
 | `idleTimeout` | 5 min | OkHttp keep-alive 5 min; CIO `keepAliveTime` 5 s |
-| `maxConnectionLifetime` | infinite | neither OkHttp nor CIO has one |
+| `maxConnectionLifetime` | null (none) | neither OkHttp nor CIO has one |
 
 The limits are CIO's, so moving from CIO changes nothing; they guard against a runaway caller rather than shape traffic
 (OkHttp's lower numbers limit requests, and HTTP/2 multiplexes behind them). The idle timeout is OkHttp's: long enough
 to reuse a connection across bursts, short enough that a forgotten client does not hold sockets for long. A connection
 the server closed meanwhile is detected when it is taken from the pool and replaced.
 
-- **HTTP/1.1.** A request beyond `maxConnectionsPerRoute` or `maxConnectionsCount` waits, in arrival order, for a
+- **HTTP/1.1.** A request beyond `maxConnectionsPerRoute` or `maxConnections` waits, in arrival order, for a
   connection to come back or close; waiting and connecting share the connect timeout, so a request that waits too long
   fails with `ConnectTimeoutException`, as with CIO (`HttpTimeout`'s request timeout, if shorter, ends it first with
   `HttpRequestTimeoutException`). A full route does not hold up requests to other routes, and when only the total is
   exhausted the oldest idle connection of another route is closed to make room. A cancelled or timed-out waiter leaves
   the queue without taking or losing a slot. WebSocket connections hold their slot while open.
 - **HTTP/2.** One connection per route while it has a free stream under the server's SETTINGS_MAX_CONCURRENT_STREAMS;
-  it counts once toward `maxConnectionsPerRoute` and `maxConnectionsCount` however many requests it carries. When it is
+  it counts once toward `maxConnectionsPerRoute` and `maxConnections` however many requests it carries. When it is
   full a second one opens, within those limits; at the limits a request waits for a free stream within the connect
   timeout. Requests that start together toward a new origin open one connection: one connects while the others wait for
   it (ALPN is known only after the TLS handshake) and use it when it is HTTP/2, or connect on their own when it is
@@ -1455,11 +1528,12 @@ the server closed meanwhile is detected when it is taken from the pool and repla
 - **HTTP/3.** One QUIC connection per origin carries all requests, also when the origin is reached under several
   names (its host, an `Alt-Svc` alternative, an HTTPS-record target) that resolve to the same address and port: as RFC
   9114 section 3.3 asks, a second name finds the connection already there and shares it. Origins share one only with
-  `connectionCoalescing` ([Connection coalescing](#connection-coalescing-experimental)). When the server's MAX_STREAMS
+  `pool { coalescing }` ([Connection coalescing](#connection-coalescing-experimental)). When the server's MAX_STREAMS
   credit is used up, a request waits for the next credit on that connection instead of failing or opening another
   connection; the request timeout bounds the wait (`HttpRequestTimeoutException`), and so does the socket timeout,
   which covers the time without progress until the response head. A connection without requests for `idleTimeout` is closed (QUIC's
-  own idle timeout, `quic = quicConfig { maxIdleTimeout = ... }` and the server's, may end it first); one past `maxConnectionLifetime` takes
+  own idle timeout, `http3 { quic { maxIdleTimeout } }` (30 s) and the server's, may end it first: the effective idle time
+  of an HTTP/3 connection is the smaller of the two unless `http3 { quic { keepAlive } }` is set); one past `maxConnectionLifetime` takes
   no new requests and closes once its requests are done.
 - **Cleanup.** A background task of the engine closes expired connections; it sleeps until the next expiry, at most
   `idleTimeout` and at most a minute, and stops when the client closes. Per-origin bookkeeping lives only while an
@@ -1479,18 +1553,18 @@ val client = HttpClient(Kuicksilver) {
 }
 ```
 
-With `connectionCoalescing = true` (off by default; [ADR-0018](../adr/0018-h2c-and-coalescing-in-030.md)) a request for
+With `pool { coalescing = true }` (off by default; [ADR-0018](../adr/0018-h2c-and-coalescing-in-030.md)) a request for
 one `https` origin may go on an open HTTP/2 or HTTP/3 connection of another origin, as RFC 9113 section 9.1.1 and RFC 9114
 section 3.3 allow: two names behind one wildcard certificate or one CDN certificate then share a connection, a handshake
 and a congestion window. A request goes there only when both conditions of RFC 9110 section 4.3.3 hold:
 
-- **The address.** The request's host resolves now (through `dns`, NAT64 synthesis included) to the address and port the
+- **The address.** The request's host resolves now (through `network { dns }`, NAT64 synthesis included) to the address and port the
   connection is connected to; over HTTP/3 the name is that of the request's own HTTP/3 endpoint (the origin, an
   `Alt-Svc` alternative or an HTTPS-record target). It is checked for every request, so a DNS answer that changed takes
   the next request elsewhere. Another port is another destination.
 - **The certificate.** The chain the server presented passes every check a new connection to the request's host would
   make ("The certificate presented by the server MUST satisfy any checks that the client would perform when forming a
-  new TLS connection for the host in the URI", RFC 9113 section 9.1.1): the `trust` (anchors, CRLs, validity now; the
+  new TLS connection for the host in the URI", RFC 9113 section 9.1.1): the `tls { trust }` (anchors, CRLs, validity now; the
   platform's verifier or a `Custom` verifier is asked about the new host), the pins, the name (a `*.example.com` covers
   one label, `example.com` and `a.b.example.com` not; an address literal needs an iPAddress entry), the security level
   and the staple (under `RequireStapled`, or for a must-staple certificate, the connection's server must have stapled an
@@ -1499,7 +1573,7 @@ and a congestion window. A request goes there only when both conditions of RFC 9
   10.7). A certificate that fails for the new host alone (it does not name it, a custom verifier refuses it) leaves the
   connection to its own origin; one that fails for the connection's own origin as well (expired, revoked, a stale staple)
   retires it: its requests finish, every origin's next request opens a new connection (RFC 9114 section 3.3), and one
-  Warn line of the engine's `logger` per connection says why (the reason for the connection's own origin, and what the new
+  Warn line of the engine's `observability { logger }` per connection says why (the reason for the connection's own origin, and what the new
   host met). That line names both hosts, as an audit log needs (RFC 9110 section 4.3.4); filter it in your `logger` if
   host names must stay out of your logs.
 
@@ -1510,7 +1584,8 @@ takes no further request of that host; a streamed body that the first attempt co
 `H3BodyConsumed` instead. A 421 on the origin's own connection is the call's answer. `ProtocolDiagnostics.attempts` counts
 both attempts and the listener gets `retry`.
 
-Never coalesced: requests through a proxy and connections through one (`proxy`, `proxyResolver`, `connectUdpProxy`), so
+Never coalesced: requests through a proxy and connections through one (`proxy`, `proxies { resolver }`,
+`proxies { connectUdp }`), so
 a request the application routes through a proxy never takes a direct connection and the other way round; h2c; WebSockets
 and WebTransport sessions; `TrustConfig.Tofu` (a key is remembered for a name only from a handshake with that name) and
 `TrustConfig.ExpectedName`, also under `Pinned` (the certificate does not have to name the host; RFC 9110 section 4.3.3
@@ -1518,7 +1593,7 @@ attributes authority only to a certificate that does); an
 HTTP/3 connection still in its handshake (0-RTT); an HTTP/2 connection without a free stream (the request opens its own
 instead of waiting). Coalescing never brings HTTP/3 to a request that would not use it: over HTTP/3 it only spares the
 handshake of a request that has an HTTP/3 endpoint of its own. Session tickets stay per origin (a coalesced request
-resumes nothing and stores nothing), and the client certificate is the engine's `identity` for every origin. An ALTSVC
+resumes nothing and stores nothing), and the client certificate is the engine's `tls { identity }` for every origin. An ALTSVC
 frame on a request stream of a connection that carried another origin is ignored (it does not say whose it is); each
 response's `Alt-Svc` field is learned for its own origin. On an HTTP/2 connection other origins may share, `cookie` is
 always sent as a literal HPACK never indexes (RFC 7541 section 7.1: a shared compression table lets one origin's
@@ -1535,22 +1610,23 @@ coalesce by default; Go's `net/http` and curl do not.
 
 ### HTTP/3 on the client
 
-`http3 { discovery = ... }` decides when HTTP/3 is used for `https://` (never through a proxy):
+`http3 { discovery = ... }` (`Http3Discovery`) decides when HTTP/3 is used for `https://` (never through a proxy), and
+`http3 { enabled = false }` turns it off: every request goes over TCP, HTTP/2 or HTTP/1.1 (0.2's `H1Only`; together with
+`H3Only` the engine's creation fails):
 
 | Mode | Behaviour |
 |---|---|
-| `Auto` (default) | HTTP/1.1 first; HTTP/3 once the origin announced it with `Alt-Svc` ([Discovery and Alt-Svc](#discovery-and-alt-svc)) |
-| `Preferred` | HTTP/3 by prior knowledge, falling back to HTTP/1.1 (like `curl --http3`); `quicHints` gives the same treatment to listed origins in `Auto` mode |
+| `Auto` (default) | TCP first (HTTP/2 or HTTP/1.1); HTTP/3 once the origin announced it with `Alt-Svc` ([Discovery and Alt-Svc](#discovery-and-alt-svc)) |
+| `Preferred` | HTTP/3 by prior knowledge, falling back to TCP (like `curl --http3`); `http3 { hints }` gives the same treatment to listed origins in `Auto` mode |
 | `H3Only` | HTTP/3 only (like `curl --http3-only`): failures are reported, never retried over TCP; an `http://` or `ws://` request (HTTP/3 needs `https`, RFC 9114 section 3.1), and with a proxy configured every request, fails with `UnsupportedOperationException` |
-| `H1Only` | no HTTP/3: TCP only, which is HTTP/1.1, or HTTP/2 when the server offers it ([HTTP/2 on the client](#http2-on-the-client)) |
 
 HTTP/3 responses report `HttpProtocolVersion.HTTP_3_0`. One QUIC connection per origin carries all its requests; a
 request the server did not process (GOAWAY above its stream, `H3_REQUEST_REJECTED`) is repeated on a new connection
-without the application noticing. When HTTP/3 fails before the response headers, the request is repeated over HTTP/1.1
+without the application noticing. When HTTP/3 fails before the response headers, the request is repeated over TCP
 — always if it cannot have reached the server, otherwise only for idempotent methods whose body can be sent again
 (bytes, a `WriteChannelContent` writer, or no body). A streamed `ReadChannelContent` body that HTTP/3 already consumed
 is never replayed, neither on the fallback nor after a 421 or a `RequestNotProcessed`: the call fails with
-`H3BodyConsumed` and the application decides. The fallback uses the same `trust`, pins and TLS 1.3 settings. When a call ends before its body was read, the rest of the stream is abandoned
+`H3BodyConsumed` and the application decides. The fallback uses the same `tls { }`: trust, pins and TLS 1.3 settings. When a call ends before its body was read, the rest of the stream is abandoned
 with `STOP_SENDING`. A response body the connection cut short (a reset, a lost connection) never looks complete:
 `bodyAsText`, `bodyAsBytes`, `readRemaining` and the other whole-body reads throw the cause, and the engine's own channel
 (`rawContent`, the server's request body) throws it from `readAvailable` instead of answering -1. `bodyAsChannel()`
@@ -1632,7 +1708,8 @@ or an application's own `AltSvcStore`, cannot bring in what the header path refu
 field of every record again on load (origin form, protocol, host, ports, expiry, persist flag), drops what fails, and
 reads at most the first 8 MiB of a file (a full store takes less).
 
-Entries live in `http3 { altSvcStore = ... }` — `InMemoryAltSvcStore` by default. `FileAltSvcStore(path)` keeps them
+Entries live in `http3 { altSvcStore = ... }` — `InMemoryAltSvcStore` by default (an app without one learns HTTP/3 again
+after every start: the mobile [first screen](#client) keeps them in a `FileAltSvcStore`). `FileAltSvcStore(path)` keeps them
 in one tab-separated text file (loaded once, rewritten atomically after every change, expired records dropped on load)
 so the first request after a cold start can already use HTTP/3; implement `AltSvcStore` for any other backing store
 (one engine per file: two engines sharing a file overwrite each other). A store is keyed by origin in one canonical form:
@@ -1646,9 +1723,9 @@ is no change callback: wrap the store to see what it learns, as the engine calls
 `clear` for every change. Both built-in stores keep at most 8 alternatives
 per origin (the first ones of the header) and 1000 origins, dropping the least recently used; `FileAltSvcStore` skips
 the rewrite when a repeated header only refreshes the expiry, and the engine writes it after releasing its lock. Entries
-without `persist=1` are dropped when the network changes (RFC 7838 section 2.2): when `networkId()` reports a new network,
-or, while `networkId` is not set, when the networks `connectionMigration` follows do (the `followDefaultNetwork`
-factories). With `networkId`, a store also keeps the network its entries were learned on (`AltSvcStore.networkId`,
+without `persist=1` are dropped when the network changes (RFC 7838 section 2.2): when `network { networkId }` reports a
+new network, or, while `networkId` is not set (null, the default), when the networks `http3 { migration }` follows do
+(the `followDefaultNetwork` factories). With `networkId`, a store also keeps the network its entries were learned on (`AltSvcStore.networkId`,
 experimental; `FileAltSvcStore` writes it to its file), so the first request after a restart on another network drops
 them too. A followed network is compared in memory: on Android the `Network` (a number the system gives each new
 connection), on iOS and macOS the default path's interface, gateways and the interface's addresses, so a move between
@@ -1657,7 +1734,7 @@ change at each update; every update of the path, changed or not, flushes the HTT
 holds local addresses and is never written), so it is never stored: at its first value after a start the engine takes
 the network as changed, as it does for what it learned before that value came; requests wait for that value until
 200 ms after the client was created, one deadline for all, then go on without it. Give `networkId` an identity of your
-own for detection across restarts. `clearOnNetworkChange = false` keeps them. Without either source the engine sees no
+own for detection across restarts. `http3 { expert { clearAltSvcOnNetworkChange = false } }` keeps them. Without either source the engine sees no
 network change.
 
 RFC 7838 section 9.4: "In a user agent, any alternative service information MUST be removed when origin-specific data is
@@ -1669,15 +1746,14 @@ store of your own overrides `AltSvcStore.clear()`; for one that does not (writte
 the origins seen since the client started one by one, logs a warning that others it kept from earlier may remain, and
 returns false, so the application can clear the store's own data.
 
-`FileAltSvcStore(path)` takes a `kotlinx.io.files.Path`; on the JVM and Android `FileAltSvcStore(file)` (experimental,
-0.3.0) takes a `java.io.File`. On Android keep the file in the app's private files directory. Do not write
+`FileAltSvcStore(path)` takes a `kotlinx.io.files.Path`; on the JVM and Android `FileAltSvcStore(file)` (stable, 0.3.0)
+takes a `java.io.File`. On Android keep the file in the app's private files directory. Do not write
 `File(...).toPath()`: that is a `java.nio.file.Path`, which this API does not take, and `File.toPath()` and
 `java.nio.file` only exist from API 26, while the library supports API 24. The `File` form uses no `java.nio.file`,
 so it works on API 24 and 25 too (there a write replaces the file with `File.renameTo`, which is atomic on one file
 system):
 
 ```kotlin
-@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val filesDir = context.filesDir                  // android.content.Context
 // guide:ktor:altsvc-store-android
 HttpClient(Kuicksilver) {
@@ -1689,13 +1765,13 @@ HttpClient(Kuicksilver) {
 
 ### HTTPS records (experimental)
 
-`http3 { httpsRecords = HttpsRecordSource.System }` (or `HttpsRecordSource.Exchange { query -> ... }` for your own
+`network { httpsRecords = HttpsRecordSource.System }` (or `HttpsRecordSource.Exchange { query -> ... }` for your own
 DNS-over-HTTPS client) makes the engine an HTTPS-record client (RFC 9460) in `Auto` mode: the origin's records say where
 to connect, so the first request to an origin that publishes one with `alpn=h3` races HTTP/3 at once instead of waiting
 for an `Alt-Svc` header, as browsers do. Off by default. The rules:
 
-- for an `https://` request to a host name; never for `Preferred`, `H3Only`, `quicHints`, IP addresses, requests
-  through a proxy, or while `http3Allowed` says no;
+- for an `https://` request to a host name; never for `Preferred`, `H3Only`, `http3 { hints }`, IP addresses, requests
+  through a proxy, or while `http3 { allowed }` says no;
 - the name asked is the host for port 443, `_<port>._https.<host>` otherwise (section 9.1); AliasMode records are
   followed (one at random among several; at most 8 steps; a loop or a longer chain is treated as no record; an AliasMode
   "." is ignored); the ServiceMode records of the final name, by ascending priority and shuffled within a priority, are
@@ -1714,9 +1790,9 @@ for an `Alt-Svc` header, as browsers do. Off by default. The rules:
   alternative's own HTTPS records are looked up too (RFC 9460 section 9.3), and when it has some, HTTP/3 goes to their
   targets and ports that offer `h3`, and not to the alternative at all when none does (`Alt-Used` still names the
   alternative);
-- the request waits for the records while the origin's addresses resolve and at most `httpsRecordExtraWait` (50 ms)
-  longer; a lookup that answers later, fails or times out leaves the request on the origin as without records, and a
-  late answer is cached for the next request (`httpsRecordExtraWait` is 50 ms to 1 s: RFC 9460 section 5.1 asks for at
+- the request waits for the records while the origin's addresses resolve and at most `network { httpsRecordWait }`
+  (50 ms) longer; a lookup that answers later, fails or times out leaves the request on the origin as without records,
+  and a late answer is cached for the next request (`httpsRecordWait` is 50 ms to 1 s: RFC 9460 section 5.1 asks for at
   least 50 ms before connecting without the records). While an AliasMode chain is followed, the addresses of each
   alias target are looked up in parallel (section 5). A malformed answer always counts as "no records". With
   `HttpsRecordSource.Exchange(secure = true) { ... }` (an exchange whose answers are protected: DNS over HTTPS or TLS, or
@@ -1733,7 +1809,7 @@ for an `Alt-Svc` header, as browsers do. Off by default. The rules:
   1000 names and about 1 MiB, and no answer of over 64 records), together with the other HTTPS records and the A/AAAA records the answer carried, which spare follow-up
   queries (RFC 9460 section 5; when only the A or only the AAAA records came, those are used at once and the other
   family is still looked up, joining the [Happy Eyeballs](#happy-eyeballs) race whenever it answers), and forgotten
-  when the network changes (`networkId()`, or the networks `connectionMigration` follows); without either the engine
+  when the network changes (`network { networkId }`, or the networks `http3 { migration }` follows); without either the engine
   cannot see a network change and keeps no answers
   of its own (RFC 9460 section 12: a forged record must not follow the device to the next network), so every request
   asks the source (the system resolver keeps its own cache); a failed lookup is not cached, and one lookup per name runs at a time, for at
@@ -1754,7 +1830,7 @@ a lookup's timeout stops the read: a hostile resolver cannot hold a thread with 
 
 An `http://` request (not `ws://`, not through a proxy, not to an IP address) first looks up the records of the same URL
 with `https` (port 80 becomes 443), waiting for the answer as an `https` request does (while the origin's addresses
-resolve and `httpsRecordExtraWait` longer; the whole lookup with a secure source); when the origin
+resolve and `httpsRecordWait` longer; the whole lookup with a secure source); when the origin
 has an AliasMode record or a ServiceMode record the engine could use, the engine answers `307 Temporary Redirect` to the
 `https` URL itself, without connecting (RFC 9460 section 9.5). Ktor's `HttpRedirect` (on by default) follows it like any
 307; with `followRedirects = false` the call sees the 307, and so does a POST, PUT or other unsafe request while
@@ -1769,7 +1845,7 @@ Every connection the engine makes to a host name, HTTP/1.1 and HTTP/2 over TCP, 
 alternative and to an HTTP proxy, follows Happy Eyeballs version 2 (RFC 8305; details and the RFC text in
 [RFC 8305](../spec/rfc/8305.md)):
 
-- **Resolution.** With the system's resolver (the default; `dns` sets [your own](#name-resolution-experimental)), the
+- **Resolution.** With the system's resolver (the default; `network { dns }` sets [your own](#name-resolution-experimental)), the
   name's IPv6 (AAAA) and IPv4 (A) addresses are asked for separately, IPv6 first: one `getaddrinfo`
   per family on two threads, on the JVM and Android through Kuicksilver's native library, since `InetAddress` asks for
   both at once. The first IPv6 answer starts a connection at once; an IPv4 answer that comes first waits up to 50 ms for
@@ -1784,13 +1860,13 @@ alternative and to an HTTP proxy, follows Happy Eyeballs version 2 (RFC 8305; de
   before IPv4 before 6to4 and Teredo), native transport before a tunnel, and the longest prefix shared with the source.
   The two families then alternate, starting with the first one in the sorted list. `java.net.preferIPv6Addresses` no
   longer decides the order.
-- **Attempts.** One attempt at a time: the next one starts when `connectionAttemptDelay` (250 ms) has passed since the
+- **Attempts.** One attempt at a time: the next one starts when `network { happyEyeballsDelay }` (250 ms) has passed since the
   last one started, or as soon as an attempt failed, but never within 10 ms of the last start. The first connection
   wins; the other attempts are cancelled, and one that connected anyway is closed. So an address that drops connection
   attempts silently costs 250 ms, not the request's connect timeout, which bounds all attempts together.
-  `connectionAttemptDelay` takes 100 ms to 2 s, or `Duration.INFINITE` to try one address after another.
+  `happyEyeballsDelay` takes 100 ms to 2 s, or null to try one address after another.
 - **HTTP/3.** QUIC handshakes race over the addresses in the same way, so a family that drops UDP costs one attempt
-  delay, also with `Http3DiscoveryMode.H3Only`; a cancelled handshake closes its connection. With `earlyData` and a
+  delay, also with `Http3Discovery.H3Only`; a cancelled handshake closes its connection. With `http3 { earlyData { enabled } }` and a
   session ticket for the server, the first address of the order can send 0-RTT at once and is used without a race:
   its requests go out early, and if its handshake then fails they fail and fall back as any HTTP/3 failure does; the
   other addresses are not tried for that setup. When every address fails, a server's CONNECTION_REFUSED counts as a
@@ -1803,7 +1879,7 @@ alternative and to an HTTP proxy, follows Happy Eyeballs version 2 (RFC 8305; de
   on Apple platforms with the system's own synthesis (`getaddrinfo` of the literal, Apple's documented way, so an iPhone
   on a NAT64 Wi-Fi uses the prefixes iOS knows), elsewhere with the prefix of an AAAA query for `ipv4only.arpa` (RFC
   7050), asked only once an address needs it, cached for its TTL (at least a minute, refreshed in the background before
-  it ends, 30 s between failed queries) and forgotten on a new `networkId` or a new IPv6 network. Addresses with a route
+  it ends, 30 s between failed queries) and forgotten on a new `network { networkId }` or a new IPv6 network. Addresses with a route
   (a LAN, a VPN, loopback) are used as they are, and the Well-Known Prefix `64:ff9b::/96` never carries a private
   address (RFC 6052). The engine then asks for a name's IPv4 addresses only when the IPv6 answer is empty, or 2 s after
   the last IPv6 attempt started without a connection (a broken AAAA record). On Android (API 30) the engine takes the
@@ -1820,11 +1896,12 @@ The engine offers Encrypted Client Hello (RFC 9849) on every `https://` connecti
 the network names only the configuration's `public_name`, and the origin's name travels encrypted. Where the
 configuration comes from, for each connection:
 
-1. the `ech` parameter of the HTTPS record whose endpoint the connection goes to (RFC 9848), when `http3.httpsRecords`
-   looks records up (`Http3DiscoveryMode.Auto`) and `ech.fromHttpsRecords` is on (the default);
-2. else `ech.configLists` for the request's host, given out of band (keys compared as host names: case, a trailing dot
+1. the `ech` parameter of the HTTPS record whose endpoint the connection goes to (RFC 9848), when `network { httpsRecords }`
+   looks records up (`Http3Discovery.Auto`) and `tls { ech { fromHttpsRecords } }` is on (the default; it does nothing
+   while `httpsRecords` is `Off`, the default);
+2. else `tls { ech { configLists } }` for the request's host, given out of band (keys compared as host names: case, a trailing dot
    and IPv6 brackets do not matter, and two keys for one host fail the engine's creation);
-3. else none, and the connection sends GREASE ECH (`ech.grease`, on by default, RFC 9849 section 6.2.1), so that it
+3. else none, and the connection sends GREASE ECH (`tls { ech { grease } }`, on by default, RFC 9849 section 6.2.1), so that it
    looks like one with ECH.
 
 ```kotlin
@@ -1852,8 +1929,8 @@ val client =
   to a connection without it: not to the origin's own address, not to the endpoint an AliasMode chain appends, not to an
   `Alt-Svc` alternative whose own records have none (RFC 9848 sections 5.1 and 6); when no endpoint can be reached the
   request fails. With ECH from the records the engine also sends no ClientHello before the records resolved (section 5.3),
-  within the connect timeout: `httpsRecordExtraWait` does not apply then.
-- **0-RTT.** With `http3.earlyData` the early data goes under the inner ClientHello's session. A server that rejects ECH
+  within the connect timeout: `httpsRecordWait` does not apply then.
+- **0-RTT.** With `http3 { earlyData { enabled } }` the early data goes under the inner ClientHello's session. A server that rejects ECH
   ignores it (RFC 9849 section 6.1; RFC 8446 section 4.2.10), and the engine sends the request again on the retry; it is
   processed once.
 - **Certificates.** On an accepted ECH the certificate is checked for the origin, as always, with its pins. On a rejection
@@ -1862,20 +1939,19 @@ val client =
   earlier (a rejection is no first contact). Such a connection only triggers the retry, which is held to the pins. No client
   certificate is sent on a rejected connection.
 - **Proxies.** Through an HTTP CONNECT or SOCKS5 proxy the TLS session inside the tunnel is the origin's, with
-  `ech.configLists` or GREASE (HTTPS records are not looked up through a proxy, RFC 9460 section 3.2); the same holds
+  `tls { ech { configLists } }` or GREASE (HTTPS records are not looked up through a proxy, RFC 9460 section 3.2); the same holds
   for the HTTP/3 connection inside a CONNECT-UDP tunnel, whose retry after a rejection goes through the same tunnel. The
   proxy learns the origin's name from the CONNECT line or the CONNECT-UDP target. The hop to an `http://` proxy is plain
   TCP; the TLS (or QUIC) hop to an `https://` or CONNECT-UDP proxy has a ClientHello of its own, which never offers the
-  origin's configuration nor one of the `tls` block: it sends GREASE as `ech.grease` says, and a `proxyTls` block may
-  set the proxy's own. A rejection on that hop fails the request as a proxy failure, never as a retry of the origin's ECH.
+  origin's configuration: it sends GREASE as `tls { ech { grease } }` says, and `proxies { tls { ech { configLists } } }`
+  may set the proxy's own (its entry for the proxy's host is what that hop offers). A rejection on that hop fails the request as a proxy failure, never as a retry of the origin's ECH.
 - **TLS 1.3 only.** ECH needs TLS 1.3 (RFC 9849 section 6.1): with a `tls` block that allows TLS 1.2, `configLists` fails
-  the engine's creation and the records' `ech` is not used. The ECH values of the `tls` block itself are not used.
+  the engine's creation and the records' `ech` is not used.
 - **Unusable configurations.** A `configLists` entry with no ECHConfig this build can use, or any entry in a build without
   ECH (a system OpenSSL), fails the engine's creation with `IllegalArgumentException` (two different messages): a list
-  given for a host never turns into GREASE with the host's name in the clear. The engine runs the `tls` block when it is
-  created, to read the TLS versions and once per `configLists` entry for that check (and again for every connection, as
-  always), so keep the block free of side effects; a `TlsException.Config` from it becomes the entry's
-  `IllegalArgumentException`, and any other exception the block throws fails the engine's creation unchanged. An HTTPS record's `ech` with nothing usable
+  given for a host never turns into GREASE with the host's name in the clear. The engine builds each entry's client
+  configuration when it is created, for that check: a `TlsException.Config` from that build becomes the entry's
+  `IllegalArgumentException`, whose message names the host. An HTTPS record's `ech` with nothing usable
   is different: that connection sends GREASE, as RFC 9849 section 6.1 allows ("If no compatible configuration is found,
   then the client SHOULD proceed as described in Section 6.2"); a record whose `mandatory` names `ech` is skipped then,
   since it must not be reached without ECH (RFC 9848 section 5).
@@ -1885,7 +1961,7 @@ val client =
 ### Name resolution (experimental)
 
 The engine resolves host names with the system's resolver (`Dns.System`, the default, described under
-[Happy Eyeballs](#happy-eyeballs)). `dns` replaces it with a resolver of your own, as OkHttp's `Dns` does: another DNS
+[Happy Eyeballs](#happy-eyeballs)). `network { dns }` replaces it with a resolver of your own, as OkHttp's `Dns` does: another DNS
 server (DNS over HTTPS through a client you trust), fixed addresses for some names, or a policy of your own. Whatever it
 answers, the engine connects to with Happy Eyeballs over TCP (HTTP/1.1, HTTP/2) and QUIC (HTTP/3).
 
@@ -1942,7 +2018,7 @@ The contract (the KDoc of `Dns` has it in full):
   the proxy and is never resolved here; through `socks5` it is resolved here and the proxy gets the addresses.
 - **HTTP/3 and Alt-Svc.** An `Alt-Svc` alternative's host and an HTTPS record's target are resolved by it too; the A and
   AAAA records an HTTPS answer carries are used first, and your resolver is asked for the families they lack. HTTPS
-  records themselves come from `http3.httpsRecords`; the NAT64 prefix discovery and a PAC script's `dnsResolve` stay with
+  records themselves come from `network { httpsRecords }`; the NAT64 prefix discovery and a PAC script's `dnsResolve` stay with
   the system.
 - **Identity.** Your answers decide where the engine connects, never whom it trusts there: TLS sends the URL's host
   name as SNI and verifies the certificate and the pins against that name over TCP and QUIC, whatever address your
@@ -1950,46 +2026,48 @@ The contract (the KDoc of `Dns` has it in full):
 
 ### Racing and fallback
 
-When HTTP/3 is an option (`Preferred`, a QUIC hint, or a live Alt-Svc alternative) and no HTTP/3 connection to it is
+When HTTP/3 is an option (`Preferred`, an `http3 { hints }` entry, or a live Alt-Svc alternative) and no HTTP/3 connection to it is
 open yet, the engine races connection setups (RFC 8305 section 5, after Chromium and curl): QUIC starts at once and
 TCP + TLS starts when QUIC fails, or after a head start of 1.5 x the host's smoothed RTT (250 ms without history,
-clamped to 100 ms..2 s; `hardDelay` overrides it) — and after 10 ms, the least RFC 8305 section 5 allows between two
-attempts, on a network where QUIC was never seen working (`hardDelay = Duration.INFINITE` starts TCP only once QUIC
-failed, on any network). The TCP side is HTTP/2 when the server offers it (`raceEnded` reports `HTTP_2_0`), and an
+clamped to 100 ms..2 s: `RaceHeadStart.Adaptive`; `http3 { expert { raceHeadStart = RaceHeadStart.Fixed(d) } }`
+overrides it) — and after 10 ms, the least RFC 8305 section 5 allows between two attempts, on a network where QUIC was
+never seen working (`RaceHeadStart.NoRace` starts TCP only once QUIC failed, on any network). The TCP side is HTTP/2 when the server offers it (`raceEnded` reports `HTTP_2_0`), and an
 HTTP/2 connection to the origin that is already open serves it at once. The request runs once, on the winner. A QUIC
 setup that loses the race keeps going in the background and serves the next requests once it is up; a TCP connection
-that loses goes back to the pool. When both setups fail, the HTTP/1.1
-failure is reported — the race was the one HTTP/1.1 attempt, there is no second one.
+that loses goes back to the pool. When both setups fail, the TCP
+failure is reported — the race was the one TCP attempt, there is no second one.
 
 An alternative is marked broken only when HTTP/3 failed while HTTP/1.1 worked (a lost race, or a request that fell
 back to HTTP/1.1 after the HTTP/3 connection failed as a whole: setup, QUIC transport, an HTTP/3 connection error; a
 single stream reset or a malformed response falls back for that request only) — per origin and alternative, never "UDP is blocked" for everything: 5 minutes, doubling up to 2 days, and forgotten when the network changes
-(`networkId()`, or the networks `connectionMigration` follows). Broken alternatives are skipped (straight to HTTP/1.1). A server that refuses the QUIC setup with
+(`network { networkId }`, or the networks `http3 { migration }` follows). Broken alternatives are skipped (straight to TCP).
+The first alternative marked broken on a network is one Warn line of the engine's logger: `HTTP/3 to <origin> failed
+(<reason>); using TCP for <backoff>. See response.kuicksilverDiagnostics`; a network change arms it again. A server that refuses the QUIC setup with
 `CONNECTION_REFUSED` (it is in `Drain`, stopping, or its accept queue is full: RFC 9000 section 5.2.2) has not shown the
-alternative broken: that call falls back to HTTP/1.1 once (`fallback = Refused`), the alternative stays cached and
+alternative broken: that call falls back to TCP once (`fallback = Refused`), the alternative stays cached and
 unmarked (RFC 7838 sections 2.2 and 3), and the next call tries HTTP/3 again. Any other close of the setup by the
 server still marks it broken. Likewise a connection the server closes with H3_NO_ERROR after it sent GOAWAY (a graceful
 stop whose grace period ended with requests still open: RFC 9114 section 5.2) ended in order: a request in flight on it
-falls back to HTTP/1.1 when it may (idempotent, before its response), and the alternative is not marked broken; a close
+falls back to TCP when it may (idempotent, before its response), and the alternative is not marked broken; a close
 with an error code after GOAWAY, or with H3_NO_ERROR but without a GOAWAY first, still marks it. So during a rolling restart the calls that meet a stopping instance fall back once each,
-and the next calls use HTTP/3 again, instead of minutes to days of HTTP/1.1 for the whole origin.
+and the next calls use HTTP/3 again, instead of minutes to days of TCP for the whole origin.
 
 ### Stalled HTTP/3 connections
 
 Some networks cut UDP flows: no answer to the first QUIC packet at all, or a handshake that completes and a flow that
 stops carrying packets in both directions a moment later. On its own a QUIC connection notices only at its idle timeout
 (RFC 9000 section 10.1; 30 s by default), so a request on it would wait that long before it fell back to TCP. The engine
-watches the HTTP/3 connections it chose over TCP (`Auto`, `Preferred`, `quicHints`; `http3 { stallDetection }`, on by
-default) while a request runs on one: from before its wait for the handshake until its whole response arrived (the
+watches the HTTP/3 connections it chose over TCP (`Auto`, `Preferred`, `http3 { hints }`; `http3 { stall { enabled } }`,
+experimental, on by default) while a request runs on one: from before its wait for the handshake until its whole response arrived (the
 server's FIN; from then on the exchange needs the network no more) or the call ended. The signal is the transport's,
 never the response's:
 
-- after the handshake, a connection is stalled when `stallProbeTimeouts` probe timeouts in a row (3; RFC 9002
+- after the handshake, a connection is stalled when `stall { probeTimeouts }` probe timeouts in a row (3; RFC 9002
   section 6.2: a PTO fires only while ack-eliciting data goes unacknowledged, and doubles each time, so 3 of them take
   about 7 PTOs and grow with the RTT) went unanswered and no packet at all came back from the server for
-  `stallMinSilence` (2 s) since the first of them;
-- before it (a request on a 0-RTT connection, `earlyData`, on a network where QUIC worked before), when nothing at all
-  came back from the server — not even an Initial — since the request started, for at least `stallMinSilence` and two
+  `stall { minSilence }` (2 s) since the first of them;
+- before it (a request on a 0-RTT connection, `http3 { earlyData { } }`, on a network where QUIC worked before), when nothing at all
+  came back from the server — not even an Initial — since the request started, for at least `minSilence` and two
   probe timeouts (they start from the 333 ms initial RTT and double, about 3 s: a slow path's handshake answers within
   them), instead of the connect timeout (10 s). Elsewhere the race already bounds that wait: on a network where QUIC was
   never seen working TCP starts 10 ms after QUIC ([Racing and fallback](#racing-and-fallback)), and a QUIC setup that
@@ -1997,14 +2075,14 @@ never the response's:
 
 A slow server acknowledges the request while it thinks, and an idle long-lived response (a long poll, server-sent events
 between two events) has nothing in flight: neither shows a probe timeout, so neither is a stall. Such a quiet watched
-connection sends a PING now and then (RFC 9000 section 10.1.2: after half of `stallMinSilence` without a packet, then at
+connection sends a PING now and then (RFC 9000 section 10.1.2: after half of `minSilence` without a packet, then at
 twice the previous gap, up to 15 s or half the idle timeout in force, the smaller of both sides', whichever is shorter),
 so that a path cut while nothing is in flight shows as well: a live server acknowledges it, a dead path turns it into
 probe timeouts. Between two PINGs the watch sleeps. The PINGs also keep the connection open past the idle timeout while
 a request waits for its response, as RFC 9114 section 5.1 expects of a client ("HTTP clients are expected to request
 that the transport keep connections open while there are responses outstanding"). Each PING wakes the radio of a
 mobile device: a client that holds long-lived responses open on a mobile network for minutes (a long poll, server-sent
-events) may prefer `stallDetection = false` for them, or for the whole client.
+events) may prefer `stall { enabled = false }` for them, or for the whole client.
 
 On a stall the engine drains the connection: it takes no new request, the alternative is marked broken for its origin
 (RFC 7838 section 2.4: 5 minutes, doubling; the backoff of a stall carries over the handshakes that work in between,
@@ -2019,7 +2097,7 @@ or dies by an idle timeout, never lowers it), and then, per request:
   TCP whatever its method;
 - any other (a POST, a streamed body) and a response body under way wait on: a short outage (a handover between radio
   networks, Wi-Fi roaming) that ends — any packet from the server — lets them finish over HTTP/3. When the path stays
-  silent for `stallAbandonAfter` (10 s) after the stall, or the QUIC idle timeout comes first, they fail with
+  silent for `stall { abandonAfter }` (10 s) after the stall, or the QUIC idle timeout comes first, they fail with
   `QuicStalledException` (its `silence` and `probeTimeouts` say what was seen) and the connection is closed. A
   response that began is never repeated. A drained connection that came back closes once nothing runs on it any more,
   a WebSocket or WebTransport session that shared it included.
@@ -2027,12 +2105,12 @@ or dies by an idle timeout, never lowers it), and then, per request:
 The engine does not honour an `Idempotency-Key` header (draft-ietf-httpapi-idempotency-key-header, not an RFC yet): a
 POST that carries one is still not repeated; the application may send it again itself.
 
-`stallDetection = false` waits for the QUIC idle timeout as before 0.3.0. `H3Only` (no TCP to go to), WebSockets and
+`stall { enabled = false }` waits for the QUIC idle timeout as before 0.3.0. `H3Only` (no TCP to go to), WebSockets and
 WebTransport sessions are not watched.
 
 ### Turning HTTP/3 off remotely
 
-`http3 { http3Allowed = { ... } }` (experimental) is a kill switch an application can flip from its remote
+`http3 { allowed = { ... } }` (stable) is a kill switch an application can flip from its remote
 configuration (Firebase Remote Config, LaunchDarkly, its own config endpoint) when QUIC misbehaves on some network or
 release, in the manner of Chrome's `QuicAllowed` policy or Cronet's `enableQuic(false)`, but per request and without a
 restart. The engine calls it once per `https://` request, on the call's coroutine, before anything connects; it must
@@ -2053,19 +2131,19 @@ client.closeHttp3Connections()
 
 What it does while it returns false:
 
-- requests go over HTTP/1.1, as with `H1Only`; `protocolSelected` and the response's diagnostics say
+- requests go over TCP (HTTP/2 or HTTP/1.1), as with `http3 { enabled = false }`; `protocolSelected` and the response's diagnostics say
   `Http3Disabled` ([Why did this request not use HTTP/3?](#why-did-this-request-not-use-http3));
 - with `discovery = H3Only` a request fails with `UnsupportedOperationException` before it opens any TCP or UDP
   connection: that mode promises never to use TCP;
 - `HttpClient.webTransport` fails the same way: WebTransport has no TCP fallback;
 - open HTTP/3 connections take no new requests; calls already running on them finish, and idle connections close after
-  `idleTimeout`;
+  `pool { idleTimeout }`;
 - `Alt-Svc` is still learned in `Auto` mode, so when the switch returns true again the next request goes to the known
   alternative without a warm-up.
 
 `HttpClient.closeHttp3Connections()` takes HTTP/3 out of use at once, whatever the switch says: every established
 pooled connection gets a GOAWAY and no further request (a request that had just been handed one, before its stream
-opened, goes again on a new connection or, switched off, the next call goes over HTTP/1.1), calls running on them
+opened, goes again on a new connection or, switched off, the next call goes over TCP), calls running on them
 finish, and each closes when its last call is done; a connection still being set up serves the requests already
 waiting for it and then closes; a race's own HTTP/3 setup still serves the request it was made for. A request refused
 by that GOAWAY before anything of it went out is repeated on a new connection, a streamed body included (it was never
@@ -2076,20 +2154,20 @@ session stays open until either side closes it. A `webTransport` call whose CONN
 as it opens. The call returns once
 those frames are written, waiting at most 5 seconds for each.
 
-The switch is not called for `http://` requests or `H1Only`. A switch that throws an exception counts as true (HTTP/3
+The switch is not called for `http://` requests or with `http3 { enabled = false }`. A switch that throws an exception counts as true (HTTP/3
 allowed), so a broken configuration cannot take down traffic; the engine logs that at `Warn`, at most once per 5
 minutes. A `CancellationException` or an `Error` out of it fails the call instead.
 
 ### Connection migration
 
-`http3 { connectionMigration = ... }` (experimental, off by default) lets the engine's pooled HTTP/3 connections follow
+`http3 { migration = ... }` (experimental, off by default) lets the engine's pooled HTTP/3 connections follow
 the device's network (RFC 9000 section 9): when the default network changes, say from Wi-Fi to the mobile network,
 each connection opens a socket on the new network, validates the path to the server and moves there, so a download
 and the requests in flight carry on. Without it, as in 0.2, the outcome depends on the system: the engine's socket is
 bound to no network, so the system may send its datagrams over the new default network from a new address, which the
 server then takes as a NAT rebinding (RFC 9000 section 9.3; that is what an Android emulator does when its default
 network goes away), or keep them on an interface that is gone, and then the connection ends at its idle timeout (an
-idempotent request still waiting for its response falls back to HTTP/1.1). What the option adds over such a rebinding:
+idempotent request still waiting for its response falls back to TCP). What the option adds over such a rebinding:
 
 - the move is the client's decision, made when the system reports a new default network, not whenever the system
   happens to route a datagram elsewhere, and it does not depend on which network the system picks for an unbound socket
@@ -2126,7 +2204,7 @@ What the engine does:
 - every step reaches `KuicksilverEventListener.connectionMigrated(origin, event)`: `Migrated`, `Failed` (also logged at
   `Info`, or at `Debug` when the server does not allow migration), `NetworkLost` (the connection waits; its idle
   timeout decides if no network comes back) and `SourceFailed`;
-- a migration itself neither marks the alternative broken nor forgets marks, but while `networkId` is not set the
+- a migration itself neither marks the alternative broken nor forgets marks, but while `network { networkId }` is not set the
   network the factories follow (`Http3ConnectionMigration.networks`) is the engine's network: a new one gives
   alternatives marked broken on the old one a fresh chance, drops the alternatives without `persist=1` (RFC 7838 section
   2.2) and flushes the HTTPS record cache, as a `networkId` change does, within the limits of the platform's handle
@@ -2159,12 +2237,12 @@ Where a request's proxy comes from:
 
 1. `engine { proxy = ... }` (Ktor's `ProxyConfig`) when set: it applies to every request, `localhost` and loopback
    addresses included (as `curl -x` does; `java.net.Proxy.NO_PROXY` means none).
-2. Otherwise `engine { proxyResolver = ... }` (*experimental*), asked per request and remembered for 30 seconds per
+2. Otherwise `engine { proxies { resolver = ... } }` (*experimental*), asked per request and remembered for 30 seconds per
    scheme, host and port. The default is **`ProxyResolvers.System`**, the platform's settings:
 
 | Target | `ProxyResolvers.System` | PAC / WPAD |
 |---|---|---|
-| JVM | `java.net.ProxySelector.getDefault()`: `https.proxyHost`/`http.proxyHost`, `socksProxyHost`, `http.nonProxyHosts`, and with `-Djava.net.useSystemProxies=true` the OS settings; its HTTP proxies (`https.proxyHost`/`https.proxyPort` included: the `https` names the URLs it serves) are always plain HTTP proxies, as on Android, since a `java.net.Proxy` has no scheme; TLS to a proxy needs `proxyResolver = ProxyResolver { ResolvedProxy.https(..) }` | as the JDK does |
+| JVM | `java.net.ProxySelector.getDefault()`: `https.proxyHost`/`http.proxyHost`, `socksProxyHost`, `http.nonProxyHosts`, and with `-Djava.net.useSystemProxies=true` the OS settings; its HTTP proxies (`https.proxyHost`/`https.proxyPort` included: the `https` names the URLs it serves) are always plain HTTP proxies, as on Android, since a `java.net.Proxy` has no scheme; TLS to a proxy needs `proxies { resolver = ProxyResolver { ResolvedProxy.https(..) } }` | as the JDK does |
 | Android | the same: the active network's proxy, PAC through the system | yes (by the system) |
 | macOS, iOS | the system proxy settings via `CFNetworkCopyProxiesForURL` (HTTP, HTTPS, SOCKS; the exceptions list; the settings' "HTTPS" proxy is the plain proxy for `https` URLs) | run by the engine on JavaScriptCore: the PAC URL or script of the settings, or WPAD when they say "auto discover" (DHCP option 252 on macOS, `http`/`https` only; `wpad.<domain>` for each DNS search domain exactly, never a parent domain, though a search domain is used as given; then `http://wpad/wpad.dat` for the resolver to complete, the only candidate on iOS); scripts fetched directly (`http`, `https`, `file`, at most 1 MiB read, kept 30 min), each run limited to 2 s; a script that fails within 5 s: the next setting, else direct, and one warning; an answer entry `HTTPS host:port` (Chrome's extension) is an `https://` proxy, port 443 by default; an answer with only proxies the engine cannot use (`SOCKS4`): the next setting, else the request fails; no WPAD script found: logged once at Info |
 | Windows | the user's Internet settings via `WinHttpGetIEProxyConfigForCurrentUser` (`host:port` or `http=…;https=…;socks=…`, the bypass list with `<local>`; an entry whose value starts with `https://` is an `https://` proxy, as Chrome reads it, while `https=host:port` is the plain proxy for `https` URLs) | run by WinHTTP (`WinHttpGetProxyForUrl`, WPAD by DHCP and DNS, then the PAC URL), waited for at most 5 s; a script that fails or takes longer: the fixed proxy next to it, else direct, and one warning; no WPAD script found: the same, logged once at Info, and detection again after 5 minutes |
@@ -2187,7 +2265,7 @@ URL's path; Firefox strips it):
 | `http://h/p?q` | `http://h/` | `http://h:80/` |
 
 RFC 6455 section 4.1 asks for a WebSocket's whole URI, resource name included; for `wss` the engine departs from that
-by default for this reason. `engine { pacFullWebSocketUrl = true }` (*experimental*) gives the whole `wss` URI to the
+by default for this reason. `engine { proxies { pacFullWebSocketUrl = true } }` (*experimental, delicate*) gives the whole `wss` URI to the
 script the system settings name, given inline (Apple) or by an `https://` or local `file:///` URL (Windows: the "Use setup
 script" address; Apple: the PAC URL), and never to one WPAD found or one fetched over plain `http://`: whoever answers
 on the local network writes those. On Apple platforms the PAC URL CFNetwork reports must equal the settings' string
@@ -2224,7 +2302,7 @@ no SOCKS4), every request tunneled, the proxy resolving the origin's name unless
 Credentials authenticate to either: SOCKS5 username/password (RFC 1929), offered and sent only when the proxy picks
 that method, or `Proxy-Authorization: Basic` with the first CONNECT or absolute-form request unless the request sets
 its own. A request's own `Proxy-Authorization` goes only on a hop to a proxy, never to an origin (directly or in a
-tunnel, over HTTP/1.1, HTTP/2 and HTTP/3 alike). `proxyCredentials` (*experimental*) are for the explicit `proxy` only (off the JVM a proxy URL's user info,
+tunnel, over HTTP/1.1, HTTP/2 and HTTP/3 alike). `proxies { credentials }` are for the explicit `proxy` only (off the JVM a proxy URL's user info,
 `http://user:password@proxy:3128`, wins); a resolver's proxy carries its own: the user info of `https_proxy` and the
 like with `ProxyResolvers.Environment`, or the `credentials` of the `ResolvedProxy` your resolver returns. Both go in
 clear to an `http://` or SOCKS5 proxy (RFC 7617 section 4, RFC 1929 section 5; anyone on the path to the proxy reads
@@ -2250,13 +2328,14 @@ or the absolute-form request, its `Proxy-Authorization` and the CONNECT's target
 
 - The proxy's certificate is verified against the proxy's host as configured (a DNS name, or an IP address as an IP-ID;
   RFC 9525), which is also its SNI unless it is an IP address (RFC 6066 section 3); the name goes through the engine's
-  `dns`. A failed handshake (a certificate that does not verify, an alert, a proxy that closes) fails the request with
+  `network { dns }`. A failed handshake (a certificate that does not verify, an alert, a proxy that closes) fails the request with
   `ProxyTlsException`, a `ProxyException` whose `cause` is the TLS layer's error; a failure of the origin's TLS inside
   the tunnel stays the origin's `TlsException`.
-- Trust: `proxyTls = { ... }` (*experimental*) configures that connection on its own. By default it takes the origin's
-  `tls` block and `trust` without what names the origin (an `ExpectedName` gives way to its base, a `Pinned` to its base:
+- Trust: `proxies { tls { } }` (the `ClientTlsConfig` of `engine { tls { } }`) configures that connection on its own. By
+  default it takes the engine's `tls { trust }` without what names the origin (an `ExpectedName` gives way to its base, a `Pinned` to its base:
   the proxy has another name and another key, as curl's `--pinnedpubkey` is not applied to its proxy) and without the
-  client certificate. Whatever the block sets, the server name is the proxy's host and ALPN `http/1.1` alone.
+  client certificate; a `proxies { tls { } }` block starts from that same trust and no identity and may set anything.
+  Whatever it sets, the server name is the proxy's host and ALPN `http/1.1` alone.
 - Inside the tunnel the origin's TLS runs as without a proxy (TLS in TLS): its own SNI, certificate check, pins, ALPN
   (`h2` included). Plain `http` goes in the absolute form inside TLS to the proxy, and that connection is pooled per proxy
   (an `https://` and an `http://` proxy at the same address are different routes).
@@ -2267,11 +2346,11 @@ or the absolute-form request, its `Proxy-Authorization` and the CONNECT's target
 **Through an HTTP, HTTPS or SOCKS5 proxy there is no HTTP/3.** QUIC is UDP, which neither CONNECT (to an `http://` or an
 `https://` proxy) nor SOCKS5 CONNECT carries (SOCKS5 UDP ASSOCIATE is not supported), as with Chrome and curl. HTTP/3 goes
 through a CONNECT-UDP proxy instead: [HTTP/3 through a CONNECT-UDP proxy](#http3-through-a-connect-udp-proxy-experimental).
-A proxied request uses HTTP/1.1 (`ProtocolReason.Proxy`),
-`Alt-Svc` is neither used nor learned and `quicHints` are ignored; `H3Only` fails it with `UnsupportedOperationException`
-without contacting the proxy, and `HttpClient.webTransport` refuses the URL unless `webTransportIgnoresProxy`. To use
-HTTP/3 to a host, exempt it from the proxy (`no_proxy`, the OS bypass list), or connect directly everywhere with
-`proxyResolver = ProxyResolvers.None`.
+A proxied request uses TCP (`ProtocolReason.Proxy`: HTTP/1.1, or HTTP/2 inside a tunnel),
+`Alt-Svc` is neither used nor learned and `http3 { hints }` are ignored; `H3Only` fails it with
+`UnsupportedOperationException` without contacting the proxy, and `HttpClient.webTransport` refuses the URL unless
+`http3 { webTransport { proxyPolicy } }` lets it bypass the proxy. To use HTTP/3 to a host, exempt it from the proxy
+(`no_proxy`, the OS bypass list), or connect directly everywhere with `proxies { resolver = ProxyResolvers.None }`.
 
 ```kotlin
 // guide:ktor:proxy
@@ -2298,29 +2377,30 @@ val perHost = HttpClient(Kuicksilver) {
 // an https:// proxy: TLS to the proxy itself, the CONNECT and the credentials inside it
 val overTls = HttpClient(Kuicksilver) {
     engine {
-        proxies { resolver = ProxyResolver { ResolvedProxy.https("proxy.corp.test", 443, ProxyCredentials("user", password)) } }
-        proxies { tls { trust = TrustConfig.Platform } } // the proxy's own trust (default: the origin's, without pins)
+        proxies {
+            resolver = ProxyResolver { ResolvedProxy.https("proxy.corp.test", 443, ProxyCredentials("user", password)) }
+            tls { trust = TrustConfig.Platform } // the proxy's own trust (default: the origin's, without pins)
+        }
     }
 }
 ```
 
 ### HTTP/3 through a CONNECT-UDP proxy (experimental)
 
-`connectUdpProxy` sends the engine's HTTP/3 through a CONNECT-UDP proxy (RFC 9298, MASQUE): each HTTP/3 connection to an
+`proxies { connectUdp }` sends the engine's HTTP/3 through a CONNECT-UDP proxy (RFC 9298, MASQUE): each HTTP/3 connection to an
 origin it applies to runs inside a UDP tunnel through the proxy, with TLS end to end to the origin, so the proxy sees the
 origin's name, port and UDP, never the requests ([HTTP/3, CONNECT-UDP](http3.md#connect-udp-experimental)). The proxy is
 reached directly over HTTP/3 (its template's authority, port 443 when it names none) with the proxy's TLS settings, as
-an `https://` proxy over TCP ([Proxies](#proxies)): `proxyTls`, or by default the engine's trust without an
-`ExpectedName` or pins and without the client certificate (`identity` goes to the origin only); the certificate is
+an `https://` proxy over TCP ([Proxies](#proxies)): `proxies { tls { } }`, or by default the engine's trust without an
+`ExpectedName` or pins and without the client certificate (`tls { identity }` goes to the origin only); the certificate is
 verified against the proxy's host, and a failed handshake with the proxy is a `ProxyTlsException`. Each tunnelled
 connection has its own connection to the proxy, closed with it, a full handshake each time (no session resumption, and no
 ticket of the proxy's ever shared with origins). Through several addresses of the proxy, an address whose TLS failed
 makes the request's failure a `ProxyTlsException` even when a later address only timed out (the timeout is then among
 its suppressed exceptions), as long as no address of the proxy completed its handshake: once one did, the CONNECT may
-have gone out, and a timeout of the tunnel or of the origin's handshake is a `ConnectTimeoutException`. QUIC is TLS 1.3 only (RFC 9001 section 4.2), so a `proxyTls` limited to TLS 1.2 cannot reach a
-CONNECT-UDP proxy; an ECH configuration that `proxyTls` gives the proxy is offered as given and not retried after a
-rejection (RFC 9849 section 6.1.6 applies to the origin's connection). Inside the tunnel the origin's connection has the engine's `trust`, `identity` and `tls`, as a
-direct one. The origin's name goes to the proxy, which
+have gone out, and a timeout of the tunnel or of the origin's handshake is a `ConnectTimeoutException`. QUIC is TLS 1.3 only (RFC 9001 section 4.2), so a `proxies { tls { } }` limited to TLS 1.2 cannot
+reach a CONNECT-UDP proxy; an ECH configuration that `proxies { tls { ech { } } }` gives the proxy is offered as given and not retried after a
+rejection (RFC 9849 section 6.1.6 applies to the origin's connection). Inside the tunnel the origin's connection has the engine's `tls { }`, as a direct one. The origin's name goes to the proxy, which
 resolves it: the engine does not look it up.
 
 What it changes, for the `https` URLs its `applies` admits (all of them by default):
@@ -2328,17 +2408,18 @@ What it changes, for the `https` URLs its `applies` admits (all of them by defau
 - They go over HTTP/3 through the tunnel only, whatever the discovery mode (H3Only, Auto, Preferred): never over HTTP/1.1
   or HTTP/2 and never directly, since both would leave the proxy out. An origin without HTTP/3, a refused tunnel
   (`Http3Exception.ConnectRejected`, its `proxy-status` in `headers`) or a failed handshake fails the request instead of
-  falling back. `http3 { discovery = H1Only }` and an `http3Allowed` that says no fail it with UnsupportedOperationException.
+  falling back. `http3 { enabled = false }` and an `http3 { allowed }` that says no fail it with
+  UnsupportedOperationException.
 - `Alt-Svc` and HTTPS records are neither used nor learned for them: the tunnel goes to the URL's host and port.
-- `proxy` and `proxyResolver` (HTTP and SOCKS5 proxies, which carry TCP) keep deciding for every other request: `http://`
+- `proxy` and `proxies { resolver }` (HTTP and SOCKS5 proxies, which carry TCP) keep deciding for every other request: `http://`
   URLs and the URLs `applies` turns away. A deployment that must send everything through proxies sets both.
 - WebTransport refuses such URLs (its sessions do not go through the tunnel) unless
-  `http3 { webTransportIgnoresConnectUdpProxy = true }`, which connects them directly; `webTransportIgnoresProxy` is about
-  HTTP and SOCKS proxies only.
+  `http3 { webTransport { proxyPolicy = WebTransportProxyPolicy.BypassConnectUdpProxy } }` (or `BypassAll`) connects
+  them directly; `BypassHttpProxy` is about HTTP and SOCKS proxies only.
 - Tunnelled connections keep their session tickets apart from direct connections', one cache per proxy route, so the
   origin cannot link a proxied connection to the client's own address by the ticket it resumes.
 
-`credentials` go to the proxy as `proxy-authorization: Basic ...` on each tunnel's CONNECT. The connection to the proxy
+The `ConnectUdpProxy`'s credentials go to the proxy as `proxy-authorization: Basic ...` on each tunnel's CONNECT. The connection to the proxy
 must carry the inner connection's 1200-byte datagrams in its own: the engine's sockets set Don't Fragment, so DPLPMTUD
 finds a path MTU above about 1250 bytes within a few round trips; over a path that does not carry that, the handshake
 through the tunnel times out.
@@ -2364,7 +2445,7 @@ returns the `WebTransportSession` of `kuicksilver-http3` (streams, datagrams, cl
 host and port with each other and with requests (RFC 9114 section 3.3: one connection per address and port): a pooled
 connection set up for requests alone is replaced by a WebTransport-capable one, which carries the origin's requests from
 then on (the old one finishes its requests and closes). With WebTransport flow control on both sides a connection
-carries up to `http3 { settings.webTransportMaxSessions }` (4) sessions, and as many as the server accepts: a session it
+carries up to `http3 { webTransport { maxSessionsPerConnection } }` (4) sessions, and as many as the server accepts: a session it
 refuses (`H3_REQUEST_REJECTED`, its limit) opens on another connection to the same server, which the next sessions share
 too and which closes with its last session; without flow control each further session gets a connection of its own.
 The pooled connection stays in use while a session or a request uses it, then idles like any other. Requests and
@@ -2373,14 +2454,16 @@ same application's traffic to one origin, requests keep their own priorities (RF
 application that wants its bulk requests not to slow a session sends them at a lower urgency. A session to a server
 that refuses it while none of this client's sessions is on the connection (its rate, not its session limit) fails with
 `Http3Exception.RequestNotProcessed` rather than opening another connection. When it is lost,
-every session on it ends with its reason. The engine's trust, identity and QUIC settings apply, with WebTransport,
+every session on it ends with its reason. The engine's `tls { }` and `http3 { quic { } }` apply, and the per-session
+receive limits of `http3 { settings { webTransport { initialMaxStreamsBidi, initialMaxStreamsUni, initialMaxData } } }`
+are the client's to set (`enabled` and `maxSessions` there are derived from `http3 { webTransport { } }`), with WebTransport,
 Extended CONNECT and `reset_stream_at` turned on for a WebTransport-capable connection;
 `connectTimeout` bounds the setup, then the server's SETTINGS and its answer to the CONNECT get ten seconds each.
 There is no fallback: a server without WebTransport fails with `Http3Exception.Settings`. Refused with
-`UnsupportedOperationException`: `discovery = H1Only` (HTTP/3 is off), and a proxy that applies to the URL —
-WebTransport runs over UDP, which an HTTP proxy does not carry — unless the host is exempt from the proxy or
-`http3 { webTransportIgnoresProxy = true }` asks to connect directly. At most `http3 { maxWebTransportSessions }` (64)
-sessions are open at once on the client; one more fails at once with `IllegalStateException`, nothing waits. The
+`UnsupportedOperationException`: `http3 { enabled = false }`, and a proxy that applies to the URL — WebTransport runs
+over UDP, which an HTTP proxy does not carry — unless the host is exempt from the proxy or
+`http3 { webTransport { proxyPolicy } }` (`WebTransportProxyPolicy.Refuse` by default) asks to connect directly. At most
+`http3 { webTransport { maxSessions } }` (64) sessions are open at once on the client; one more fails at once with `IllegalStateException`, nothing waits. The
 session goes straight to the URL's host and port: Alt-Svc is not consulted and the CONNECT never goes in 0-RTT; the resolved addresses are tried
 in order within `connectTimeout`, so one whose handshake fails or stalls gives way to the next. Closing the client ends
 the sessions still open with their connections, without a close capsule, and a call after `close()` fails with
@@ -2401,22 +2484,21 @@ session.close(0, "done")                           // the session's own connecti
 
 ## Mutual TLS (client certificates)
 
-A server that admits only clients with a certificate from its own CA sets `clientAuth = ClientAuth.Required` and an
-`AnchoredCa` trust on the TLS connector:
+A server that admits only clients with a certificate from its own CA sets `clientAuth = ClientAuth.Required` and a
+`clientTrust` in its `tls { }` (the engine's, for every TLS connector, or one connector's own `tls { }` for that port
+only):
 
 ```kotlin
 val clientCaPem = File("client-ca.pem").readText()
 // guide:ktor:mtls-server
 val clientCa = Certificate.parsePem(clientCaPem)   // the CA that issues the client certificates
 val server = embeddedServer(Kuicksilver, configure = {
-    tlsConnector {
-        tls { identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray()) }
-        port = 443
-        tls {
-            clientAuth = ClientAuth.Required           // no handshake without a client certificate that chains to clientCa
-            clientTrust = TrustConfig.AnchoredCa(clientCa)
-        }
+    tls {
+        identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray())
+        clientAuth = ClientAuth.Required                 // no handshake without a client certificate that chains to clientCa
+        clientTrust = TrustConfig.AnchoredCa(clientCa)   // or clientCaFile("/etc/kuicksilver/client-ca.pem")
     }
+    tlsConnector { port = 443 }
 }) {
     routing {
         get("/whoami") { call.respondText("client ${call.request.peerCertificates.first().dnsNames}") }
@@ -2425,7 +2507,7 @@ val server = embeddedServer(Kuicksilver, configure = {
 server.start(wait = true)
 ```
 
-The client presents its certificate with `identity`, for HTTP/3, HTTP/2 and HTTP/1.1 alike:
+The client presents its certificate with `tls { identity }`, for HTTP/3, HTTP/2 and HTTP/1.1 alike:
 
 ```kotlin
 // guide:ktor:mtls-client
@@ -2442,8 +2524,10 @@ val client = HttpClient(Kuicksilver) {
 
 - **The server.** `clientAuth` is `None` (the default), `Optional` (a certificate is asked for; a client without one
   still connects, and `peerCertificates` is empty) or `Required` (the handshake fails without one). Any value but `None`
-  needs `trust = TrustConfig.AnchoredCa(...)`, optionally inside `TrustConfig.Pinned`, the only trust for client
-  certificates; without it the start fails with `TlsException.Config`. The setting applies to the TCP side and the HTTP/3
+  needs `clientTrust = TrustConfig.AnchoredCa(...)` (optionally inside `TrustConfig.Pinned`, the only trust for client
+  certificates) or `clientCaFile(path)`, which reads a PEM bundle as that `AnchoredCa`; without either the start fails
+  with `IllegalArgumentException` naming `tls { clientTrust }`. With `EngineMain`: `kuicksilver.tls.clientAuth` and
+  `kuicksilver.tls.clientCa`. The setting applies to the TCP side and the HTTP/3
   side of the connector. `call.request.peerCertificates` is the client's chain as it was validated, leaf first, over
   TCP or QUIC. On the JVM, an `sslConnector` with a trust store requires client certificates the same way.
 - **The client's key.** `TlsIdentity.fromPem(chain, key)` works on every target: the chain in PEM, leaf first, and the
@@ -2457,22 +2541,56 @@ val client = HttpClient(Kuicksilver) {
   Authentication); otherwise the server refuses it with `InvalidPurpose` (alert 43). One without that extension is
   accepted.
 - **A client without a certificate**, against `Required`: the server ends the handshake with the TLS alert
-  `certificate_required` (116). Over TCP (`H1Only`) the call fails with an
-  `IOException` (Ktor's `ClosedByteChannelException`) whose message is "TLS alert received from the peer:
-  certificate_required (116)" and whose root cause is a `TlsException.AlertReceived`; the client's side of the TLS
-  handshake has completed by then, so the alert ends the request. Over QUIC (`H3Only`) the call fails with
+  `certificate_required` (116). Over TCP (`http3 { enabled = false }`) the client's side of the TLS handshake has
+  completed by then, so the alert ends the connection the request is on: over HTTP/2, which the server offers by default
+  since 0.3.0, the call fails with `Http2Exception.ConnectionClosed` ("the connection was lost: TLS alert received from
+  the peer: certificate_required (116)") whose root cause is a `TlsException.AlertReceived`; over HTTP/1.1 (a server
+  with `http2 { enabled = false }`) with an `IOException` (Ktor's `ClosedByteChannelException`) whose message is "TLS
+  alert received from the peer: certificate_required (116)", with the same root cause. Over QUIC (`H3Only`) the call fails with
   `QuicException.ConnectionLost.TransportClosed`, `code` 0x174 (0x0100 + 116), with a `TlsException.AlertReceived` as
   its cause. In `Preferred` mode HTTP/3 fails that way first (the event listener's `raceEnded` or `fallback` gets that
   `TransportClosed`), the call goes on over TCP and fails there as over TCP, with no `suppressed` exceptions: the TCP
   setup did not fail. The server counts the failure by transport: over QUIC in
   `handshakesFailedTls` (`engine.http3Stats`), over TCP in its event listener's `tlsHandshakeFailed`.
-- **0-RTT.** A server that asks for client certificates cannot accept 0-RTT: `quicEarlyData = true` together with a
-  `clientAuth` other than `None` fails the start with `IllegalArgumentException` "earlyData cannot be combined with client
-  certificates" ([0-RTT](#0-rtt-opt-in-experimental)). A client with an `identity` may keep `earlyData` on; such a
+- **0-RTT.** A server that asks for client certificates cannot accept 0-RTT: `http3 { earlyData { enabled = true } }`
+  together with a `clientAuth` other than `None` fails the start with `IllegalArgumentException` "acceptEarlyData cannot
+  be combined with client certificates" ([0-RTT](#0-rtt-opt-in-experimental)). A client with a `tls { identity }` may keep
+  `http3 { earlyData { enabled } }` on; such a
   server never offers it 0-RTT, so its connections use full handshakes.
 - **Rotation.** The server's own identity can be a `TlsIdentity.Reloadable` ([Certificate rotation](#certificate-rotation)).
-  The client CA in `trust` is read when the server starts; a new client CA takes a restart (put the old and the new CA in
-  the bundle during the change).
+  The client CA in `clientTrust` is read when the server starts; a `TrustConfig.reloadable(...)` CA, or `clientCaFile`
+  with `reloadInterval`, rotates without a restart ([Certificate rotation](#certificate-rotation), "The client CA").
+
+## Certificate pinning
+
+A client that talks to its own servers can pin their keys on top of the certificate checks: `TrustConfig.Pinned` in the
+engine's `tls { trust }` accepts a server only when its chain verifies against `base` (the platform's store by default)
+and the public key (SPKI, SHA-256) of its leaf is one of the pins:
+
+```kotlin
+// guide:ktor:pinning
+val pinned = HttpClient(Kuicksilver) {
+    engine {
+        tls {
+            trust = TrustConfig.Pinned(
+                setOf(
+                    SpkiSha256.parse("sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),   // the current key
+                    SpkiSha256.parse("sha256/u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7s="),   // the backup key
+                ),
+                base = TrustConfig.Platform,   // the chain is still verified; the pin comes on top
+            )
+        }
+    }
+}
+```
+
+- The pins hold for every protocol: HTTP/3 over QUIC and the TCP fallback (HTTP/2, HTTP/1.1) use the one `tls { }`, so a
+  blocked UDP path never leads to a connection with weaker checks. A pin never replaces the name check.
+- Pin a backup key you hold offline as well, or a key change locks the app out until it is updated.
+  `scope = PinScope.AnyInValidatedChain` matches any certificate of the validated chain (an intermediate CA's key, say)
+  instead of the leaf.
+- A `Pinned` trust names the origin's keys, so the TLS to a proxy (`proxies { tls { } }`, [Proxies](#proxies)) starts
+  from its `base` instead. The variants and their rules: [TLS: Trust](tls.md#trust).
 
 ## Priorities (experimental)
 
@@ -2570,7 +2688,7 @@ to `PerMessageDeflate`, say) with 500, and its client engine fails such an answe
 messages are always inflated with a 32 KiB window, which reads every smaller one.
 
 Decompression bombs. A compressed message may inflate to at most `maxInflatedMessageSize` bytes (on Kuicksilver's
-engines, to at most the smaller of that and the engine's `webSocketMaxMessageSize`). Kuicksilver's engines
+engines, to at most the smaller of that and the engine's `webSockets { maxMessageSize }`). Kuicksilver's engines
 decompress the frames as they arrive, in pieces of 64 KiB, and close the connection with 1009 (message too big, RFC 6455
 section 7.4.1) once a message passes the limit, after at most one piece more; malformed compressed data closes it with
 1002 ("Invalid compressed data"). On Kuicksilver's engines Ktor's `maxFrameSize` sees only the decompressed pieces, so
@@ -2599,18 +2717,22 @@ Linux Kotlin/Native binaries that use `kuicksilver-ktor-network` link the system
 every glibc distribution, though a distroless or scratch image may need it added); on Windows zlib is linked statically,
 on Apple platforms it is the system's.
 
-## Observability (experimental)
+<a id="observability-experimental"></a>
 
-Both engines report what they do without a logging dependency (the API is `@ExperimentalKuicksilverApi`). The QUIC side
+## Observability
+
+Both engines report what they do without a logging dependency, in their `observability { }` block: `logger` and `qlog`
+are stable, the listeners (`eventListener`, `connectionListener`) experimental. The QUIC side
 is the one described in [QUIC: Observability](quic.md#observability): counters, a `KuicksilverLogger`, a
 `ConnectionListener` and qlog.
 [`samples/kq-cli`](../../samples/kq-cli/README.md) puts the client side together in a command line, `kq get -v <url>`:
 the protocol of each response and why, the QUIC connection (handshake time, RTT, ALPN, 0-RTT), the `Alt-Svc` learned
 and a qlog trace per connection, built for macOS, Linux and Windows.
 
-**Server.** In the engine configuration, `logger` receives the HTTP/3 endpoints' diagnostics (warnings on standard error by
-default; the engine's own messages keep going to the application's log), `connectionListener` hears every QUIC
-connection, `qlog` adds a trace per HTTP/3 connection to `quic`, and `eventListener` takes a
+**Server.** In the engine's `observability { }` block, `logger` receives the HTTP/3 endpoints' diagnostics (null, the
+default, sends them to the application's log, `environment.log`, where the engine's own messages go too),
+`connectionListener` (*experimental*) hears every QUIC connection, `qlog` adds a trace per HTTP/3 connection, and
+`eventListener` (*experimental*) takes a
 `KuicksilverServerEventListener`: `connectionOpened` and `connectionClosed` with the protocol (`HTTP/1.1` or `HTTP/2.0`
 after the TLS handshake, `HTTP/3.0` once accepted) and the peer's address, `tlsHandshakeFailed`, `connectionRefused` (a
 TCP client closed at accept, before TLS, with the reason: `per-IP limit` or `HTTP/2 repeat offender`; see [Connection
@@ -2631,16 +2753,16 @@ embeddedServer(Kuicksilver, configure = {
     observability {
         logger = KuicksilverLogger.stderr(LogLevel.Info)
         qlog = AsyncQlogSink(DirectoryQlogSink("/var/log/qlog"), sampleEvery = 100)
-    }
-    observability { eventListener = object : KuicksilverServerEventListener() {
-        override fun requestEnded(protocol: HttpProtocolVersion, call: ApplicationCall, cause: Throwable?) {
-            metrics.record(protocol, call.response.status()?.value)
+        eventListener = object : KuicksilverServerEventListener() {
+            override fun requestEnded(protocol: HttpProtocolVersion, call: ApplicationCall, cause: Throwable?) {
+                metrics.record(protocol, call.response.status()?.value)
+            }
         }
-    } }
+    }
 }, module = Application::module)
 ```
 
-**Client.** `engine { eventListener = ... }` takes a `KuicksilverEventListener`, an abstract class with an empty method
+**Client.** `engine { observability { eventListener = ... } }` takes a `KuicksilverEventListener`, an abstract class with an empty method
 per event in the manner of OkHttp's `EventListener`: `callStart`, `callEnd` (protocol and status) or `callFailed`;
 `protocolSelected` with a `ProtocolReason` (`Configuration`, `NotSecure`, `ExistingConnection`, `Race`, `NoAlternative`,
 `BrokenAlternative`, `WebSocket`, `Fallback`, `Proxy`, `Http3Disabled`, `HttpsRecord`; on the TCP path it comes once the
@@ -2655,25 +2777,29 @@ session failed; it can come after `callEnd`, since a session may outlive its cal
 and a `FamilyDns`, once for both with a plain `Dns`; the end carries the addresses the engine may connect to, or the
 failure; no lookup and no event for an address literal, [Name resolution](#name-resolution-experimental)); `connectFailed`
 (since 0.3.0: a connection setup that failed, a TCP connect to one address, a proxy or TLS handshake over TCP, or a QUIC
-handshake, with its address; [Why did this call fail?](#why-did-this-call-fail)). `logger` (null keeps `http3.endpoint.logger`) also receives the listener's own failures, and
-`http3 { qlog = ...; connectionListener = ... }` reach the engine's QUIC endpoint.
+handshake, with its address; [Why did this call fail?](#why-did-this-call-fail)). `observability { logger }`
+(`KuicksilverLogger.Default`, the platform's logger at warnings and up) receives the engine's and its QUIC endpoints'
+diagnostics and the listener's own failures, and `observability { qlog; connectionListener }` reach the engine's QUIC
+endpoints.
 
 ```kotlin
 // guide:ktor:client-observability
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 HttpClient(Kuicksilver) {
     engine {
-        observability { eventListener = object : KuicksilverEventListener() {
-            override fun protocolSelected(request: HttpRequestData, protocol: HttpProtocolVersion, reason: ProtocolReason) {
-                println("${request.url}: $protocol ($reason)")
+        observability {
+            eventListener = object : KuicksilverEventListener() {
+                override fun protocolSelected(request: HttpRequestData, protocol: HttpProtocolVersion, reason: ProtocolReason) {
+                    println("${request.url}: $protocol ($reason)")
+                }
             }
-        } }
-        observability { qlog = AsyncQlogSink(DirectoryQlogSink("qlog")) }
+            qlog = AsyncQlogSink(DirectoryQlogSink("qlog"))
+        }
     }
 }
 ```
 
-On Android, `http3 { qlog = AsyncQlogSink(qlogDirectory(context)) }` writes the traces to a directory in the app's
+On Android, `observability { qlog = AsyncQlogSink(qlogDirectory(context)) }` writes the traces to a directory in the app's
 cache directory, created owner-only (API 26 and up; [QUIC: qlog](quic.md#qlog)). It is the counterpart of
 `keylogFile(context)`.
 
@@ -2718,10 +2844,10 @@ if (d != null && d.protocol != HttpProtocolVersion.HTTP_3_0) {
 | `fallback` | Meaning | What to check |
 |---|---|---|
 | `NotSecure` | an `http://` or `ws://` URL | HTTP/3 needs `https` |
-| `Proxy` | a proxy applies to the URL | `proxy` and `proxyResolver` ([Proxies](#proxies)) |
-| `Configuration` | `discovery = H1Only` | the discovery mode |
-| `Http3Disabled` | `http3 { http3Allowed }` returned false | your remote configuration ([Turning HTTP/3 off remotely](#turning-http3-off-remotely)) |
-| `NoAlternative` | `Auto` and no `Alt-Svc` from the origin yet: the first call always goes over HTTP/1.1 | the server's `Alt-Svc`; `quicHints`, `FileAltSvcStore` |
+| `Proxy` | a proxy applies to the URL | `proxy` and `proxies { resolver }` ([Proxies](#proxies)) |
+| `Configuration` | `http3 { enabled = false }` | the `http3` block |
+| `Http3Disabled` | `http3 { allowed }` returned false | your remote configuration ([Turning HTTP/3 off remotely](#turning-http3-off-remotely)) |
+| `NoAlternative` | `Auto` and no `Alt-Svc` from the origin yet: the first call always goes over TCP | the server's `Alt-Svc`; `http3 { hints }`, `FileAltSvcStore` |
 | `MisdirectedRequest` | the alternative answered 421; it was dropped and the origin answered over HTTP/1.1 | the alternative's certificate and virtual hosts |
 | `BrokenAlternative` | HTTP/3 to this alternative failed recently on this network | the log line's `broken since:` names why |
 | `WebSocket` | a WebSocket without an HTTP/3 connection that allows Extended CONNECT | expected for the first WebSocket |
@@ -2736,14 +2862,16 @@ if (d != null && d.protocol != HttpProtocolVersion.HTTP_3_0) {
 | `GoAway` | the server refused the request with GOAWAY on every attempt | the server is stopping |
 | `StreamFailed` | one HTTP/3 stream failed and the idempotent request went again over HTTP/1.1 | `h3Failure` |
 | `Other` | any other HTTP/3 failure | `h3Failure` |
-| `QuicStalled` | the HTTP/3 connection stopped carrying packets under the request ([stall detection](#stalled-http3-connections)); the request went over TCP and the alternative is marked broken | a network that cuts UDP flows (a firewall, NAT or VPN); `http3 { stallDetection }` |
+| `QuicStalled` | the HTTP/3 connection stopped carrying packets under the request ([stall detection](#stalled-http3-connections)); the request went over TCP and the alternative is marked broken | a network that cuts UDP flows (a firewall, NAT or VPN); `http3 { stall { } }` |
 | `H2Refused` | the server answered HTTP/2 with HTTP_1_1_REQUIRED (RFC 9113 section 7), on this call or lately (the route offers only `http/1.1` for 5 minutes, doubling up to 2 days), so the call went over HTTP/1.1; why HTTP/3 was not used is in the log line as `h3Fallback=` | the server's HTTP/2 support for that route ([HTTP/2 on the client](#http2-on-the-client)) |
 | `ServerConnectionIdChanged` | the server switched its Source Connection ID during the QUIC handshake, which RFC 9000 sections 7.2 and 7.3 forbid: an msquic server (IIS, .NET Kestrel on Windows) given a ClientHello of 3 or more datagrams, as a resumption's is; the call went over TCP at once; after a resumed handshake the next ones use HTTP/3 without resumption (no 0-RTT) for 5 minutes, doubling up to 2 days, after a full one the alternative is marked broken | nothing on the client (msquic#4905); [msquic servers](troubleshooting.md#msquic-servers-and-a-large-clienthello) |
 
-The engine's `logger` gets one line per call that HTTP/3 could have served but did not (a lost race, a fallback, a
-broken alternative, a proxy) at `http3 { diagnosticsLogLevel }`, `Info` by default — which the default logger, warnings
-and up, leaves out: set `logger = KuicksilverLogger.stderr(LogLevel.Info)` to see them. Calls over HTTP/3, and calls
-HTTP/3 was never a candidate for (`http://`, `H1Only`, `Auto` without `Alt-Svc`), are logged at `Debug`; `null` turns
+The engine's `observability { logger }` gets one line per call that HTTP/3 could have served but did not (a lost race, a
+fallback, a broken alternative, a proxy) at `observability { protocolChoiceLogLevel }`, `Info` by default — which the
+default logger, the platform's at warnings and up, leaves out: set `logger = KuicksilverLogger.platform(LogLevel.Info)`
+to see them (the first alternative marked broken on a network is one Warn line all the same). Calls over HTTP/3, and
+calls HTTP/3 was never a candidate for (`http://`, `http3 { enabled = false }`, `Auto` without `Alt-Svc`), are logged
+at `Debug`; `null` turns
 the lines off. The line is built only when the logger wants its level, and its format stays the same within 0.3.x:
 
 ```text
@@ -2959,22 +3087,22 @@ exists only over QUIC (HTTP/1.1 and HTTP/2 over TCP never send or accept early d
 request can be **replayed**: an attacker who recorded the client's first flight can send it to the server again
 (RFC 9846 section 8). This section is everything an application needs to decide whether to turn it on.
 
-- **Server:** set `quicEarlyData = true` in the engine configuration. Requests the early-data policy calls replayable
+- **Server:** set `http3 { earlyData { enabled = true } }` in the engine configuration (`EngineMain`:
+  `kuicksilver.http3.earlyData.enabled = true`). Requests the early-data policy calls replayable
   (GET, HEAD and OPTIONS by default) that arrive in 0-RTT run before the handshake completes, and
   `call.request.receivedEarly` is true for them. Every other early request waits for the handshake (the default policy,
   `Http3EarlyDataPolicy.WaitForHandshake()`): a replayed copy never completes the handshake, so it never runs.
-  `http3Settings = http3Settings { earlyData = Http3EarlyDataPolicy.Reject425() }` answers those with `425 Too Early`
-  instead, without running the handler, and the client repeats them after its handshake (RFC 8470 section 5.2);
-  replayable requests still run early under both policies. Assign it (a bare `http3Settings { ... }` inside `configure`
-  only builds a value and changes nothing). Without `quicEarlyData` the server issues no session tickets for QUIC, so
+  `http3 { earlyData { policy = Http3EarlyDataPolicy.Reject425() } }` answers those with `425 Too Early` instead,
+  without running the handler, and the client repeats them after its handshake (RFC 8470 section 5.2); replayable
+  requests still run early under both policies. Without `earlyData { enabled }` the server issues no session tickets for QUIC, so
   HTTP/3 clients run a full handshake every time.
-- **Behind a gateway** (with or without `quicEarlyData`): a CDN or reverse proxy that forwards a request it received in
+- **Behind a gateway** (with or without `http3 { earlyData { enabled } }`): a CDN or reverse proxy that forwards a request it received in
   early data marks it `Early-Data: 1` (RFC 8470 section 5.1), and such a request may be a replay whatever the state of
   the connection it arrives on. Over HTTP/1.1 and HTTP/3 the server engine sets `call.request.receivedEarly` for it and
   answers `425 Too Early` to any such request the early-data policy does not declare replayable (over HTTP/1.1: anything
   but GET, HEAD and OPTIONS), without running the handler; the gateway forwards the 425 and its client retries after
   its handshake. Gate side effects on `receivedEarly`, not on the TLS state of your own connection.
-- **Client:** set `http3 { earlyData = true }`. On a new connection to a server it has a ticket for, the engine sends
+- **Client:** set `http3 { earlyData { enabled = true } }`. On a new connection to a server it has a ticket for, the engine sends
   GET, HEAD and OPTIONS requests without a body in 0-RTT; other requests wait for the handshake. A `425` is retried
   once; when the server rejects 0-RTT as a whole, the early requests are repeated once on the same connection after its
   handshake (neither counts in `attempts`). 0-RTT keeps the h3/h1 race and the fallback intact:
@@ -2983,15 +3111,16 @@ request can be **replayed**: an attacker who recorded the client's first flight 
   - QUIC counts as working on the network, the alternative as working, and the connection's RTT is remembered only
     once the handshake completed, never on the 0-RTT start alone.
   - The connect timeout bounds the handshake of a 0-RTT connection (its handshake timer is cut to it): a GET sent early
-    on a path that went dark fails then and falls back to HTTP/1.1, not after `handshakeTimeout`.
+    on a path that went dark fails then and falls back to TCP (the engine derives the QUIC `handshakeTimeout` from
+    `connectTimeout` anyway).
   - A request that waits for the handshake (POST, or anything with a body) has not been sent when the handshake fails:
-    it goes over HTTP/1.1 like any request whose HTTP/3 connection could not be set up.
+    it goes over TCP like any request whose HTTP/3 connection could not be set up.
 - **Tickets on the client** live in memory, in the engine's QUIC endpoint, for as long as the `HttpClient` lives: each
-  is used once, checked against the current `trust` before use, and dropped when the client closes. Nothing is
+  is used once, checked against the current `tls { trust }` before use, and dropped when the client closes. Nothing is
   persisted, so after an app restart (or a new `HttpClient`) the first connection to each server is a full handshake,
   and 0-RTT starts from the next one.
-- **Client certificates:** a server that asks for them cannot accept 0-RTT, and `quicEarlyData = true` with a
-  `clientAuth` other than `None` fails the start ([Mutual TLS](#mutual-tls-client-certificates)).
+- **Client certificates:** a server that asks for them cannot accept 0-RTT, and `earlyData { enabled = true }` with a
+  `tls { clientAuth }` other than `None` fails the start ([Mutual TLS](#mutual-tls-client-certificates)).
 
 ```kotlin
 // guide:ktor:zero-rtt-server
@@ -3064,7 +3193,7 @@ A replay can only repeat requests the policy runs early; the server also limits 
    so a recorded flight is useless at most 10 s after the original.
 2. **Once per ticket, per process.** A process-wide replay register remembers every ticket whose 0-RTT it accepted,
    for at least 20 seconds (longer than the window), and refuses that ticket's 0-RTT a second time. Every listener and
-   every `udpSocketCount` loop of the process shares it. When it is full (it uses at most 1 MiB), 0-RTT is refused
+   every `http3 { endpoint { loops } }` loop of the process shares it. When it is full (it uses at most 1 MiB), 0-RTT is refused
    and the handshake goes on in 1-RTT: it fails closed.
 3. **The configuration that issued the ticket.** A ticket allows 0-RTT only for the same ALPN, transport parameters and
    HTTP/3 SETTINGS; any change costs one 1-RTT handshake. A ticket is also bound to the certificate it was issued
@@ -3117,7 +3246,7 @@ verified in a local Windows 11 VM (Parallels) and runs in the hosted CI's Window
 
 **Client** (`kuicksilver-ktor-client`): `ContentTest`, `PostTest`, `UploadTest`, `DownloadTest`, `HttpRedirectTest`,
 `HttpTimeoutTest` and `WebSocketTest` against Ktor's test-server routes hosted on the Kuicksilver server engine; every
-test runs twice — `Kuicksilver-h1` (cleartext HTTP/1.1, `H1Only`) and `Kuicksilver-h3` (HTTPS, `H3Only`). 93 tests,
+test runs twice — `Kuicksilver-h1` (cleartext HTTP/1.1, `http3 { enabled = false }`) and `Kuicksilver-h3` (HTTPS, `H3Only`). 93 tests,
 90 pass in both modes, 3 are `@Ignore`d upstream. Adapted: the `HttpTimeoutTest` success budgets are widened, room
 for a fresh client's handshake on a loaded host (comments in the file). Left out:
 
@@ -3193,7 +3322,8 @@ the JVM and Android that is `ktor-network` as before; on Kotlin/Native it is a T
 that binds and connects the address `getaddrinfo` returned. So on every platform:
 
 - a server connector with a specific `host` (`::1`, `127.0.0.1`, a global address) listens on that address only; `::` and
-  `0.0.0.0` stay the wildcards;
+  `0.0.0.0` stay the wildcards, and a connector without a `host` binds `::` with `IPV6_V6ONLY` off, one dual-stack socket
+  that IPv4 clients reach as IPv4-mapped addresses;
 - the client's HTTP/1.1 connection (and its connection to an HTTP proxy) goes to the address in the URL; an
   IPv4-mapped literal (`[::ffff:127.0.0.1]`) is connected over IPv4, as the JVM does. A host name is resolved to all its
   addresses and connected with Happy Eyeballs ([Happy Eyeballs](#happy-eyeballs)); HTTP/3 races the same addresses over

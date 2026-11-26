@@ -86,7 +86,8 @@ val client = HttpClient(Kuicksilver)   // io.kuicksilver.ktor.client.Kuicksilver
 
 // server: was embeddedServer(Netty, port = 8443, module = Application::module)
 embeddedServer(Kuicksilver, configure = {   // io.kuicksilver.ktor.server.Kuicksilver
-    tlsConnector(TlsIdentity.fromPem(chainPem, keyPem.toCharArray())) { port = 8443 }   // HTTP/1.1 over TLS and HTTP/3, one port
+    tls { pemFiles("/etc/tls/fullchain.pem", "/etc/tls/privkey.pem") }   // the key unencrypted PKCS#8
+    tlsConnector { port = 8443 }   // HTTP/1.1, HTTP/2 and HTTP/3 on one port
 }, module = Application::module).start(wait = true)
 ```
 

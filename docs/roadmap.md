@@ -59,7 +59,7 @@ What 0.2.0 brings:
   idle close after GOAWAY with unfinished requests, QPACK on fragmented input, `te`/HEAD/204/304 edge cases,
   `keylogFile` O_NOFOLLOW, `KslLoader` directory ownership, `SessionCache` across engines; a full reassembly range
   table drops the packet instead of closing the connection (RFC 9000 §21.7).
-- `QuicConfig.initialRtt` (default 333 ms per RFC 9002; a lower value trades spurious retransmissions for a faster
+- `quicConfig { expert { initialRtt } }` (default 333 ms per RFC 9002; a lower value trades spurious retransmissions for a faster
   handshake under loss) validated in (0, 10 s] and the lossy-handshake behaviour documented in the guide.
 - The accept queue: `acceptQueue` 128 by default, and an Initial that arrives while it is full is refused statelessly
   with CONNECTION_REFUSED (RFC 9000 §5.2.2).
@@ -83,7 +83,7 @@ What 0.2.0 brings:
   target and harsh simulator scenarios against CUBIC ([Choosing a congestion controller](guide/quic.md#choosing-a-congestion-controller)).
 
 Known limits of 0.2.0, stated on purpose:
-- A handshake under heavy loss with an ML-KEM peer, as in 0.1.0; mitigated by `QuicConfig.initialRtt`
+- A handshake under heavy loss with an ML-KEM peer, as in 0.1.0; mitigated by `quicConfig { expert { initialRtt } }`
   ([quic.md](guide/quic.md)).
 - 0-RTT is opt-in and experimental (ADR-0015); a replay into another server process that shares explicit ticket keys
   passes the freshness check only (threat model 3.8).
@@ -142,9 +142,9 @@ Moved to 0.3.0: a run of the iOS device checklist on a physical iPhone
 
 - WebTransport over HTTP/3 (draft-ietf-webtrans-http3), experimental.
 - HTTP/2 (RFC 9113, HPACK RFC 7541) in a new module `kuicksilver-http2` (ADR-0017): the client offers `h2` next to
-  `http/1.1` over TLS, the server serves it opt-in, WebSocket over HTTP/2 (RFC 8441, done in both engines); no
+  `http/1.1` over TLS, the server serves it (on by default), WebSocket over HTTP/2 (RFC 8441, done in both engines); no
   server push, h2c under [Feature parity](#feature-parity-decided-2026-11-16).
-- RFC 9460 HTTPS records as a source of h3, off by default (done: `http3 { httpsRecords }`).
+- RFC 9460 HTTPS records as a source of h3, off by default (done: `network { httpsRecords }`).
 - QUIC server, rebind during the handshake: keep both candidate addresses as separate paths and challenge both, so that
   a client that really rebinds while an observer races copies of its packets from the old address is not held on the
   dead one until the handshake timeout (the known limit in
@@ -156,7 +156,7 @@ Moved to 0.3.0: a run of the iOS device checklist on a physical iPhone
 - HTTP/3 priorities exposed in the Ktor engines (RFC 9218) (done; the HTTP/2 server schedules its responses by them too).
 - PMTUD from ICMP Packet Too Big as a hint (RFC 8899 §4.6).
 - Clients: SOCKS5 (CONNECT; the GSSAPI method comes in 0.4.0, see [RFC 1928 §3](spec/rfc/1928-1929.md#s3-gssapi)) and system proxy
-  settings, Happy Eyeballs on TCP (RFC 8305), WebSocket permessage-deflate (RFC 7692). The Ktor client gets a `proxyResolver` setting whose default is the system proxy (HTTP/3 is not used through a proxy).
+  settings, Happy Eyeballs on TCP (RFC 8305), WebSocket permessage-deflate (RFC 7692). The Ktor client gets a proxy resolver setting (`proxies { resolver }` since 0.3.0) whose default is the system proxy (HTTP/3 is not used through a proxy).
 - Server: certificate hot reload and a limit on TCP connections.
 - `loops > 1` on macOS, iOS and Windows: one socket routed in process by connection ID (done; the benchmark of what it buys is still to come).
 - A run of the iOS device checklist on a physical iPhone ([Device checklist](guide/ios.md#device-checklist)).
@@ -191,7 +191,7 @@ what the peers really do, and is delivered whole or not at all.
   with a retry on 421 ([RFC 9113 §9.1.1](spec/rfc/9113.md#s9-1-1-connection-reuse)). Done (2026-11-26).
 - CONNECT-UDP (RFC 9298), client and server, over the capsules, datagrams and extended CONNECT already in place:
   HTTP/3 through a MASQUE proxy. Done in `kuicksilver-http3` over HTTP/3 (client tunnel, proxy, proxied QUIC;
-  [RFC 9298](spec/rfc/9298.md#s2-uri-template), ADR-0024); the Ktor engines use it (the client's `connectUdpProxy`, the
+  [RFC 9298](spec/rfc/9298.md#s2-uri-template), ADR-0024); the Ktor engines use it (the client's `proxies { connectUdp }`, the
   server's `connectUdp(proxy)` route).
 - PROXY protocol v1 and v2 on the TCP connectors, with a list of trusted sources: implemented, experimental
   ([ADR-0022](adr/0022-proxy-protocol.md), [details](spec/rfc/spec-haproxy-proxy-protocol.md#receiver)).

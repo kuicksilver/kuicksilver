@@ -7,6 +7,8 @@
 package io.kuicksilver.guide.client
 
 import io.ktor.client.HttpClient
+import io.ktor.client.request.get
+import io.ktor.client.statement.bodyAsText
 import io.kuicksilver.ktor.client.FileAltSvcStore
 import io.kuicksilver.ktor.client.HostPort
 import io.kuicksilver.ktor.client.Kuicksilver
@@ -17,10 +19,11 @@ import io.kuicksilver.tls.TrustConfig
 import java.io.File
 import kotlin.time.Duration.Companion.seconds
 
-internal fun firstScreenClient(): HttpClient {
+internal suspend fun firstScreenClient() {
     // guide:ktor:first-screen-client
     val client = HttpClient(Kuicksilver) // explicit engine: HttpClient() may pick OkHttp/Android first (ServiceLoader)
-    return client
+    println(client.get("https://example.com/").bodyAsText())
+    client.close()
 }
 
 internal fun firstScreenMobileStable(

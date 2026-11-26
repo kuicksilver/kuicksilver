@@ -21,7 +21,7 @@ Quoted: "MUST treat any CE marks as congestion"; "MUST conform to the congestion
 
 **How it is met.**
 
-- `Bbr` (`QuicConfig.congestionController`; CUBIC stays the default)
+- `Bbr` (`quicConfig { congestionController }`; CUBIC stays the default)
 - delivery-rate sampling §4.1 (`recovery/DeliveryRateSampler`, per-packet snapshot on `SentPacket`, app-limited marking when `PacketBuilder.poll` runs out of data with room in the window, samples shorter than min RTT give no rate; an ACK's packets reach the sampler before its loss detection, `LossListener.onDelivered`)
 - max_bw over two ProbeBW cycles and extra_acked over 10 rounds (`recovery/WindowedMaxFilter`, Linux win_minmax)
 - min_rtt 10 s with ProbeRTT every 5 s (cwnd 0.5 BDP, ≥ 200 ms and one round)

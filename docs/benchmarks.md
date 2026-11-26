@@ -267,7 +267,7 @@ reading thread. A first version that let queued work run only every 16 rounds or
 the application's reads, which extend the stream's flow-control credit, and made Kuicksilver → Kuicksilver 2.6 times
 slower; that is why the receiver yields as often as the blocking receive did, and why the forward loop of a multi-loop
 server now yields after every 16 forwarded datagrams too. The loop's dispatcher can therefore block for up to 1 ms in a
-socket wait (`QuicEndpointConfig.dispatcher`). The client now acknowledges more often (33 instead of 20 packets per 100
+socket wait (`quicEndpointConfig { runtime { dispatcher } }`). The client now acknowledges more often (33 instead of 20 packets per 100
 from quinn: a faster loop takes smaller batches), still no more than one ACK per two ack-eliciting packets.
 
 ### The server: CPU per GB

@@ -182,8 +182,8 @@ Status: ✅ since 0.3.0 (experimental) · [summary](../rfc-compliance.md#http)
   from a number of known sources should be safe."
 
 **How it is met.** `ProxyProtocolConfig` per connector (`proxyProtocol { }` on `plainConnector { }` and
-`tlsConnector(identity) { }`; `kuicksilver.proxyProtocol.*` for `EngineMain`'s deployment port), off by default: a
-configuration parameter, never detection. At least one trusted source is required; a TCP peer outside `trustedSources`
+`tlsConnector { }`; `kuicksilver.connector.proxyProtocol.*` for `EngineMain`'s deployment port), off by default: a
+configuration parameter, never detection. At least one trusted source is required; a TCP peer outside the trusted sources (`trust(...)`)
 is closed at accept, before a byte is read (`TcpListener.kt`), rather than served as if the protocol were off: that would
 share the port between public and private access, which section 2 rules out, and a proxy left out of the list by mistake
 would see its connections served with its header read as HTTP. A deployment that relies on a firewall alone can list
@@ -192,8 +192,8 @@ valid header (no guessing), and nothing of the connection is processed before it
 unanswered. The header is read before the TLS handshake from the socket's own read channel, which the TLS session then
 reads on from (`Socket.tlsServer(config, input)`), so a ClientHello sent in the header's segment is kept; on a plain
 connector the same channel goes to HTTP/1.1. The wait is `headerTimeout` (5 s by default; the builder refuses less than
-3 s), cut to what is left of `requestHeaderTimeoutSeconds` from accept (`ProxyProtocolConfig.headerWait`); the engine
-refuses to start a PROXY connector with `requestHeaderTimeoutSeconds` below 3, so at accept the wait is at least 3 s. The client the header names becomes `call.request.origin` (remote and local addresses
+3 s), cut to what is left of `requestHeaderTimeout` from accept (`ProxyProtocolConfig.headerWait`); the engine
+refuses to start a PROXY connector with `requestHeaderTimeout` below 3 s, so at accept the wait is at least 3 s. The client the header names becomes `call.request.origin` (remote and local addresses
 and ports) on HTTP/1.1 and HTTP/2 calls, `call.request.local` keeps the TCP connection, and `call.request.proxyHeader`
 gives the header itself. On a PROXY connector the HTTP/2 repeat-offender penalty is never the TCP peer's: a flood strikes
 the client the header names, or nobody when it names none, and the accept-time check of the peer is skipped.
@@ -215,4 +215,4 @@ Kuicksilver requires the header too, and takes it only from the listed peers, wh
 
 **Out of scope.** HTTP/3 on a TLS connector's UDP port takes no header (the protocol defines none for QUIC); its
 requests report their UDP peer, and `call.request.proxyHeader` is null. `Alt-Svc` still advertises HTTP/3 on the
-connector's port as configured (`altSvc`): set `altSvc = false` unless the proxy forwards UDP on the same port number.
+connector's port as configured (`http3 { altSvc }`): set `http3 { altSvc = false }` unless the proxy forwards UDP on the same port number.

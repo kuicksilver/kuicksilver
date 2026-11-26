@@ -26,12 +26,19 @@ import io.kuicksilver.http2.http2Settings
 import io.kuicksilver.http3.UdpProxyTemplate
 import io.kuicksilver.ktor.client.ConnectFailure
 import io.kuicksilver.ktor.client.ConnectUdpProxy
+import io.kuicksilver.ktor.client.Dns
+import io.kuicksilver.ktor.client.FileAltSvcStore
+import io.kuicksilver.ktor.client.HostPort
+import io.kuicksilver.ktor.client.Http3ConnectionMigration
 import io.kuicksilver.ktor.client.Http3Discovery
+import io.kuicksilver.ktor.client.HttpsRecordSource
+import io.kuicksilver.ktor.client.IpAddress
 import io.kuicksilver.ktor.client.Kuicksilver
 import io.kuicksilver.ktor.client.KuicksilverEventListener
 import io.kuicksilver.ktor.client.ProtocolReason
 import io.kuicksilver.ktor.client.ProxyCredentials
 import io.kuicksilver.ktor.client.ProxyResolver
+import io.kuicksilver.ktor.client.ProxyResolvers
 import io.kuicksilver.ktor.client.QuicConnectionSnapshot
 import io.kuicksilver.ktor.client.ResolvedProxy
 import io.kuicksilver.ktor.client.TcpConnectionSnapshot
@@ -47,12 +54,14 @@ import io.kuicksilver.quic.LogLevel
 import io.kuicksilver.quic.qlog.AsyncQlogSink
 import io.kuicksilver.quic.qlog.DirectoryQlogSink
 import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.EchConfigList
 import io.kuicksilver.tls.SpkiSha256
 import io.kuicksilver.tls.TlsIdentity
 import io.kuicksilver.tls.TrustConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.io.readString
+import java.io.File
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
@@ -132,5 +141,20 @@ suspend fun everyClientImport(
     stream.output.writeFully("ping".encodeToByteArray())
     println(stream.input.readBuffer().readString())
     client.closeHttp3Connections()
+    HttpClient(Kuicksilver) {
+        engine {
+            http3 {
+                hints = setOf(HostPort("api.example.com", 443))
+                altSvcStore = FileAltSvcStore(File("alt-svc"))
+                migration = Http3ConnectionMigration { _, _ -> error("the JVM has no network source of its own") }
+            }
+            network {
+                dns = Dns { name -> if (name == "api.example.test") listOf(IpAddress.parse("192.0.2.10")) else Dns.System.lookup(name) }
+                httpsRecords = HttpsRecordSource.System
+            }
+            tls { ech { configLists = mapOf("example.com" to EchConfigList.parseBase64(caPem)) } }
+            proxies { resolver = ProxyResolvers.None }
+        }
+    }.close()
     HttpClient(Kuicksilver) { engine { proxies { connectUdp = ConnectUdpProxy(UdpProxyTemplate.wellKnown("masque.example")) } } }.close()
 }

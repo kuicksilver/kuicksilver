@@ -74,7 +74,7 @@ class GuideSamplesTest {
                 it.parentFile
             }.map { File(it, "docs/guide/ktor.md") }.first { it.exists() }.readText()
         assertTrue("guide:ktor:server" in guide, "marker server")
-        assertTrue("guide:ktor:minimal-server" in guide, "marker minimal-server")
+        assertTrue("guide:ktor:first-screen-server" in guide, "marker first-screen-server")
         assertTrue("guide:ktor:webtransport-server" in guide, "marker webtransport-server")
         assertTrue("guide:ktor:connect-udp-server" in guide, "marker connect-udp-server")
         assertTrue("guide:ktor:priority-server" in guide, "marker priority-server")
@@ -117,8 +117,6 @@ class GuideSamplesTest {
                 observability {
                     logger = KuicksilverLogger.stderr(LogLevel.Info)
                     qlog = AsyncQlogSink(DirectoryQlogSink("/var/log/qlog"), sampleEvery = 100)
-                }
-                observability {
                     eventListener =
                         object : KuicksilverServerEventListener() {
                             override fun requestEnded(
@@ -253,22 +251,20 @@ class GuideSamplesTest {
         val clientCa = TrustConfig.reloadable(TrustConfig.AnchoredCa(Certificate.parsePem(caBundlePem)))
         val server =
             embeddedServer(Kuicksilver, configure = {
+                tls {
+                    this.identity = identity
+                    clientAuth = ClientAuth.Required
+                    clientTrust = clientCa
+                }
                 tlsConnector {
-                    tls { this.identity = identity }
                     port = 0
                     host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
-                    tls {
-                        clientAuth = ClientAuth.Required
-                        clientTrust = clientCa
-                    }
                 }
             }, module = Application::module)
         // later: new TCP and QUIC handshakes verify client certificates against the new bundle
         clientCa.reload(TrustConfig.AnchoredCa(Certificate.parsePem(renewedBundlePem)))
-        val connector =
-            server.engine.configuration.connectors
-                .single() as KuicksilverTlsConnector
-        assertTrue(connector.resolved(ResolvedServerTls.None).tls.trust === clientCa) // ServerClientCaReloadTest serves it
+        assertTrue(server.engine.configuration.tls.clientTrust === clientCa) // ServerClientCaReloadTest serves it
+        assertTrue(server.engine.configuration.connectors.single() is KuicksilverTlsConnector)
         assertEquals(Certificate(TestCerts.otherCa), clientCa.current.roots.single())
         identity.close()
     }
@@ -304,13 +300,12 @@ class GuideSamplesTest {
                     host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
                 }
                 http2 {
-                    enabled = true // offer h2 before http/1.1 in ALPN
-                    settings { maxConcurrentStreams = 50 } // windows and flood limits are Http2Settings'
+                    settings { maxConcurrentStreams = 50 } // windows and flood limits are Http2Settings.Builder's
                 }
             }, module = Application::module)
 
         val configuration = server.engine.configuration
-        assertTrue(configuration.http2.enabled, "the TLS connector offers h2") // ServerHttp2*Test serve it
+        assertTrue(configuration.http2.enabled, "the TLS connector offers h2 by default") // ServerHttp2*Test serve it
         assertEquals(50, configuration.resolveHttp2Settings().maxConcurrentStreams)
         identity.close()
     }
@@ -511,10 +506,10 @@ class GuideSamplesTest {
                     embeddedServer(Kuicksilver, configure = {
                         // guide:ktor:sni-server
                         tlsConnector {
-                            tls { identity = defaultIdentity }
                             port = 0
                             host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
                             tls {
+                                identity = defaultIdentity
                                 sniSelector = { hello ->
                                     when (hello.serverName) {
                                         "api.example.com" -> {
@@ -617,7 +612,7 @@ class GuideSamplesTest {
         }
 
     @Test fun minimalServerSample() {
-        // guide:ktor:minimal-server
+        // the connector-level tls { } of the 0.3.0 layout (the guide shows the engine-level one)
         val server =
             embeddedServer(Kuicksilver, configure = {
                 tlsConnector {
@@ -654,19 +649,14 @@ class GuideSamplesTest {
         // guide:ktor:server
         val server =
             embeddedServer(Kuicksilver, configure = {
+                tls { identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray()) } // the key array is zeroed after import
                 tlsConnector {
-                    tls { identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray()) }
-                    // the key array is zeroed after import
                     host = "127.0.0.1"
                     port = 0
-                    tls {
-                        clientAuth = ClientAuth.Optional // ask for a client certificate without requiring one
-                        clientTrust = TrustConfig.AnchoredCa(listOf(clientCa))
-                    }
                 }
             }) {
                 routing {
-                    get("/") { call.respondText("hello, ${call.request.peerCertificates.size} certificates") }
+                    get("/") { call.respondText("hello") }
                 }
             }
         server.start(wait = false)
@@ -683,7 +673,7 @@ class GuideSamplesTest {
                     }
                 }
             assertTrue(response.startsWith("HTTP/1.1 200"), response)
-            assertTrue(response.endsWith("hello, 0 certificates"), response)
+            assertTrue(response.endsWith("hello"), response)
         } finally {
             server.stop(100, 500)
         }
@@ -695,14 +685,14 @@ class GuideSamplesTest {
         val clientCa = Certificate.parsePem(clientCaPem) // the CA that issues the client certificates
         val server =
             embeddedServer(Kuicksilver, configure = {
+                tls {
+                    identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray())
+                    clientAuth = ClientAuth.Required // no handshake without a client certificate that chains to clientCa
+                    clientTrust = TrustConfig.AnchoredCa(clientCa) // or clientCaFile("/etc/kuicksilver/client-ca.pem")
+                }
                 tlsConnector {
-                    tls { identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray()) }
-                    host = "127.0.0.1"
                     port = 0
-                    tls {
-                        clientAuth = ClientAuth.Required // no handshake without a client certificate that chains to clientCa
-                        clientTrust = TrustConfig.AnchoredCa(clientCa)
-                    }
+                    host = "127.0.0.1"
                 }
             }) {
                 routing {
@@ -947,12 +937,12 @@ class GuideSamplesTest {
             val keys = EchServerKeys(listOf(EchKey(ech1.readBytes())))
             val server =
                 embeddedServer(Kuicksilver, configure = {
-                    tlsConnector {
-                        // built, never started
-                        tls { this.identity = identity }
-                        port = 443
-                        tls { echKeys = keys }
+                    // built, never started
+                    tls {
+                        this.identity = identity
+                        echKeys = keys
                     }
+                    tlsConnector { port = 443 }
                 }) { routing { get("/") { call.respondText("hidden") } } }
             // later: a new key; the old one still decrypts for clients that hold it, but is not sent in retry configurations
             keys.rotate(listOf(EchKey(ech2.readBytes()), EchKey(ech1.readBytes(), inRetryConfigs = false)))

@@ -73,7 +73,6 @@ class GuideSamplesTest {
                 it.parentFile
             }.map { File(it, "docs/guide/ktor.md") }.first { it.exists() }.readText()
         assertTrue("guide:ktor:client" in guide, "marker client")
-        assertTrue("guide:ktor:minimal-client" in guide, "marker minimal-client")
         assertTrue("guide:ktor:pool" in guide, "marker pool")
         assertTrue("guide:ktor:webtransport-client" in guide, "marker webtransport-client")
         assertTrue("guide:ktor:priority-client" in guide, "marker priority-client")
@@ -247,8 +246,8 @@ class GuideSamplesTest {
                                     println("${request.url}: $protocol ($reason)")
                                 }
                             }
+                        qlog = AsyncQlogSink(DirectoryQlogSink("qlog"))
                     }
-                    observability { qlog = AsyncQlogSink(DirectoryQlogSink("qlog")) }
                 }
             }
         observed.close()
@@ -393,8 +392,8 @@ class GuideSamplesTest {
                         proxies {
                             resolver =
                                 ProxyResolver { ResolvedProxy.https("proxy.corp.test", 443, ProxyCredentials("user", password)) }
+                            tls { trust = TrustConfig.Platform } // the proxy's own trust (default: the origin's, without pins)
                         }
-                        proxies { tls { trust = TrustConfig.Platform } } // the proxy's own trust (default: the origin's, without pins)
                     }
                 }
             overTls.use {
@@ -448,11 +447,13 @@ class GuideSamplesTest {
         val client =
             HttpClient(Kuicksilver) {
                 engine {
-                    pool { maxConnections = 1000 } // TCP connections (HTTP/1.1, HTTP/2) of the engine, idle ones included
-                    pool { maxConnectionsPerRoute = 100 } // ... to one route (scheme, host, port, proxy)
-                    pool { maxIdleConnectionsPerRoute = 4 } // idle keep-alive connections kept per route
-                    pool { idleTimeout = 5.minutes } // idle HTTP/1.1, HTTP/2 and HTTP/3 connections are closed after this
-                    pool { maxConnectionLifetime = null } // age after which a connection takes no new requests
+                    pool {
+                        maxConnections = 1000 // TCP connections (HTTP/1.1, HTTP/2) of the engine, idle ones included
+                        maxConnectionsPerRoute = 100 // ... to one route (scheme, host, port, proxy)
+                        maxIdleConnectionsPerRoute = 4 // idle keep-alive connections kept per route
+                        idleTimeout = 5.minutes // idle HTTP/1.1, HTTP/2 and HTTP/3 connections are closed after this
+                        maxConnectionLifetime = null // age after which a connection takes no new requests; null: none
+                    }
                 }
             }
         client.use {
@@ -486,8 +487,7 @@ class GuideSamplesTest {
             HttpClient(Kuicksilver) {
                 engine {
                     http2 {
-                        enabled = true // the default: offer h2 on every TLS connection over TCP
-                        pingInterval = 30.seconds // a keep-alive PING; Duration.INFINITE (the default): none
+                        pingInterval = 30.seconds // a keep-alive PING; null (the default): none
                         settings { initialStreamWindow = 1 shl 20 } // our windows and limits (threat model 3.23)
                     }
                 }
@@ -553,9 +553,10 @@ class GuideSamplesTest {
                 val client =
                     HttpClient(Kuicksilver) {
                         engine {
-                            tls { this.identity = identity } // presented over HTTP/3, HTTP/2 and HTTP/1.1 alike
-                            // or keep Platform for a public server certificate
-                            tls { trust = TrustConfig.AnchoredCa(Certificate.parsePem(serverCaPem)) }
+                            tls {
+                                this.identity = identity // presented over HTTP/3, HTTP/2 and HTTP/1.1 alike
+                                trust = TrustConfig.AnchoredCa(Certificate.parsePem(serverCaPem)) // or keep Platform for a public server certificate
+                            }
                         }
                     }
 
@@ -716,7 +717,7 @@ class GuideSamplesTest {
                 }
             val url = "https://127.0.0.1:$port/"
             try {
-                // guide:ktor:minimal-client
+                // the first screen of the guide (guide:ktor:first-screen-client), against a running server
                 val client = HttpClient(Kuicksilver)
                 println(client.get(url).bodyAsText())
                 client.close()
@@ -731,14 +732,7 @@ class GuideSamplesTest {
         val client =
             HttpClient(Kuicksilver) {
                 engine {
-                    tls {
-                        trust =
-                            TrustConfig.Pinned(
-                                setOf(SpkiSha256.parse("sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")),
-                                base = TrustConfig.Platform,
-                            )
-                    }
-                    http3 { discovery = Http3Discovery.Auto } // the default: HTTP/1.1 first, HTTP/3 after Alt-Svc
+                    http3 { discovery = Http3Discovery.Auto } // the default: TCP first, HTTP/3 after Alt-Svc
                 }
                 install(HttpTimeout) {
                     connectTimeoutMillis = 5_000
@@ -747,8 +741,27 @@ class GuideSamplesTest {
             }
         client.use {
             val config = it.engine.config as KuicksilverEngineConfig
-            assertTrue(config.tls.trust is TrustConfig.Pinned)
             assertEquals(Http3Discovery.Auto, config.http3.discovery)
+        }
+        // guide:ktor:pinning
+        val pinned =
+            HttpClient(Kuicksilver) {
+                engine {
+                    tls {
+                        trust =
+                            TrustConfig.Pinned(
+                                setOf(
+                                    SpkiSha256.parse("sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="), // the current key
+                                    SpkiSha256.parse("sha256/u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7s="), // the backup key
+                                ),
+                                base = TrustConfig.Platform, // the chain is still verified; the pin comes on top
+                            )
+                    }
+                }
+            }
+        pinned.use {
+            val config = it.engine.config as KuicksilverEngineConfig
+            assertTrue(config.tls.trust is TrustConfig.Pinned)
         }
     }
 

@@ -82,7 +82,8 @@ The decisions the ADR left to the implementation, with the peers they were weigh
 
 ## Implementation: coalescing (2026-11-26)
 
-`KuicksilverEngineConfig.connectionCoalescing` (experimental, false by default). The decisions the ADR left to the
+`KuicksilverEngineConfig.connectionCoalescing` (experimental, false by default; `pool { coalescing }` since the
+configuration moved into blocks, [ADR-0026](0026-configuration-in-blocks.md)). The decisions the ADR left to the
 implementation, with the RFC text they rest on ([RFC 9113 §9.1.1](../spec/rfc/9113.md#s9-1-1-connection-reuse)):
 
 - **The certificate: every check of a new connection, not the name alone.** RFC 9113 section 9.1.1: "The certificate
