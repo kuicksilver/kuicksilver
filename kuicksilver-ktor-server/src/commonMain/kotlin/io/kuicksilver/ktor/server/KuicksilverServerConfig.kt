@@ -736,9 +736,11 @@ public class Http3ServerConfig internal constructor() {
 
     /**
      * The QUIC transport of the HTTP/3 connections (`QuicConfig.Builder`). The engine derives and refuses
-     * `expert { maxUniStreams }` (at least 3 for HTTP/3, RFC 9114 section 6.2), `expert { resetStreamAt }` (on with
-     * [webTransport]) and `expert { cancelErrorCode }` (HTTP/3 resets with its own codes) with IllegalArgumentException at
-     * the start.
+     * `expert { resetStreamAt }` (on with [webTransport]) and `expert { cancelErrorCode }` (HTTP/3 resets with its own
+     * codes) with IllegalArgumentException at the start. `maxBidiStreams` and `expert { maxUniStreams }` stay settable:
+     * left alone, they default to 100, raised to fit [webTransport]'s sessions (`max(100, sessions x (initialMaxStreamsBidi
+     * + 1))` and `max(100, 3 + sessions x initialMaxStreamsUni)`); set, `expert { maxUniStreams }` must be at least 3 (RFC
+     * 9114 section 6.2) and both must fit the sessions.
      */
     public fun quic(block: QuicConfig.Builder.() -> Unit) {
         quicBuilder.block()

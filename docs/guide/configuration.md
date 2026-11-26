@@ -157,7 +157,10 @@ over TCP and QUIC alike, TLS 1.3 only.
 
 `Http3ClientConfig` (guide: [HTTP/3 on the client](ktor.md#http3-on-the-client)). Its `quic { }` block is a
 [`quicConfig { }`](#low-level) for the HTTP/3 connections: the engine derives and refuses `handshakeTimeout`
-(`connectTimeout`), `expert { maxUniStreams }`, `expert { resetStreamAt }` and `expert { cancelErrorCode }`. Its
+(`connectTimeout`), `expert { resetStreamAt }` and `expert { cancelErrorCode }`; `maxBidiStreams` and
+`expert { maxUniStreams }` (at least 3, RFC 9114 section 6.2) stay settable, and left alone default to 100 raised to fit
+`webTransport { maxSessionsPerConnection }` sessions at the limits of `settings { webTransport { } }`
+(`max(100, sessions x (initialMaxStreamsBidi + 1))`, `max(100, 3 + sessions x initialMaxStreamsUni)`). Its
 `settings { }` block is an [`http3Settings { }`](#low-level): the engine derives and refuses `enableConnectProtocol`,
 `h3Datagram`, `webTransport { enabled; maxSessions }` and `earlyData` (a server's policy); the per-session WebTransport
 limits `webTransport { initialMaxStreamsBidi; initialMaxStreamsUni; initialMaxData }` are the client's to set there.
@@ -404,7 +407,10 @@ start with a PROXY protocol header (v1 or v2) from one of the trusted sources, b
 
 `Http3ServerConfig` (guide: [HTTP/3 on the server](ktor.md#http3-on-the-server)): HTTP/3 on the UDP twin of every TLS
 connector's port. Its `quic { }` block is a [`quicConfig { }`](#low-level): the engine derives and refuses
-`expert { maxUniStreams }`, `expert { resetStreamAt }` (on with WebTransport) and `expert { cancelErrorCode }`. Its
+`expert { resetStreamAt }` (on with WebTransport) and `expert { cancelErrorCode }`; `maxBidiStreams` and
+`expert { maxUniStreams }` (at least 3, RFC 9114 section 6.2) stay settable, and left alone default to 100 raised to fit
+the `webTransport { }` sessions (`max(100, maxSessionsPerConnection x (initialMaxStreamsBidi + 1))`,
+`max(100, 3 + maxSessionsPerConnection x initialMaxStreamsUni)`); an explicit value they do not fit in fails the start. Its
 `settings { }` block is an [`http3Settings { }`](#low-level), `maxHeaderBlockTime` bounded by `requestHeaderTimeout`: the
 engine derives and refuses `enableConnectProtocol` (from `webSockets { overHttp3 }`, `webTransport { enabled }` and
 `connectUdp`), `h3Datagram`, `webTransport { }` and `earlyData`. The start logs at Info that an advertised HTTP/3 needs its
@@ -550,6 +556,7 @@ and a key of 0.2.x or of an earlier 0.3.0 snapshot names the key that replaced i
 | `kuicksilver.http3.quic.pathMtu.maxSend` | bytes, 1200..65 527 | 65 527 | 0.3.0 | `http3 { quic { pathMtu { maxSend } } }` ([Tunnels and NAT paths](quic.md#tunnels-and-nat-paths-wireguard)) |
 | `kuicksilver.http3.quic.pathMtu.discovery` | `true`/`false` | `true` | 0.3.0 | `http3 { quic { pathMtu { discovery } } }` |
 | `kuicksilver.http3.quic.migration.allow` | `true`/`false` | `true` | 0.3.0 | `http3 { quic { migration { allow } } }` |
+| `kuicksilver.http3.quic.expert.maxUniStreams` | at least 3 (RFC 9114 section 6.2) | 100, raised for WebTransport | 0.3.0 | `http3 { quic { expert { maxUniStreams } } }` |
 | `kuicksilver.webSockets.overHttp2` | `true`/`false` | `true` | 0.3.0 | `webSockets { overHttp2 }` |
 | `kuicksilver.webSockets.overHttp3` | `true`/`false` | `true` | 0.3.0 | `webSockets { overHttp3 }` |
 | `kuicksilver.webSockets.maxMessageSize` | bytes, at least 1 | 16 777 216 | 0.3.0 | `webSockets { maxMessageSize }` |
@@ -559,7 +566,6 @@ and a key of 0.2.x or of an earlier 0.3.0 snapshot names the key that replaced i
 
 The `kuicksilver.tls.*` keys other than the two files need `certificateChain` and `privateKey`, and
 `kuicksilver.connector.proxyProtocol.headerTimeout` and `maxHeaderSize` need `trustedSources`: the start fails otherwise.
-`kuicksilver.http3.quic.maxUniStreams` is refused: the engine derives it (RFC 9114 section 6.2).
 
 ## Low level
 
@@ -632,8 +638,9 @@ are the endpoint's ([`quicEndpointConfig { }`](#quicendpointconfig--)). Guide: [
 
 ### `quicConfig { expert { } }`
 
-`QuicConfig.Builder.Expert`, *experimental*: RFC knobs and interop switches. The Ktor engines derive `maxUniStreams`,
-`resetStreamAt` and `cancelErrorCode` and refuse them.
+`QuicConfig.Builder.Expert`, *experimental*: RFC knobs and interop switches. The Ktor engines derive `resetStreamAt`
+and `cancelErrorCode` and refuse them; they raise the default of `maxUniStreams` (and of `maxBidiStreams`) to fit their
+WebTransport sessions, and keep an explicit value.
 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
@@ -1011,7 +1018,7 @@ above under the new name only. Behaviour that changed with the defaults is in th
 | `tls { handshakeTimeout }` | `connectTimeout` | the TLS handshake's deadline is derived from it |
 | `tls { sessionTickets }`, `tls { genericAlerts }` | no replacement | ticket keys are a server's; the client sends the specific alert (`tlsConfig(role) { expert { genericAlerts } }` stays for the low-level API) |
 | `tls { echConfigList }` | `tls { ech { configLists = mapOf(host to list) } }` | per host; else the HTTPS record's |
-| `quic = quicConfig { … }` | `http3 { quic { … } }` | `handshakeTimeout` (= `connectTimeout`), `expert { maxUniStreams; resetStreamAt; cancelErrorCode }` are derived |
+| `quic = quicConfig { … }` | `http3 { quic { … } }` | `handshakeTimeout` (= `connectTimeout`), `expert { resetStreamAt; cancelErrorCode }` are derived |
 | `quic = quicConfig { handshakeTimeout }` | `connectTimeout` | `http3 { quic { handshakeTimeout } }` is refused |
 | `maxConnectionsCount` | `pool { maxConnections }` | |
 | `maxConnectionsPerRoute`, `maxIdleConnectionsPerRoute`, `idleTimeout` | `pool { maxConnectionsPerRoute; maxIdleConnectionsPerRoute; idleTimeout }` | |
@@ -1046,7 +1053,7 @@ above under the new name only. Behaviour that changed with the defaults is in th
 | `requestHeaderTimeoutSeconds: Int` | `requestHeaderTimeout: Duration` | |
 | `http3 = false` | `http3 { enabled = false }` | |
 | `altSvc` | `http3 { altSvc }` | |
-| `quic = quicConfig { … }` | `http3 { quic { … } }` | `expert { maxUniStreams; resetStreamAt; cancelErrorCode }` are derived |
+| `quic = quicConfig { … }` | `http3 { quic { … } }` | `expert { resetStreamAt; cancelErrorCode }` are derived |
 | `quicMaxIdleTimeout` | `http3 { quic { maxIdleTimeout } }` | the second way to set it is gone |
 | `udpSocketCount` | `http3 { endpoint { loops } }` | |
 | `quicAdmission` (null: the default) | `http3 { endpoint { admission } }` | not nullable; default `ConnectionAdmission.default()` |
@@ -1126,4 +1133,4 @@ file that holds both the scalar and the block keeps only the last definition (HO
 | `kuicksilver.quic.keepAlive` | `kuicksilver.http3.quic.keepAlive` | 0.3.0 snapshot (`0` is `off` now) |
 | `kuicksilver.quic.maxBidiStreams` | `kuicksilver.http3.quic.maxBidiStreams` | 0.3.0 snapshot |
 | `kuicksilver.quic.allowMigration` | `kuicksilver.http3.quic.migration.allow` | 0.3.0 snapshot |
-| `kuicksilver.quic.maxUniStreams` | removed: the engine derives it | 0.3.0 snapshot |
+| `kuicksilver.quic.maxUniStreams` | `kuicksilver.http3.quic.expert.maxUniStreams` | 0.3.0 snapshot |

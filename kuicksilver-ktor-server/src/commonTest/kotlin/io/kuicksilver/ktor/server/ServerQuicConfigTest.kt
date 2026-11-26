@@ -99,7 +99,7 @@ class ServerQuicConfigTest {
                     server.stop(100, 500)
                 }
             assertTrue("RFC 9114 section 6.2" in e.message.orEmpty(), e.message)
-            // derived whether HTTP/3 is served or not: assigning it is the mistake
+            // refused whether HTTP/3 is served or not: the block is checked at every start
             assertFailsWith<IllegalArgumentException> {
                 val (server, _) =
                     tlsServer({

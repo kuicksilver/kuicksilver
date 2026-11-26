@@ -103,6 +103,7 @@ public object EngineMain {
             "kuicksilver.http3.quic.pathMtu.maxSend",
             "kuicksilver.http3.quic.pathMtu.discovery",
             "kuicksilver.http3.quic.migration.allow",
+            "kuicksilver.http3.quic.expert.maxUniStreams",
             "kuicksilver.webSockets.overHttp2",
             "kuicksilver.webSockets.overHttp3",
             "kuicksilver.webSockets.maxMessageSize",
@@ -145,15 +146,12 @@ public object EngineMain {
             "kuicksilver.quic.keepAlive" to "kuicksilver.http3.quic.keepAlive",
             "kuicksilver.quic.maxBidiStreams" to "kuicksilver.http3.quic.maxBidiStreams",
             "kuicksilver.quic.allowMigration" to "kuicksilver.http3.quic.migration.allow",
+            "kuicksilver.quic.maxUniStreams" to "kuicksilver.http3.quic.expert.maxUniStreams",
         )
-
-    /** Keys that are gone because the engine derives their value, and why. */
-    internal val DERIVED_KEYS: Map<String, String> =
-        mapOf("kuicksilver.quic.maxUniStreams" to "RFC 9114 section 6.2: HTTP/3 needs at least 3, the engine keeps the default")
 
     /**
      * Refuses every key under `kuicksilver.` that is not one of [KNOWN_KEYS], the first in alphabetical order: an old key
-     * with its replacement, a derived one with its reason, any other with the closest known key when there is one.
+     * with its replacement, any other with the closest known key when there is one.
      */
     internal fun checkKeys(config: ApplicationConfig) {
         val keys =
@@ -169,7 +167,6 @@ public object EngineMain {
                 throw IllegalArgumentException("kuicksilver.http3 = true|false was replaced in 0.3.0 by kuicksilver.http3.enabled")
             }
             RENAMED_KEYS[key]?.let { throw IllegalArgumentException("$key was replaced in 0.3.0 by $it") }
-            DERIVED_KEYS[key]?.let { throw IllegalArgumentException("$key is derived by the engine ($it); remove it") }
             throw IllegalArgumentException(
                 "$key is not a Kuicksilver key" + (suggestion(key)?.let { "; did you mean $it?" } ?: ""),
             )
@@ -266,6 +263,11 @@ public object EngineMain {
         k.int("kuicksilver.http3.quic.pathMtu.maxSend") { q.pathMtu.maxSend = it }
         k.boolean("kuicksilver.http3.quic.pathMtu.discovery") { q.pathMtu.discovery = it }
         k.boolean("kuicksilver.http3.quic.migration.allow") { q.migration.allow = it }
+        k.long("kuicksilver.http3.quic.expert.maxUniStreams") {
+            // the engine refuses less at its start; the key is named now
+            require(it >= 3) { "must be at least 3 (RFC 9114 section 6.2: the peer opens its control and QPACK streams), not $it" }
+            q.expert.maxUniStreams = it
+        }
         if (config.keys().any { it.startsWith("kuicksilver.http3.quic.") }) {
             try {
                 q.build()

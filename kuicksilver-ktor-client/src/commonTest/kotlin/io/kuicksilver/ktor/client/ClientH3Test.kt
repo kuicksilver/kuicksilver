@@ -145,7 +145,7 @@ class ClientH3Test {
      * settings grant fewer is refused when it is created, unless it never speaks HTTP/3.
      */
     @Test fun negative_fewerThanThreeUniStreamsAreRefused() {
-        // the engine derives the limit: any explicit value is refused, HTTP/3 on or off (ADR-0026)
+        // the block is checked whether HTTP/3 is on or off
         for (discovery in listOf(Http3Discovery.Preferred, null)) {
             val e =
                 assertFailsWith<IllegalArgumentException> {

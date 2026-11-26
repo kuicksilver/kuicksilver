@@ -343,7 +343,10 @@ public class QuicConfig private constructor(
      */
     @KuicksilverDsl
     public class Builder {
-        /** The derived options assigned explicitly (`handshakeTimeout`, `expert.maxUniStreams`, ...): a layer above refuses them. */
+        /**
+         * The options assigned explicitly (`handshakeTimeout`, `expert.maxUniStreams`, ...): a layer above refuses those it
+         * derives, and derives a default of its own for the others it tracks.
+         */
         internal val assigned: MutableSet<String> = mutableSetOf()
 
         /**
@@ -374,9 +377,14 @@ public class QuicConfig private constructor(
 
         /**
          * Default 100: bidirectional streams the peer may have open at once (`initial_max_streams_bidi`, RFC 9000 section
-         * 4.6), at most 2^60; MAX_STREAMS raises the limit as they close. For HTTP/3, the requests a client may have in flight.
+         * 4.6), at most 2^60; MAX_STREAMS raises the limit as they close. For HTTP/3, the requests a client may have in flight;
+         * a Ktor engine raises the default to fit its WebTransport sessions.
          */
         public var maxBidiStreams: Long = 100
+            set(value) {
+                field = value
+                assigned += "maxBidiStreams"
+            }
 
         /**
          * Default `listOf(VersionProfile.V1)`: versions in preference order (RFC 9368 section 3: the client's Available
@@ -577,7 +585,8 @@ public class QuicConfig private constructor(
         ) {
             /**
              * Default 100: unidirectional streams the peer may have open at once (`initial_max_streams_uni`, RFC 9000 section
-             * 4.6), at most 2^60. HTTP/3 needs at least 3 (RFC 9114 section 6.2), so a Ktor engine sets it itself.
+             * 4.6), at most 2^60. HTTP/3 needs at least 3 (RFC 9114 section 6.2); a Ktor engine raises the default to fit its
+             * WebTransport sessions.
              */
             public var maxUniStreams: Long = 100
                 set(value) {
@@ -649,7 +658,7 @@ public class QuicConfig private constructor(
                 }
         }
 
-        /** The options of a layer above's derived set that were assigned explicitly here, such as `expert.maxUniStreams`. */
+        /** The tracked options assigned explicitly here, such as `expert.maxUniStreams`: a layer above refuses or keeps them. */
         @InternalKuicksilverApi
         public fun assignedOptions(): Set<String> = assigned.toSet()
 

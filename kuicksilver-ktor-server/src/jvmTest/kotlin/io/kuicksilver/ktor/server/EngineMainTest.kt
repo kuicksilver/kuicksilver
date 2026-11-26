@@ -463,7 +463,7 @@ class EngineMainTest {
             refused("-P:kuicksilver.http3.quic.maxBidiStreams=-1"),
         )
         assertEquals(
-            "kuicksilver.quic.maxUniStreams is derived by the engine (RFC 9114 section 6.2: HTTP/3 needs at least 3, the engine keeps the default); remove it",
+            "kuicksilver.quic.maxUniStreams was replaced in 0.3.0 by kuicksilver.http3.quic.expert.maxUniStreams",
             refused("-P:kuicksilver.quic.maxUniStreams=many"),
         )
         // a misspelt key does not leave the default in place silently

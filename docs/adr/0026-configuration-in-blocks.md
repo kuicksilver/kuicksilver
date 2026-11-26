@@ -41,7 +41,8 @@ The principles, checked by `tools/check/config-table.sh` and review:
    turned on and off with `enabled` inside its block.
 4. **Derived options are not settable.** The low-level builders record which options were assigned explicitly, and a
    Ktor engine refuses an explicit assignment of an option it derives with an `IllegalArgumentException` that names the
-   option and why (for example `http3 { quic { expert { maxUniStreams } } } is derived by the engine (RFC 9114 section 6.2)`).
+   option and why (for example `http3 { quic { expert { cancelErrorCode } } } is derived by the engine (HTTP/3 resets with
+   its own codes (RFC 9114 section 8.1))`).
 5. **Time is a `Duration`** everywhere; in the configuration file a duration string (`30s`, `1h`, `PT30S`).
 6. **One encoding of "off" or "no limit":** `null` of a nullable type in Kotlin, `off` in the configuration file, where
    `0` for such a key is refused with a hint. Three options where "off" is not the only special value get a sealed type:
@@ -159,7 +160,7 @@ The design left these cases open or met them only in the code; each was decided 
   same socket; only `host = null` falls back to `0.0.0.0` (logged at Info) where IPv6 cannot be bound (no IPv6 in the
   kernel, `java.net.preferIPv4Stack`). The resolved connector reports `::`, so Ktor logs `Responding at https://:::443`.
 - **Old configuration-file keys are refused, never read.** `RENAMED_KEYS` holds the four 0.2.x keys and every renamed key of
-  the 0.3.0 snapshots; `DERIVED_KEYS` refuses `kuicksilver.quic.maxUniStreams` as derived. Any other unknown key gets the
+  the 0.3.0 snapshots. Any other unknown key gets the
   closest name: a renamed key within 3 edits, else a known key within 3 edits, else the one known key with the same last
   name. The checks read Ktor's key list, so `application.yaml` takes the same keys (not covered by a test:
   `ktor-server-config-yaml` is not in the dependency verification metadata).
@@ -192,3 +193,15 @@ The design left these cases open or met them only in the code; each was decided 
   was advertised rounded down (`0.5 ms` as 0, which is "no idle timeout") and the peer's view and ours differed. A value
   that is not a whole number of milliseconds is refused rather than rounded, so what is advertised is what runs;
   `maxAckDelay` must also be at least 0. Every `EngineMain` duration key takes whole milliseconds for the same reason.
+- **The QUIC stream limits are not derived.** With `expert { maxUniStreams }` refused as derived, WebTransport with 8
+  sessions a connection or 30 unidirectional streams a session could not start: its sessions must fit the QUIC limits
+  (draft-ietf-webtrans-http3-17 section 5.1), and the default 100 does not hold them. Both engines keep `maxBidiStreams` and
+  `expert { maxUniStreams }` settable, the latter at least 3 (RFC 9114 section 6.2, refused with its own message); left
+  alone, each defaults to 100 raised to fit the sessions of one connection, `max(100, sessions x (initialMaxStreamsBidi +
+  1))` and `max(100, 3 + sessions x initialMaxStreamsUni)`, saturating at 2^60. The server, whose WebTransport has a
+  switch, refuses at its start an explicit value its sessions do not fit; the client, which has none, leaves that refusal
+  to the HTTP/3 layer at its first WebTransport connection, so an application that never opens a session may grant fewer.
+  RFC 9114 section 6.1 ("at least 100 request streams SHOULD be permitted") is met by the default; a smaller explicit
+  `maxBidiStreams` is the application's choice and is not refused. `EngineMain` gains `kuicksilver.http3.quic.expert.maxUniStreams`:
+  expert options get keys under their DSL path, and the snapshot's `kuicksilver.quic.maxUniStreams` is a renamed key now;
+  `DERIVED_KEYS` is gone with its only entry.

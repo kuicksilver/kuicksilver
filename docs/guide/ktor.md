@@ -419,8 +419,8 @@ idle timeout, streams, windows, path MTU), `settings { }` (`Http3Settings.Builde
 server), `maxConnections`, `maxConnectionsPerIp`, `acceptQueue`, `admission` (Retry policy, Ktor-Netty's
 `quicTokenHandler`), `maxConnectionLifetime`, `loadBalancer` (QUIC-LB connection IDs, experimental;
 `engine.updateLoadBalancer` changes them, [QUIC: Behind a load balancer](quic.md#behind-a-load-balancer); the connection
-ID length follows it) and `expert { }`. The engine derives what follows from other options (`expert { maxUniStreams }`,
-`resetStreamAt`, `cancelErrorCode` in `quic { }`; `enableConnectProtocol`, `h3Datagram`, `webTransport`, `earlyData` in
+ID length follows it) and `expert { }`. The engine derives what follows from other options (`expert { resetStreamAt }`
+and `cancelErrorCode` in `quic { }`; `enableConnectProtocol`, `h3Datagram`, `webTransport`, `earlyData` in
 `settings { }`) and refuses them when assigned, naming the option. UDP socket buffer sizes are not configurable yet.
 
 The engine serves HTTP/3 on every target, Kotlin/Native Linux, Apple and Windows included (the accelerated `ksl` socket,
@@ -1196,14 +1196,14 @@ connector, which has no DSL block) and Ktor's own `ktor.deployment.connectionIdl
 | `kuicksilver.http3.quic.maxIdleTimeout`, `.handshakeTimeout`, `.keepAlive`, `.maxBidiStreams` | `http3 { quic { … } }`: the idle timeout (`30s`; `off` advertises none), the handshake deadline (`10s`), the PING interval of a quiet connection (`off`) and the request streams a client may have open (`100`) |
 | `kuicksilver.http3.quic.pathMtu.maxReceive`, `.initial`, `.maxSend`, `.discovery` | `http3 { quic { pathMtu { … } } }`: the advertised `max_udp_payload_size` (1200..1500, the endpoint's datagram slots), the datagram size a connection starts with, the largest datagram sent and DPLPMTUD; see [Tunnels and NAT paths](quic.md#tunnels-and-nat-paths-wireguard) |
 | `kuicksilver.http3.quic.migration.allow` | `http3 { quic { migration { allow } } }`: follow a client to a new address (`true`) |
+| `kuicksilver.http3.quic.expert.maxUniStreams` | `http3 { quic { expert { maxUniStreams } } }`: unidirectional streams a client may open, at least 3 (`100`, raised to fit WebTransport) |
 | `kuicksilver.webSockets.overHttp2`, `.overHttp3` | `webSockets { overHttp2, overHttp3 }`: accept RFC 8441 and RFC 9220 WebSockets (`true`); see [WebSockets over HTTP/2](#websockets-over-http2) |
 | `kuicksilver.webSockets.maxMessageSize` | `webSockets { maxMessageSize }`: the largest WebSocket message a client may send, in bytes (`16777216`) |
 | `kuicksilver.tcp.maxConnections` | `tcp { maxConnections }`: TCP connections a connector holds at once (`10000`); see [Connection limits](#connection-limits) |
 | `kuicksilver.tcp.maxConnectionsPerIp` | `tcp { maxConnectionsPerIp }`: TCP connections of one client address on a connector (`off`; e.g. `256` for a server that faces clients directly); see [Connection limits](#connection-limits) |
 | `ktor.deployment.connectionIdleTimeoutSeconds` | Ktor's key, read into `http1 { idleTimeout }` (`45`) |
 
-The QUIC transport keys set `http3 { quic { } }` as the DSL does; `kuicksilver.quic.maxUniStreams` of 0.3.0 snapshots is
-refused, since the engine derives it (HTTP/3 needs at least 3). Every key with its type and release is in the
+The QUIC transport keys set `http3 { quic { } }` as the DSL does. Every key with its type and release is in the
 [configuration reference](configuration.md#hocon-keys).
 
 An `application.conf` (HOCON) for a TLS and HTTP/3 server on port 443 whose certificate certbot renews; every key not

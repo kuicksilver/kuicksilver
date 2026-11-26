@@ -116,6 +116,7 @@ class EngineMainKeysTest {
             Row("kuicksilver.http3.quic.pathMtu.maxSend", "1380") { assertEquals(1380, it.resolveQuic().maxSendUdpPayloadSize) },
             Row("kuicksilver.http3.quic.pathMtu.discovery", "false") { assertEquals(false, it.resolveQuic().pmtud) },
             Row("kuicksilver.http3.quic.migration.allow", "false") { assertEquals(false, it.resolveQuic().allowMigration) },
+            Row("kuicksilver.http3.quic.expert.maxUniStreams", "16") { assertEquals(16L, it.resolveQuic().maxUniStreams) },
             Row("kuicksilver.webSockets.overHttp2", "false") { assertEquals(false, it.webSockets.overHttp2) },
             Row("kuicksilver.webSockets.overHttp3", "false") { assertEquals(false, it.webSockets.overHttp3) },
             Row("kuicksilver.webSockets.maxMessageSize", "1024") { assertEquals(1024L, it.webSockets.maxMessageSize) },
@@ -168,11 +169,22 @@ class EngineMainKeysTest {
         )
     }
 
-    @Test fun negative_aDerivedKeyIsRefused() {
+    /** The snapshot's key of the QUIC unidirectional stream limit, which the engine derived then, is the expert key now. */
+    @Test fun negative_theSnapshotMaxUniStreamsKeyNamesTheExpertKey() {
         assertEquals(
-            "kuicksilver.quic.maxUniStreams is derived by the engine (RFC 9114 section 6.2: HTTP/3 needs at least 3, the engine keeps the default); remove it",
+            "kuicksilver.quic.maxUniStreams was replaced in 0.3.0 by kuicksilver.http3.quic.expert.maxUniStreams",
             refused("kuicksilver.quic.maxUniStreams=16"),
         )
+    }
+
+    /** RFC 9114 section 6.2: the peer opens its control and QPACK streams, so HTTP/3 grants at least 3. */
+    @Test fun negative_maxUniStreamsKeyBelowThreeIsRefused() {
+        assertEquals(
+            "kuicksilver.http3.quic.expert.maxUniStreams: must be at least 3 (RFC 9114 section 6.2: the peer opens its control " +
+                "and QPACK streams), not 2",
+            refused("kuicksilver.http3.quic.expert.maxUniStreams=2"),
+        )
+        assertEquals(3L, configuration("kuicksilver.http3.quic.expert.maxUniStreams=3").resolveQuic().maxUniStreams)
     }
 
     @Test fun negative_aTypoNamesTheClosestKey() {

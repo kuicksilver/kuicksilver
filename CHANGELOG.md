@@ -1149,8 +1149,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `qpack { }`, `ech { }`, `observability { }`, `runtime { }`, `floodLimits { }` and an experimental `expert { }` each.
   "Off" is `null` everywhere (`Duration.ZERO`, `Duration.INFINITE` and `0` for "none" are refused), time is a `Duration`,
   byte and stream counts are `Long`, a rate with its burst is one `RateLimit`. An engine derives what follows from other
-  options (ALPN, the server name, the connection ID length, the HTTP/3 stream minimum, Extended CONNECT, the client's
-  handshake deadline) and refuses an explicit assignment with `... is derived by the engine (<why>); remove it`. The
+  options (ALPN, the server name, the connection ID length, Extended CONNECT, the client's
+  handshake deadline) and refuses an explicit assignment with `... is derived by the engine (<why>); remove it`; the QUIC
+  stream limits stay settable (`expert { maxUniStreams }` at least 3, RFC 9114 section 6.2) and default to 100, raised to
+  fit the WebTransport sessions of a connection (`kuicksilver.http3.quic.expert.maxUniStreams` in `EngineMain`). The
   readers of `QuicConfig`, `QuicEndpointConfig`, `Http3Settings` and `Http2Settings` are internal: build with the DSL,
   copy with `toBuilder()`. The first-screen options of both engines are stable; `@SecuritySensitive` marks the options whose
   wrong value weakens security (🔒 in the reference). No deprecated aliases exist: an old Kotlin name does not compile, and

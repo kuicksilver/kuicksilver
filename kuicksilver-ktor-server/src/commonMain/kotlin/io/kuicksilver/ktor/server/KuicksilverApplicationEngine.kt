@@ -237,17 +237,37 @@ public class KuicksilverApplicationEngine(
         /**
          * The QUIC settings of the HTTP/3 listeners: the `http3 { quic { } }` block, its derived options refused, with
          * `resetStreamAt` on for WebTransport (its streams keep their header when reset, draft-ietf-webtrans-http3-17
-         * section 4.4). Throws IllegalArgumentException naming a derived option that was assigned.
+         * section 4.4) and the stream limits a default that fits the WebTransport sessions ([quicStreamLimits]). Throws
+         * IllegalArgumentException naming a derived option that was assigned, or a stream limit that is too small.
          */
         @OptIn(ExperimentalKuicksilverApi::class)
         internal fun resolveQuic(): QuicConfig {
-            refuseDerived("http3 { quic { ", http3.quicBuilder.assignedOptions(), QUIC_DERIVED)
-            val built = http3.quicBuilder.build()
-            return if (http3.webTransport.enabled && !built.resetStreamAt) {
-                built.toBuilder().apply { expert { resetStreamAt = true } }.build()
-            } else {
-                built
-            }
+            val q = http3.quicBuilder
+            val assigned = q.assignedOptions()
+            refuseDerived("http3 { quic { ", assigned, QUIC_DERIVED)
+            val wt = http3.webTransport
+            val sessions = if (wt.enabled) wt.maxSessionsPerConnection.toLong() else 0L
+            val built = q.build()
+            val (bidi, uni) =
+                quicStreamLimits(
+                    built,
+                    assigned,
+                    sessions,
+                    wt.initialMaxStreamsBidi,
+                    wt.initialMaxStreamsUni,
+                    wt.initialMaxStreamsBidi != 0L || wt.initialMaxStreamsUni != 0L || wt.initialMaxData != 0L,
+                )
+            val resetStreamAt = wt.enabled && !built.resetStreamAt
+            if (bidi == built.maxBidiStreams && uni == built.maxUniStreams && !resetStreamAt) return built
+            return built
+                .toBuilder()
+                .apply {
+                    maxBidiStreams = bidi
+                    expert {
+                        maxUniStreams = uni
+                        if (resetStreamAt) this.resetStreamAt = true
+                    }
+                }.build()
         }
 
         /**
@@ -303,7 +323,6 @@ public class KuicksilverApplicationEngine(
             /** The QUIC options the server engine derives, and why (the refusal names both). */
             val QUIC_DERIVED: Map<String, String> =
                 mapOf(
-                    "expert.maxUniStreams" to "RFC 9114 section 6.2: HTTP/3 needs at least 3, the engine keeps the default",
                     "expert.resetStreamAt" to "on with http3 { webTransport { enabled } }, draft-ietf-webtrans-http3-17 section 4.4",
                     "expert.cancelErrorCode" to "HTTP/3 resets with its own codes (RFC 9114 section 8.1)",
                 )
@@ -318,6 +337,67 @@ public class KuicksilverApplicationEngine(
                         "initialMaxStreamsBidi, initialMaxStreamsUni and initialMaxData are http3 { webTransport { } }",
                     "earlyData" to "set with http3 { earlyData { policy } }",
                 )
+
+            /**
+             * The stream limits of the HTTP/3 connections, bidirectional and unidirectional. An explicit value is kept (the
+             * unidirectional one at least 3, RFC 9114 section 6.2: the peer opens its control and QPACK streams); one left
+             * alone is the default raised so that [sessions] WebTransport sessions at their initial limits fit
+             * (draft-ietf-webtrans-http3-17 section 5.1): `max(100, sessions x (bidi + 1))` bidirectional streams (each
+             * session's streams and its CONNECT stream) and `max(100, 3 + sessions x uni)` unidirectional ones. With
+             * WebTransport flow control ([flowControl]) an explicit value they do not fit in is refused here, naming the
+             * options, rather than at bind. The options are those of `http3 { quic { } }` and `http3 { webTransport { } }`.
+             */
+            fun quicStreamLimits(
+                built: QuicConfig,
+                assigned: Set<String>,
+                sessions: Long,
+                bidiPerSession: Long,
+                uniPerSession: Long,
+                flowControl: Boolean,
+            ): Pair<Long, Long> {
+                val needBidi = if (flowControl) atLeast(sessions, bidiPerSession + 1, 0) else 0
+                val needUni = if (flowControl) atLeast(sessions, uniPerSession, 3) else 3
+                val sessionsOption = "http3 { webTransport { maxSessionsPerConnection } } ($sessions)"
+                val uni =
+                    if ("expert.maxUniStreams" in assigned) {
+                        val n = built.maxUniStreams
+                        require(n >= 3) {
+                            "http3 { quic { expert { maxUniStreams } } } must be at least 3 (RFC 9114 section 6.2: the peer " +
+                                "opens its control and QPACK streams), not $n"
+                        }
+                        require(n >= needUni) {
+                            "http3 { quic { expert { maxUniStreams } } } ($n) is below 3 + $sessionsOption x " +
+                                "initialMaxStreamsUni ($uniPerSession): raise it, or leave it to the engine"
+                        }
+                        n
+                    } else {
+                        maxOf(built.maxUniStreams, needUni)
+                    }
+                val bidi =
+                    if ("maxBidiStreams" in assigned) {
+                        val n = built.maxBidiStreams
+                        require(n >= needBidi) {
+                            "http3 { quic { maxBidiStreams } } ($n) is below $sessionsOption x (initialMaxStreamsBidi " +
+                                "($bidiPerSession) + its CONNECT stream): raise it, or leave it to the engine"
+                        }
+                        n
+                    } else {
+                        maxOf(built.maxBidiStreams, needBidi)
+                    }
+                return bidi to uni
+            }
+
+            /** `extra + sessions x perSession`, at most 2^60 (the most streams QUIC can grant, RFC 9000 section 4.6). */
+            private fun atLeast(
+                sessions: Long,
+                perSession: Long,
+                extra: Long,
+            ): Long {
+                val max = 1L shl 60
+                if (sessions == 0L) return extra
+                if (perSession > (max - extra) / sessions) return max
+                return extra + sessions * perSession
+            }
 
             /** Refuses the derived options a block assigned, naming the first one and its source. */
             fun refuseDerived(

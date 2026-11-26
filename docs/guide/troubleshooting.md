@@ -604,8 +604,6 @@ keys is in the [configuration reference](configuration.md#hocon-keys). Anything 
   later definition, so search the file for the old line.
 - "<key> is not a Kuicksilver key[; did you mean <key>?]": a misspelt or invented key; the hint is the closest known
   key (a renamed key or a known one within three edits, or the known key with the same last name).
-- "<key> is derived by the engine (<reason>); remove it": `kuicksilver.quic.maxUniStreams` is set by the engine
-  (HTTP/3 needs at least 3 unidirectional streams, RFC 9114 section 6.2).
 - "<key>: use off instead of 0": "none" or "no limit" is `off` for the keys that have one (`tls.reloadInterval`,
   `http2.repeatOffenderPenalty`, `http3.endpoint.maxConnectionsPerIp`, `http3.quic.maxIdleTimeout`,
   `http3.quic.keepAlive`, `tcp.maxConnectionsPerIp`); `0` there was "off" for some keys in 0.2.x and is refused.
@@ -621,7 +619,6 @@ or the server starts: the block sets an option whose value follows from another 
 | Engine | Derived option | Its source |
 |---|---|---|
 | client | `http3 { quic { handshakeTimeout } }` | the engine's `connectTimeout` |
-| client and server | `http3 { quic { expert { maxUniStreams } } }` | HTTP/3 needs at least 3 (RFC 9114 section 6.2); the default 100 stays |
 | client and server | `http3 { quic { expert { resetStreamAt } } }` | on for WebTransport |
 | client and server | `http3 { quic { expert { cancelErrorCode } } }` | HTTP/3 resets streams with its own codes |
 | client and server | `http3 { settings { enableConnectProtocol } }` | on for WebSockets and WebTransport (the server: and CONNECT-UDP) |

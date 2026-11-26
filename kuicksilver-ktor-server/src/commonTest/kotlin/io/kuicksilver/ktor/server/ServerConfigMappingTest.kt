@@ -367,18 +367,6 @@ class ServerConfigMappingTest {
             assertTrue(e.message!!.startsWith(expected), e.message)
             assertTrue(e.message!!.endsWith("; remove it"), e.message)
         }
-        refused("http3 { quic { expert { maxUniStreams } } } is derived by the engine (RFC 9114", {
-            http3 {
-                quic {
-                    expert {
-                        maxUniStreams =
-                            10
-                    }
-                }
-            }
-        }) {
-            resolveQuic()
-        }
         refused(
             "http3 { quic { expert { resetStreamAt } } } is derived",
             { http3 { quic { expert { resetStreamAt = true } } } },
@@ -408,11 +396,152 @@ class ServerConfigMappingTest {
                         host = "127.0.0.1"
                         port = 0
                     }
-                    http3 { quic { expert { maxUniStreams = 2 } } }
+                    http3 { quic { expert { cancelErrorCode = 1 } } }
                 }) {}
             val e = assertFailsWith<IllegalArgumentException> { server.startSuspend(false) }
-            assertTrue("maxUniStreams" in e.message!!, e.message)
+            assertTrue("cancelErrorCode" in e.message!!, e.message)
             runCatching { server.stopSuspend(0, 0) }
+        }
+
+    /**
+     * The stream limits are the application's again (a review of the 0.3.0 layout: with them derived, WebTransport with 8
+     * sessions or 30 unidirectional streams a session could not start). Left alone they fit the sessions; set, they are kept.
+     */
+    @Test fun streamLimitsFitWebTransportOrAreKept() {
+        assertEquals(100L, config { }.resolveQuic().maxUniStreams)
+        assertEquals(100L, config { }.resolveQuic().maxBidiStreams)
+        // the defaults fit 4 sessions of 24 + 24 streams exactly: nothing is raised
+        assertEquals(100L, config { http3 { webTransport { enabled = true } } }.resolveQuic().maxUniStreams)
+        assertEquals(100L, config { http3 { webTransport { enabled = true } } }.resolveQuic().maxBidiStreams)
+        val eight =
+            config {
+                http3 {
+                    webTransport {
+                        enabled = true
+                        maxSessionsPerConnection = 8
+                    }
+                }
+            }.resolveQuic()
+        assertEquals(3L + 8 * 24, eight.maxUniStreams)
+        assertEquals(8L * (24 + 1), eight.maxBidiStreams)
+        val thirty =
+            config {
+                http3 {
+                    webTransport {
+                        enabled = true
+                        initialMaxStreamsUni = 30
+                    }
+                }
+            }.resolveQuic()
+        assertEquals(3L + 4 * 30, thirty.maxUniStreams)
+        // WebTransport off: its limits ask for nothing
+        assertEquals(100L, config { http3 { webTransport { maxSessionsPerConnection = 8 } } }.resolveQuic().maxUniStreams)
+        // explicit values are kept, above and below the default
+        assertEquals(30L, config { http3 { quic { expert { maxUniStreams = 30 } } } }.resolveQuic().maxUniStreams)
+        assertEquals(3L, config { http3 { quic { expert { maxUniStreams = 3 } } } }.resolveQuic().maxUniStreams)
+        assertEquals(2L, config { http3 { quic { maxBidiStreams = 2 } } }.resolveQuic().maxBidiStreams)
+        assertEquals(
+            1000L,
+            config {
+                http3 {
+                    webTransport { enabled = true }
+                    quic { expert { maxUniStreams = 1000 } }
+                }
+            }.resolveQuic().maxUniStreams,
+        )
+        // without WebTransport flow control the sessions share the connection's limits: nothing to fit
+        val noFlowControl =
+            config {
+                http3 {
+                    webTransport {
+                        enabled = true
+                        maxSessionsPerConnection = 8
+                        initialMaxStreamsBidi = 0
+                        initialMaxStreamsUni = 0
+                        initialMaxData = 0
+                    }
+                }
+            }.resolveQuic()
+        assertEquals(100L, noFlowControl.maxUniStreams)
+        // a huge per-session limit saturates at 2^60 (the most QUIC grants) instead of overflowing
+        val huge =
+            config {
+                http3 {
+                    webTransport {
+                        enabled = true
+                        initialMaxStreamsUni = Long.MAX_VALUE / 2
+                    }
+                }
+            }.resolveQuic()
+        assertEquals(1L shl 60, huge.maxUniStreams)
+    }
+
+    /** RFC 9114 section 6.2 and the WebTransport sessions bound an explicit stream limit; each refusal names its options. */
+    @Test fun negative_explicitStreamLimitsTooSmallAreRefused() {
+        val two = assertFailsWith<IllegalArgumentException> { config { http3 { quic { expert { maxUniStreams = 2 } } } }.resolveQuic() }
+        assertEquals(
+            "http3 { quic { expert { maxUniStreams } } } must be at least 3 (RFC 9114 section 6.2: the peer opens its control and " +
+                "QPACK streams), not 2",
+            two.message,
+        )
+        val uni =
+            assertFailsWith<IllegalArgumentException> {
+                config {
+                    http3 {
+                        webTransport { enabled = true }
+                        quic { expert { maxUniStreams = 50 } }
+                    }
+                }.resolveQuic()
+            }
+        assertEquals(
+            "http3 { quic { expert { maxUniStreams } } } (50) is below 3 + http3 { webTransport { maxSessionsPerConnection } } (4) " +
+                "x initialMaxStreamsUni (24): raise it, or leave it to the engine",
+            uni.message,
+        )
+        val bidi =
+            assertFailsWith<IllegalArgumentException> {
+                config {
+                    http3 {
+                        webTransport { enabled = true }
+                        quic { maxBidiStreams = 99 }
+                    }
+                }.resolveQuic()
+            }
+        assertEquals(
+            "http3 { quic { maxBidiStreams } } (99) is below http3 { webTransport { maxSessionsPerConnection } } (4) x " +
+                "(initialMaxStreamsBidi (24) + its CONNECT stream): raise it, or leave it to the engine",
+            bidi.message,
+        )
+    }
+
+    /** Self-attack: a WebTransport server with 8 sessions a connection now starts (its HTTP/3 endpoint binds). */
+    @Test fun webTransportWithEightSessionsStarts() =
+        serverTest {
+            val server =
+                kuicksilverServer(null, configure = {
+                    tlsConnector {
+                        tls { identity = ServerFixtures.identity() }
+                        host = "127.0.0.1"
+                        port = 0
+                    }
+                    http3 {
+                        webTransport {
+                            enabled = true
+                            maxSessionsPerConnection = 8
+                            initialMaxStreamsUni = 30
+                            // 8 sessions x the default 3.75 MiB exceed the 15 MiB connection window, a limit of its own
+                            initialMaxData = 1_048_576
+                        }
+                    }
+                }) {}
+            try {
+                server.startSuspend(false)
+                assertEquals(3L + 8 * 30, server.engine.h3Quic.maxUniStreams)
+                val status = server.engine.http3Status.single()
+                assertTrue(status.served && status.reason == null, status.toString())
+            } finally {
+                server.stopSuspend(0, 500)
+            }
         }
 
     @Test fun negative_outOfRangeValuesNameTheirPath() {

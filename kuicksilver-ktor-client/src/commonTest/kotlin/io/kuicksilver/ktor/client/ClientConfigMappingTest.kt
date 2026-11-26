@@ -199,7 +199,6 @@ class ClientConfigMappingTest {
         val cases =
             listOf(
                 case("http3 { quic { handshakeTimeout } } is derived") { http3 { quic { handshakeTimeout = 3.seconds } } },
-                case("http3 { quic { expert { maxUniStreams } } } is derived") { http3 { quic { expert { maxUniStreams = 3 } } } },
                 case("http3 { quic { expert { resetStreamAt } } } is derived") { http3 { quic { expert { resetStreamAt = true } } } },
                 case("http3 { quic { expert { cancelErrorCode } } } is derived") { http3 { quic { expert { cancelErrorCode = 1 } } } },
                 case("http3 { settings { enableConnectProtocol } } is derived") { http3 { settings { enableConnectProtocol = true } } },
@@ -229,8 +228,68 @@ class ClientConfigMappingTest {
         // the per-session WebTransport limits are the client's own
         val limits = KuicksilverEngineConfig().apply { http3 { settings { webTransport { initialMaxData = 65_536 } } } }
         assertEquals(65_536L, limits.resolveHttp3Settings().webTransportInitialMaxData)
-        val same = KuicksilverEngineConfig().apply { http3 { quic { expert { maxUniStreams = 100 } } } }
+        val same = KuicksilverEngineConfig().apply { http3 { quic { expert { cancelErrorCode = 0 } } } }
         assertFailsWith<IllegalArgumentException> { same.resolveQuic() }
+    }
+
+    /**
+     * The stream limits are the application's again (a review of the 0.3.0 layout: with them derived, 8 WebTransport
+     * sessions a connection or 30 unidirectional streams a session could not connect). Left alone they fit the sessions of
+     * one connection; set, they are kept.
+     */
+    @Test fun streamLimitsFitWebTransportOrAreKept() {
+        fun resolved(configure: KuicksilverEngineConfig.() -> Unit) = KuicksilverEngineConfig().apply(configure).resolveQuic()
+        // the defaults fit 4 sessions of 24 + 24 streams exactly: nothing is raised
+        assertEquals(100L, resolved { }.maxUniStreams)
+        assertEquals(100L, resolved { }.maxBidiStreams)
+        val eight = resolved { http3 { webTransport { maxSessionsPerConnection = 8 } } }
+        assertEquals(3L + 8 * 24, eight.maxUniStreams)
+        assertEquals(8L * (24 + 1), eight.maxBidiStreams)
+        assertEquals(3L + 4 * 30, resolved { http3 { settings { webTransport { initialMaxStreamsUni = 30 } } } }.maxUniStreams)
+        // explicit values are kept, above and below the default; the handshake deadline is still derived next to them
+        val explicit =
+            resolved {
+                http3 {
+                    quic {
+                        maxBidiStreams = 500
+                        expert { maxUniStreams = 1000 }
+                    }
+                }
+            }
+        assertEquals(500L, explicit.maxBidiStreams)
+        assertEquals(1000L, explicit.maxUniStreams)
+        assertEquals(10.seconds, explicit.handshakeTimeout)
+        // without WebTransport flow control there is nothing to fit
+        val off =
+            resolved {
+                http3 {
+                    webTransport { maxSessionsPerConnection = 8 }
+                    settings {
+                        webTransport {
+                            initialMaxStreamsBidi = 0
+                            initialMaxStreamsUni = 0
+                            initialMaxData = 0
+                        }
+                    }
+                }
+            }
+        assertEquals(100L, off.maxUniStreams)
+        assertEquals(100L, off.maxBidiStreams)
+    }
+
+    /** RFC 9114 section 6.2 bounds an explicit unidirectional limit; one too small for WebTransport is kept (no switch). */
+    @Test fun negative_explicitUniStreamsBelowThreeAreRefused() {
+        val e =
+            assertFailsWith<IllegalArgumentException> {
+                KuicksilverEngineConfig().apply { http3 { quic { expert { maxUniStreams = 2 } } } }.resolveQuic()
+            }
+        assertEquals(
+            "http3 { quic { expert { maxUniStreams } } } must be at least 3 (RFC 9114 section 6.2: the peer opens its control and " +
+                "QPACK streams), not 2",
+            e.message,
+        )
+        assertEquals(50L, KuicksilverEngineConfig().apply { http3 { quic { expert { maxUniStreams = 50 } } } }.resolveQuic().maxUniStreams)
+        assertEquals(2L, KuicksilverEngineConfig().apply { http3 { quic { maxBidiStreams = 2 } } }.resolveQuic().maxBidiStreams)
     }
 
     /** Self-attack: a combination that cannot work fails when the engine is created, never at the first request. */
