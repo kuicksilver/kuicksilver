@@ -307,7 +307,7 @@ private suspend fun KuicksilverApplicationEngine.strikeOffender(
         val struck = withContext(NonCancellable) { offenders.strike(client) }
         if (struck) {
             val who = client?.let { RepeatOffenders.describe(it) } ?: "an unknown address"
-            environment.log.debug(
+            log.debug(
                 "HTTP/2: connections from $who keep ending in ENHANCE_YOUR_CALM (flood limits); " +
                     "refusing its connections for a while",
             )
@@ -379,7 +379,7 @@ private suspend fun KuicksilverApplicationEngine.handleH2(
         // RFC 9110 section 7.4 (RFC 9113 section 9.1.1): a request for a host this connection's certificate does not name
         // gets 421 and never reaches the application; the stream ends, the connection serves the client's other requests
         authorityCheck.rejection(r.scheme, r.authority)?.let { why ->
-            environment.log.debug(why)
+            log.debug(why)
             answered = runCatching { r.respond(MISDIRECTED_REQUEST, listOf("date" to httpDateNow()), endStream = true) }.isSuccess
             return
         }
@@ -422,7 +422,7 @@ private suspend fun KuicksilverApplicationEngine.handleH2(
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Throwable) {
-                        environment.log.debug("HTTP/2 stream ${r.id}: the error response failed too: $e")
+                        log.debug("HTTP/2 stream ${r.id}: the error response failed too: $e")
                     }
                 }
             } finally {
@@ -436,13 +436,13 @@ private suspend fun KuicksilverApplicationEngine.handleH2(
         throw e
     } catch (e: Throwable) {
         // the call's set-up (the application provider, the call itself) or its error handling failed: this stream only
-        environment.log.debug("HTTP/2 stream ${r.id} failed: $e")
+        log.debug("HTTP/2 stream ${r.id} failed: $e")
     } finally {
         // a call that failed after its response was committed cannot get the 500 any more: the stream is reset, unless it
         // already ended (section 5.4.2)
         if (!answered && !r.failed) runCatching { r.reset(Http2ErrorCode.INTERNAL_ERROR) }
         val release = configuration.h2ReleaseForTest
-        releaseH2Stream(r.id, environment.log, cancelled) { if (release == null) r.release() else release(r, cancelled) }
+        releaseH2Stream(r.id, log, cancelled) { if (release == null) r.release() else release(r, cancelled) }
     }
 }
 

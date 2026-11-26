@@ -232,3 +232,11 @@ The design left these cases open or met them only in the code; each was decided 
   well as HTTP/1.1's idle close, so `http1 { idleTimeout }` put a TCP-wide concept in a protocol block (principle 2). It
   sits with the TCP limits; Ktor's `ktor.deployment.connectionIdleTimeoutSeconds` sets it, and HTTP/3 keeps its own,
   `http3 { quic { maxIdleTimeout } }`.
+- **The server's logger is not nullable and covers the whole engine.** The client's `observability { logger }` was a
+  `KuicksilverLogger` for everything it logs, the server's a nullable one for its HTTP/3 endpoints alone. The server's is a
+  `KuicksilverLogger` too, defaulting to `ServerObservability.ApplicationLog`, a marker the engine replaces with Ktor's
+  `environment.log` (outside an engine it is `KuicksilverLogger.Default`): `null` meant "the application's log", not
+  "off", which principle 6 reserves it for. A logger of the application's own now takes every line the engine writes about
+  itself (listeners, TCP, HTTP/1.1, HTTP/2, the TLS file watchers, the HTTP/3 endpoints); a warning about one call's answer
+  (a final 1xx over HTTP/2, a CONNECT answered over HTTP/1.1) stays in the application's log next to the application's own
+  lines.

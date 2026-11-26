@@ -421,11 +421,16 @@ final class io.kuicksilver.ktor.server/ServerObservability { // io.kuicksilver.k
         final fun <get-eventListener>(): io.kuicksilver.ktor.server/KuicksilverServerEventListener? // io.kuicksilver.ktor.server/ServerObservability.eventListener.<get-eventListener>|<get-eventListener>(){}[0]
         final fun <set-eventListener>(io.kuicksilver.ktor.server/KuicksilverServerEventListener?) // io.kuicksilver.ktor.server/ServerObservability.eventListener.<set-eventListener>|<set-eventListener>(io.kuicksilver.ktor.server.KuicksilverServerEventListener?){}[0]
     final var logger // io.kuicksilver.ktor.server/ServerObservability.logger|{}logger[0]
-        final fun <get-logger>(): io.kuicksilver.quic/KuicksilverLogger? // io.kuicksilver.ktor.server/ServerObservability.logger.<get-logger>|<get-logger>(){}[0]
-        final fun <set-logger>(io.kuicksilver.quic/KuicksilverLogger?) // io.kuicksilver.ktor.server/ServerObservability.logger.<set-logger>|<set-logger>(io.kuicksilver.quic.KuicksilverLogger?){}[0]
+        final fun <get-logger>(): io.kuicksilver.quic/KuicksilverLogger // io.kuicksilver.ktor.server/ServerObservability.logger.<get-logger>|<get-logger>(){}[0]
+        final fun <set-logger>(io.kuicksilver.quic/KuicksilverLogger) // io.kuicksilver.ktor.server/ServerObservability.logger.<set-logger>|<set-logger>(io.kuicksilver.quic.KuicksilverLogger){}[0]
     final var qlog // io.kuicksilver.ktor.server/ServerObservability.qlog|{}qlog[0]
         final fun <get-qlog>(): io.kuicksilver.quic/QlogSink? // io.kuicksilver.ktor.server/ServerObservability.qlog.<get-qlog>|<get-qlog>(){}[0]
         final fun <set-qlog>(io.kuicksilver.quic/QlogSink?) // io.kuicksilver.ktor.server/ServerObservability.qlog.<set-qlog>|<set-qlog>(io.kuicksilver.quic.QlogSink?){}[0]
+
+    final object Companion { // io.kuicksilver.ktor.server/ServerObservability.Companion|null[0]
+        final val ApplicationLog // io.kuicksilver.ktor.server/ServerObservability.Companion.ApplicationLog|{}ApplicationLog[0]
+            final fun <get-ApplicationLog>(): io.kuicksilver.quic/KuicksilverLogger // io.kuicksilver.ktor.server/ServerObservability.Companion.ApplicationLog.<get-ApplicationLog>|<get-ApplicationLog>(){}[0]
+    }
 }
 
 final class io.kuicksilver.ktor.server/ServerTlsConfig { // io.kuicksilver.ktor.server/ServerTlsConfig|null[0]

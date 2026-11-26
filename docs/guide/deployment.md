@@ -640,8 +640,8 @@ kuicksilver.http3.endpoint {
 ## Observability
 
 - The application's log (`environment.log`) gets the engine's own messages, such as "HTTP/3 is not served on port ...",
-  and, unless `observability { logger }` names another logger (since 0.3.0), the QUIC endpoints' diagnostics too, such
-  as the fallback to the portable socket; `observability { logger = KuicksilverLogger.stderr(LogLevel.Debug) }` adds
+  and the QUIC endpoints' diagnostics, such as the fallback to the portable socket, unless `observability { logger }`
+  names another logger (since 0.3.0), which then takes all of them; `observability { logger = KuicksilverLogger.stderr(LogLevel.Debug) }` adds
   each QUIC connection's lifecycle.
 - `observability { eventListener }` (`KuicksilverServerEventListener`, experimental) hears connections per protocol (`connectionOpened` with
   `HTTP/3.0`), failed TLS handshakes and requests, which you can count; `observability { connectionListener }` hears every QUIC connection with its close reason.

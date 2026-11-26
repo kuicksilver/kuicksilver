@@ -116,15 +116,15 @@ private suspend fun KuicksilverApplicationEngine.bindTcpAndUdp(
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: UnsupportedOperationException) {
-                    environment.log.warn("HTTP/3 is not served: ${e.message}")
+                    log.warn("HTTP/3 is not served: ${e.message}")
                     return bindTcp(selector, l.config.host, l.config.port).also { recordH3NotServed(it, l, e) } to null
                 } catch (e: QuicException.DontFragmentUnavailable) {
                     // no DF, no QUIC (RFC 9000 section 14): HTTP/1.1 and HTTP/2 only, as without a QUIC server
-                    environment.log.warn("HTTP/3 is not served: ${e.message}")
+                    log.warn("HTTP/3 is not served: ${e.message}")
                     return bindTcp(selector, l.config.host, l.config.port).also { recordH3NotServed(it, l, e) } to null
                 } catch (e: Throwable) {
                     if (!mayBeTaken(e)) throw e
-                    environment.log.debug("no free UDP port ($e); trying another TCP + UDP pair")
+                    log.debug("no free UDP port ($e); trying another TCP + UDP pair")
                     last = e
                     return@repeat
                 }
@@ -138,7 +138,7 @@ private suspend fun KuicksilverApplicationEngine.bindTcpAndUdp(
                 // released before the next attempt and before the start returns: its UDP port is free again then
                 releaseFailedPair(endpoint)
                 if (!mayBeTaken(e)) throw e
-                environment.log.debug("TCP port $port is taken ($e); trying another TCP + UDP pair")
+                log.debug("TCP port $port is taken ($e); trying another TCP + UDP pair")
                 last = e
                 return@repeat
             }
@@ -151,12 +151,12 @@ private suspend fun KuicksilverApplicationEngine.bindTcpAndUdp(
             server.close()
             throw e
         } catch (e: UnsupportedOperationException) {
-            environment.log.warn("HTTP/3 is not served on port $port: ${e.message}")
+            log.warn("HTTP/3 is not served on port $port: ${e.message}")
             recordH3NotServed(server, l, e)
             return server to null
         } catch (e: QuicException.DontFragmentUnavailable) {
             // no DF, no QUIC (RFC 9000 section 14): HTTP/1.1 and HTTP/2 only, as without a QUIC server
-            environment.log.warn("HTTP/3 is not served on port $port: ${e.message}")
+            log.warn("HTTP/3 is not served on port $port: ${e.message}")
             recordH3NotServed(server, l, e)
             return server to null
         } catch (e: Throwable) {
@@ -164,12 +164,12 @@ private suspend fun KuicksilverApplicationEngine.bindTcpAndUdp(
                 server.close()
                 throw e
             }
-            environment.log.debug("UDP port $port is taken ($e); trying another TCP + UDP pair")
+            log.debug("UDP port $port is taken ($e); trying another TCP + UDP pair")
             server.close()
             last = e
         }
     }
-    environment.log.warn(
+    log.warn(
         "HTTP/3 is not served: no TCP + UDP pair free on one port number after $EPHEMERAL_PAIR_ATTEMPTS attempts ($last)",
     )
     return bindTcp(selector, l.config.host, l.config.port) to null
@@ -183,7 +183,7 @@ private suspend fun KuicksilverApplicationEngine.bindTcpAndUdp(
 private suspend fun KuicksilverApplicationEngine.releaseFailedPair(endpoint: Http3Endpoint) =
     withContext(NonCancellable) {
         withTimeoutOrNull(RELEASE_WAIT) { endpoint.closeAndJoin() }
-            ?: environment.log.warn("the HTTP/3 endpoint on UDP ${endpoint.localAddress.port} was not released within $RELEASE_WAIT")
+            ?: log.warn("the HTTP/3 endpoint on UDP ${endpoint.localAddress.port} was not released within $RELEASE_WAIT")
     }
 
 /** How long [releaseFailedPair] waits for a failed pair's endpoint. */
@@ -260,13 +260,13 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                     _,
                                     e,
                                     ->
-                                    environment.log.debug("TCP connection (HTTP/1.1 or HTTP/2) on port $port failed: $e")
+                                    log.debug("TCP connection (HTTP/1.1 or HTTP/2) on port $port failed: $e")
                                 },
                         )
-                    val acceptFailures = AcceptFailureReporter(ACCEPT_FAILURE_LOG_INTERVAL) { environment.log.warn("${l.config}: $it") }
-                    val refusals = RefusalReporter(ACCEPT_FAILURE_LOG_INTERVAL) { environment.log.warn("${l.config}: $it") }
-                    val perIpRefusals = RefusalReporter(ACCEPT_FAILURE_LOG_INTERVAL) { environment.log.warn("${l.config}: $it") }
-                    val untrustedRefusals = RefusalReporter(ACCEPT_FAILURE_LOG_INTERVAL) { environment.log.warn("${l.config}: $it") }
+                    val acceptFailures = AcceptFailureReporter(ACCEPT_FAILURE_LOG_INTERVAL) { log.warn("${l.config}: $it") }
+                    val refusals = RefusalReporter(ACCEPT_FAILURE_LOG_INTERVAL) { log.warn("${l.config}: $it") }
+                    val perIpRefusals = RefusalReporter(ACCEPT_FAILURE_LOG_INTERVAL) { log.warn("${l.config}: $it") }
+                    val untrustedRefusals = RefusalReporter(ACCEPT_FAILURE_LOG_INTERVAL) { log.warn("${l.config}: $it") }
                     val proxyProtocol = l.proxyProtocol
                     try {
                         // the checks cheapest first: a slot of tcp { maxConnections } before accept (none free: the backlog
@@ -371,7 +371,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                         }
                                     if (penalised) {
                                         client.abort()
-                                        environment.log.debug(
+                                        log.debug(
                                             "Refused a connection from ${proxy.sourceAddress} (PROXY protocol): HTTP/2 penalty",
                                         )
                                         events.emit("connectionRefused") {
@@ -647,7 +647,7 @@ private suspend fun KuicksilverApplicationEngine.handleRequest(
                 authorityCheck.rejection(targetScheme, absolute?.first ?: request.headers[HttpHeaders.Host]?.toString())
             }
         if (misdirected != null) {
-            environment.log.debug(misdirected)
+            log.debug(misdirected)
             return respondFromEngine(scope, request, MisdirectedRequestStatus)
         }
         // forwarded from early data by a gateway and not replayable: 425, it cannot be made safe by waiting (RFC 8470 section 5.1)
@@ -966,7 +966,7 @@ private suspend fun KuicksilverApplicationEngine.readProxyHeaderOrClose(
             e
         }
     client.abort()
-    environment.log.debug("Closed a connection from ${remote?.let { peerAddressBytes(it) }?.let { describeIp(it) }}: ${failure.message}")
+    log.debug("Closed a connection from ${remote?.let { peerAddressBytes(it) }?.let { describeIp(it) }}: ${failure.message}")
     events.emit("connectionRefused") { connectionRefused(HttpProtocolVersion.HTTP_1_1, remote, REFUSED_PROXY_HEADER) }
     return null
 }

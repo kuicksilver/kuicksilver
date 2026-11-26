@@ -439,9 +439,18 @@ public class KuicksilverApplicationEngine(
         }
     }
 
+    /**
+     * Where the engine's own lines go: `observability { logger }`, Ktor's `environment.log` when that is
+     * [ServerObservability.ApplicationLog] (the default).
+     */
+    internal val log: io.ktor.util.logging.Logger =
+        configuration.observability.logger.let {
+            if (it === ServerObservability.ApplicationLog) environment.log else KuicksilverLoggerAsKtor(it)
+        }
+
     /** The configuration's [KuicksilverServerEventListener], behind a guard that logs its failures. */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-    internal val events = ServerEvents(configuration.observability.eventListener, environment.log)
+    internal val events = ServerEvents(configuration.observability.eventListener, log)
 
     /** The engine's `tls { }` as served, resolved when the engine starts ([ResolvedServerTls.None] before). */
     @Volatile
@@ -463,8 +472,12 @@ public class KuicksilverApplicationEngine(
     internal var h2Settings: io.kuicksilver.http2.Http2Settings = io.kuicksilver.http2.Http2Settings.Default
         private set
 
-    /** Where the HTTP/3 endpoints log: `observability { logger }`, else the application's log. */
-    internal val quicLogger: KuicksilverLogger get() = configuration.observability.logger ?: KtorLogBridge(environment.log)
+    /** Where the HTTP/3 endpoints log: `observability { logger }`, the application's log by default. */
+    internal val quicLogger: KuicksilverLogger
+        get() =
+            configuration.observability.logger.let {
+                if (it === ServerObservability.ApplicationLog) KtorLogBridge(environment.log) else it
+            }
 
     /** The value of [http3Advertising], read by every HTTP/1.1 response head, the HTTP/3 accept loops and QUIC admission. */
     @Volatile
@@ -610,7 +623,7 @@ public class KuicksilverApplicationEngine(
             .check(*KTOR_ARTIFACTS.toTypedArray()) // docs/guide/ktor.md, "Supported Ktor versions"
         serverJob.start()
         startupJob.await()
-        monitor.raiseCatching(ServerReady, environment, environment.log)
+        monitor.raiseCatching(ServerReady, environment, environment.log) // the application's subscribers
         if (wait) serverJob.join()
         return this
     }
@@ -710,7 +723,7 @@ public class KuicksilverApplicationEngine(
     /** `::`, or `0.0.0.0` (said at Info for [c]) where this host cannot bind IPv6. */
     private fun everyInterfaceHost(c: EngineConnectorConfig): String {
         if (configuration.ipv6BindableForTest ?: ipv6Bindable()) return EVERY_INTERFACE
-        environment.log.info("$c: no IPv6 on this host, so every interface is every IPv4 one (0.0.0.0)")
+        log.info("$c: no IPv6 on this host, so every interface is every IPv4 one (0.0.0.0)")
         return IPV4_EVERY_INTERFACE
     }
 
@@ -831,7 +844,7 @@ public class KuicksilverApplicationEngine(
                     engineTls = configuration.tls.resolve("tls").also { resolvedTls += it }
                     val listeners = configuration.connectors.map { resolve(everyInterfaceOf(it)) }
                     // RFC 9113 section 9.2.2 for HTTP/2 over TLS 1.2, before anything binds
-                    for (l in listeners) l.tls?.let { checkTls12H2(it, configuration.http2.enabled, environment.log) }
+                    for (l in listeners) l.tls?.let { checkTls12H2(it, configuration.http2.enabled, log) }
 
                     // the PROXY protocol header's wait is cut to the request-head deadline: below 3 s it would be shorter than
                     // the spec's "at least 3 seconds to cover a TCP retransmit" (section 2)
@@ -955,7 +968,7 @@ public class KuicksilverApplicationEngine(
                 t.ocspFile?.let { path ->
                     val stapling = t.ocspStapling ?: return@let null
                     val id = t.identity ?: return@let null
-                    OcspFileWatcher(path, stapling, { id.chain }, environment.log, reread = interval != null)
+                    OcspFileWatcher(path, stapling, { id.chain }, log, reread = interval != null)
                 }
             ocsp?.checkUsable()
             if (ocsp != null) runs += { ocsp.run(interval ?: 1.hours) }
@@ -965,15 +978,15 @@ public class KuicksilverApplicationEngine(
                 t.identityFiles?.let { (chain, key) ->
                     t.reloadableIdentity?.let { target ->
                         if (readText == null) {
-                            IdentityFileWatcher(chain, key, target, environment.log, settle = t.settle)
+                            IdentityFileWatcher(chain, key, target, log, settle = t.settle)
                         } else {
-                            IdentityFileWatcher(chain, key, target, environment.log, readText = readText, settle = t.settle)
+                            IdentityFileWatcher(chain, key, target, log, readText = readText, settle = t.settle)
                         }
                     }
                 }
             val clientCa =
                 t.clientCaFile?.let { path ->
-                    t.reloadableCa?.let { target -> ClientCaFileWatcher(path, target, environment.log, settle = t.settle) }
+                    t.reloadableCa?.let { target -> ClientCaFileWatcher(path, target, log, settle = t.settle) }
                 }
             if (identity != null) runs += { identity.run(interval) }
             if (clientCa != null) runs += { clientCa.run(interval) }

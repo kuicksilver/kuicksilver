@@ -5471,8 +5471,9 @@ is the one described in [QUIC: Observability](https://github.com/kuicksilver/kui
 the protocol of each response and why, the QUIC connection (handshake time, RTT, ALPN, 0-RTT), the `Alt-Svc` learned
 and a qlog trace per connection, built for macOS, Linux and Windows.
 
-**Server.** In the engine's `observability { }` block, `logger` receives the HTTP/3 endpoints' diagnostics (null, the
-default, sends them to the application's log, `environment.log`, where the engine's own messages go too),
+**Server.** In the engine's `observability { }` block, `logger` receives the engine's diagnostics, its listeners and
+connections on every protocol and its HTTP/3 endpoints (`ServerObservability.ApplicationLog`, the default, is the
+application's log, `environment.log`; a warning about one call's answer goes there either way),
 `connectionListener` (*experimental*) hears every QUIC connection, `qlog` adds a trace per HTTP/3 connection, and
 `eventListener` (*experimental*) takes a
 `KuicksilverServerEventListener`: `connectionOpened` and `connectionClosed` with the protocol (`HTTP/1.1` or `HTTP/2.0`
@@ -6719,8 +6720,8 @@ kuicksilver.http3.endpoint {
 ### Observability
 
 - The application's log (`environment.log`) gets the engine's own messages, such as "HTTP/3 is not served on port ...",
-  and, unless `observability { logger }` names another logger (since 0.3.0), the QUIC endpoints' diagnostics too, such
-  as the fallback to the portable socket; `observability { logger = KuicksilverLogger.stderr(LogLevel.Debug) }` adds
+  and the QUIC endpoints' diagnostics, such as the fallback to the portable socket, unless `observability { logger }`
+  names another logger (since 0.3.0), which then takes all of them; `observability { logger = KuicksilverLogger.stderr(LogLevel.Debug) }` adds
   each QUIC connection's lifecycle.
 - `observability { eventListener }` (`KuicksilverServerEventListener`, experimental) hears connections per protocol (`connectionOpened` with
   `HTTP/3.0`), failed TLS handshakes and requests, which you can count; `observability { connectionListener }` hears every QUIC connection with its close reason.
@@ -6869,7 +6870,7 @@ UDP on the same port.
 | `configure { http2 { enabled } }` | `Boolean` | `true` | stable | `false` for a middlebox that breaks HTTP/2 |
 | `configure { http3 { endpoint { maxConnectionsPerIp } } }` | `Int?` | 256 | stable | `null` behind a NAT or kube-proxy, where clients share one address |
 | `configure { tcp { maxConnectionsPerIp } }` | `Int?` | `null` | stable | 256 for a server that faces its clients directly |
-| `configure { observability { logger } }` | `KuicksilverLogger?` | `null` (the application's log) | stable | the HTTP/3 endpoints' diagnostics elsewhere |
+| `configure { observability { logger } }` | `KuicksilverLogger` | `ServerObservability.ApplicationLog` (Ktor's `environment.log`) | stable | the engine's diagnostics elsewhere |
 
 Behind an L4 load balancer that sends the PROXY protocol: `tlsConnector { proxyProtocol { trust("10.0.0.0/8") } }`. The
 same server from `application.conf`: [HOCON keys](#hocon-keys).
@@ -7281,7 +7282,7 @@ RESET_STREAM_AT and needs QUIC datagrams.
 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
-| `logger` | `KuicksilverLogger?` | `null` (the application's log) | 0.3.0 | stable | | where the HTTP/3 endpoints' diagnostics go; `null` sends them to Ktor's `environment.log`, with the engine's own messages ([Observability](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#observability)) |
+| `logger` | `KuicksilverLogger` | `ServerObservability.ApplicationLog` | 0.3.0 | stable | | where the engine's diagnostics go: listeners, TCP, HTTP/1.1, HTTP/2 and HTTP/3 connections, the watched TLS files and the HTTP/3 endpoints ([Observability](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#observability)); `ApplicationLog` is Ktor's `environment.log`; a warning about one call's answer goes to the application's log either way |
 | `qlog` | `QlogSink?` | `null` | 0.3.0 | stable | | a qlog trace per HTTP/3 connection; wrap a file sink in `AsyncQlogSink` |
 | `connectionListener` | `ConnectionListener?` | `null` | 0.3.0 | experimental | | lifecycle of every QUIC connection of the listeners |
 | `eventListener` | `KuicksilverServerEventListener?` | `null` | 0.3.0 | experimental | | connection and request events over HTTP/1.1, HTTP/2 and HTTP/3 |
@@ -7860,7 +7861,7 @@ above under the new name only. Behaviour that changed with the defaults is in th
 | `http3Settings { webTransport; webTransportMaxSessions; webTransportInitialMaxStreamsBidi; webTransportInitialMaxStreamsUni; webTransportInitialMaxData }` | `http3 { webTransport { enabled; maxSessionsPerConnection; initialMaxStreamsBidi; initialMaxStreamsUni; initialMaxData } }` | |
 | `webSocketsOverHttp3` | `webSockets { overHttp3 }` | |
 | `quicEarlyData` and `http3Settings.earlyData` | `http3 { earlyData { enabled; policy } }` | |
-| `logger` (null: standard error) | `observability { logger }` | null is the application's log (`environment.log`) now |
+| `logger` (null: standard error) | `observability { logger }` | not nullable; default `ServerObservability.ApplicationLog`, Ktor's `environment.log`, for every engine line |
 | `qlog`, `connectionListener`, `eventListener` | `observability { qlog; connectionListener; eventListener }` | |
 | HTTP/2 off | `http2 { enabled = true }` by default | `http2 { enabled = false }` keeps 0.2's HTTP/1.1 over TLS |
 

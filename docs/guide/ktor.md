@@ -2736,8 +2736,9 @@ is the one described in [QUIC: Observability](quic.md#observability): counters, 
 the protocol of each response and why, the QUIC connection (handshake time, RTT, ALPN, 0-RTT), the `Alt-Svc` learned
 and a qlog trace per connection, built for macOS, Linux and Windows.
 
-**Server.** In the engine's `observability { }` block, `logger` receives the HTTP/3 endpoints' diagnostics (null, the
-default, sends them to the application's log, `environment.log`, where the engine's own messages go too),
+**Server.** In the engine's `observability { }` block, `logger` receives the engine's diagnostics, its listeners and
+connections on every protocol and its HTTP/3 endpoints (`ServerObservability.ApplicationLog`, the default, is the
+application's log, `environment.log`; a warning about one call's answer goes there either way),
 `connectionListener` (*experimental*) hears every QUIC connection, `qlog` adds a trace per HTTP/3 connection, and
 `eventListener` (*experimental*) takes a
 `KuicksilverServerEventListener`: `connectionOpened` and `connectionClosed` with the protocol (`HTTP/1.1` or `HTTP/2.0`

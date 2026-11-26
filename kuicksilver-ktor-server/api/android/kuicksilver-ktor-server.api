@@ -323,6 +323,7 @@ public final class io/kuicksilver/ktor/server/ServerEndpointExpert {
 }
 
 public final class io/kuicksilver/ktor/server/ServerObservability {
+	public static final field Companion Lio/kuicksilver/ktor/server/ServerObservability$Companion;
 	public final fun getConnectionListener ()Lio/kuicksilver/quic/ConnectionListener;
 	public final fun getEventListener ()Lio/kuicksilver/ktor/server/KuicksilverServerEventListener;
 	public final fun getLogger ()Lio/kuicksilver/quic/KuicksilverLogger;
@@ -331,6 +332,10 @@ public final class io/kuicksilver/ktor/server/ServerObservability {
 	public final fun setEventListener (Lio/kuicksilver/ktor/server/KuicksilverServerEventListener;)V
 	public final fun setLogger (Lio/kuicksilver/quic/KuicksilverLogger;)V
 	public final fun setQlog (Lio/kuicksilver/quic/QlogSink;)V
+}
+
+public final class io/kuicksilver/ktor/server/ServerObservability$Companion {
+	public final fun getApplicationLog ()Lio/kuicksilver/quic/KuicksilverLogger;
 }
 
 public final class io/kuicksilver/ktor/server/ServerTlsConfig {

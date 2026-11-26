@@ -141,14 +141,14 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
         h3Ports += port
         // a UDP port closed by a firewall leaves clients that learned the alternative to their race and fallback: say so once
         if (configuration.http3.altSvc) {
-            environment.log.info(
+            log.info(
                 "HTTP/3 advertised for udp/$port (Alt-Svc ma=86400); make sure the port is open",
             )
         }
         val noDf = endpoint.noDontFragmentFamily
         if (noDf != null) {
             h3NoDfFamily[port] = noDf
-            environment.log.warn("HTTP/3 on port $port is not served for ${noDf.label}: its UDP socket cannot set Don't Fragment for it")
+            log.warn("HTTP/3 on port $port is not served for ${noDf.label}: its UDP socket cannot set Don't Fragment for it")
         }
         h3StatusList =
             h3StatusList +
@@ -177,7 +177,7 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
                         ) {
                             throw e
                         } catch (e: Throwable) {
-                            environment.log.debug("HTTP/3 accept on port $port ended: $e")
+                            log.debug("HTTP/3 accept on port $port ended: $e")
                             break
                         }
                     afterH3AcceptForTest?.invoke()
@@ -197,7 +197,7 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
                     val served =
                         launch(
                             connections +
-                                CoroutineExceptionHandler { _, e -> environment.log.debug("HTTP/3 connection on port $port failed: $e") },
+                                CoroutineExceptionHandler { _, e -> log.debug("HTTP/3 connection on port $port failed: $e") },
                         ) {
                             val peer = conn.quic.peerCertificates
 
@@ -241,7 +241,7 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
                                                 } catch (e: CancellationException) {
                                                     throw e
                                                 } catch (e: Throwable) {
-                                                    environment.log.debug("HTTP/3 request on port $port failed: $e")
+                                                    log.debug("HTTP/3 request on port $port failed: $e")
                                                 }
                                             }
                                         // a client that abandons the request (STOP_SENDING, or a reset) cancels its handler, which gives
@@ -327,7 +327,7 @@ private suspend fun KuicksilverApplicationEngine.handleHttp3(
     // RFC 9110 section 7.4 (RFC 9114 section 3.3): a request for a host this connection's certificate does not name gets 421
     // and never reaches the application; the stream ends, the connection serves the client's other requests
     authorityCheck.rejection(req.scheme, req.authority)?.let { why ->
-        environment.log.debug(why)
+        log.debug(why)
         runCatching { req.respond(MISDIRECTED_REQUEST, io.kuicksilver.http3.Http3Headers(listOf("date" to httpDateNow()))).finish() }
         return
     }

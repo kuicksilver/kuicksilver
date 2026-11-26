@@ -3333,6 +3333,7 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.RepeatOffender
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.RepeatOffendersTest.strikesOlderThanTheWindowDoNotCount
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerClientCaReloadTest.tcpAndQuicVerifyAgainstTheReloadedBundleKeepOpenConnections
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.aConnectorsTlsOverridesTheEnginesAndInheritsTheRest
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.anOwnLoggerTakesTheEnginesLines
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.connectionIdLengthIsSetInTheEndpointExpertBlock
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.connectorAndProxyOptionsReachTheListener
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.defaultConnectors

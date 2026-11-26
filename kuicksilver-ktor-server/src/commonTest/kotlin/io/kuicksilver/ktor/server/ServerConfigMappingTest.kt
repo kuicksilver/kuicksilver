@@ -83,7 +83,7 @@ class ServerConfigMappingTest {
         assertEquals(16_777_216L, c.webSockets.maxMessageSize)
         assertEquals(10_000, c.tcp.maxConnections)
         assertNull(c.tcp.maxConnectionsPerIp)
-        assertNull(c.observability.logger)
+        assertSame(ServerObservability.ApplicationLog, c.observability.logger)
         assertNull(c.observability.qlog)
         assertNull(c.observability.connectionListener)
         assertNull(c.observability.eventListener)
@@ -321,9 +321,70 @@ class ServerConfigMappingTest {
         assertTrue(bridge is KtorLogBridge)
         bridge.log(io.kuicksilver.quic.LogLevel.Warn, "endpoint warning")
         log.assertLogged("WARN", "endpoint warning")
+        assertSame(log, engine.log, "the engine's own lines go to environment.log too")
         val own = KuicksilverLogger.None
         assertSame(own, kuicksilverServer(log, configure = { observability { logger = own } }) {}.engine.quicLogger)
     }
+
+    /**
+     * A logger of the application's own takes the engine's lines on every protocol, not the HTTP/3 endpoints' alone (as the
+     * client's does): here a listener's start-up line, which goes to environment.log by default.
+     */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    @Test
+    fun anOwnLoggerTakesTheEnginesLines() =
+        serverTest {
+            val log = CapturedLog()
+            val lines = kotlin.concurrent.atomics.AtomicReference(emptyList<Pair<io.kuicksilver.quic.LogLevel, String>>())
+            val own =
+                object : KuicksilverLogger {
+                    override fun isEnabled(level: io.kuicksilver.quic.LogLevel) = true
+
+                    override fun log(
+                        level: io.kuicksilver.quic.LogLevel,
+                        message: String,
+                        cause: Throwable?,
+                    ) {
+                        while (true) {
+                            val was = lines.load()
+                            if (lines.compareAndSet(was, was + (level to message))) return
+                        }
+                    }
+                }
+            val server =
+                kuicksilverServer(log, configure = {
+                    tlsConnector {
+                        tls {
+                            identity = ServerFixtures.identity() // an EC key over TLS 1.2: the start says so at Info
+                            versions = TlsVersions.Tls12And13
+                        }
+                        host = "127.0.0.1"
+                        port = 0
+                    }
+                    http3 { enabled = false }
+                    observability { logger = own }
+                }) {}
+            server.startSuspend(false)
+            try {
+                val line = lines.load().firstOrNull { "the certificate has no rsaEncryption key" in it.second }
+                assertEquals(io.kuicksilver.quic.LogLevel.Info, line?.first, "${lines.load()}")
+                assertTrue(log.infos.none { "rsaEncryption" in it }, "not in environment.log too: ${log.infos}")
+                // the Ktor logger the engine writes with forwards every level
+                server.engine.log.warn("w", IllegalStateException("boom"))
+                server.engine.log.error("e")
+                server.engine.log.debug("d")
+                assertEquals(
+                    listOf(
+                        io.kuicksilver.quic.LogLevel.Warn to "w",
+                        io.kuicksilver.quic.LogLevel.Error to "e",
+                        io.kuicksilver.quic.LogLevel.Debug to "d",
+                    ),
+                    lines.load().takeLast(3),
+                )
+            } finally {
+                server.stopSuspend(0, 500)
+            }
+        }
 
     @Test fun tlsBlockResolves() {
         val id = ServerFixtures.identity()

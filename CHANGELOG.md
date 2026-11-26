@@ -1196,7 +1196,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   | server `http3Settings { webTransport; webTransportMaxSessions; webTransportInitialMaxStreamsBidi; webTransportInitialMaxStreamsUni; webTransportInitialMaxData }` | `http3 { webTransport { enabled; maxSessionsPerConnection; initialMaxStreamsBidi; initialMaxStreamsUni; initialMaxData } }` |
   | server `quicEarlyData`, `http3Settings.earlyData` | `http3 { earlyData { enabled; policy } }` |
   | server `webSocketsOverHttp3` | `webSockets { overHttp3 }` |
-  | server `logger`, `qlog`, `connectionListener`, `eventListener` | `observability { logger; qlog; connectionListener; eventListener }` |
+  | server `logger`, `qlog`, `connectionListener`, `eventListener` | `observability { logger; qlog; connectionListener; eventListener }` (`logger` not nullable, `ServerObservability.ApplicationLog`) |
   | `quicConfig { maxIdleTimeout = Duration.ZERO }` | `quicConfig { maxIdleTimeout = null }` |
   | `quicConfig { initialStreamWindow; initialConnectionWindow; maxStreamWindow; maxConnectionWindow; maxSendBuffer }` | `quicConfig { flowControl { … } }` |
   | `quicConfig { maxUdpPayloadSize; pmtud }` | `quicConfig { pathMtu { maxReceive; discovery } }` |
@@ -1245,8 +1245,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Logging: `KuicksilverLogger.Default` is the platform's logger at warnings and up, and every QUIC endpoint and the Ktor
   client start with it: SLF4J on the JVM (logger `io.kuicksilver`; standard error when no SLF4J provider is on the
   classpath), Logcat on Android (tag `Kuicksilver`), `NSLog` on Apple platforms, standard error on Linux and Windows.
-  Before, the default was `KuicksilverLogger.Stderr`. The Ktor server's HTTP/3 endpoints log to the application's log
-  (`environment.log`) unless `observability { logger }` is set. `KuicksilverLogger.platform(level)` gives the platform's
+  Before, the default was `KuicksilverLogger.Stderr`. The Ktor server logs to the application's log (`environment.log`)
+  unless `observability { logger }` is set: its default is `ServerObservability.ApplicationLog` (not nullable, as on the
+  client), and a logger of the application's own takes every engine line, TCP, HTTP/1.1, HTTP/2 and the TLS file
+  watchers included, not the HTTP/3 endpoints' alone. `KuicksilverLogger.platform(level)` gives the platform's
   logger at another level; `KuicksilverLogger` and `LogLevel` are stable.
 - Ktor server: `tlsConnector { }` and `plainConnector { }` without a `host` bind every interface of both families (breaking
   behaviour): one dual-stack socket per protocol on `::`, IPv4 clients arriving as IPv4-mapped addresses, or `0.0.0.0` where

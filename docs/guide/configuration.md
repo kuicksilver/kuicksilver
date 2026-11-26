@@ -90,7 +90,7 @@ UDP on the same port.
 | `configure { http2 { enabled } }` | `Boolean` | `true` | stable | `false` for a middlebox that breaks HTTP/2 |
 | `configure { http3 { endpoint { maxConnectionsPerIp } } }` | `Int?` | 256 | stable | `null` behind a NAT or kube-proxy, where clients share one address |
 | `configure { tcp { maxConnectionsPerIp } }` | `Int?` | `null` | stable | 256 for a server that faces its clients directly |
-| `configure { observability { logger } }` | `KuicksilverLogger?` | `null` (the application's log) | stable | the HTTP/3 endpoints' diagnostics elsewhere |
+| `configure { observability { logger } }` | `KuicksilverLogger` | `ServerObservability.ApplicationLog` (Ktor's `environment.log`) | stable | the engine's diagnostics elsewhere |
 
 Behind an L4 load balancer that sends the PROXY protocol: `tlsConnector { proxyProtocol { trust("10.0.0.0/8") } }`. The
 same server from `application.conf`: [HOCON keys](#hocon-keys).
@@ -502,7 +502,7 @@ RESET_STREAM_AT and needs QUIC datagrams.
 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
-| `logger` | `KuicksilverLogger?` | `null` (the application's log) | 0.3.0 | stable | | where the HTTP/3 endpoints' diagnostics go; `null` sends them to Ktor's `environment.log`, with the engine's own messages ([Observability](quic.md#observability)) |
+| `logger` | `KuicksilverLogger` | `ServerObservability.ApplicationLog` | 0.3.0 | stable | | where the engine's diagnostics go: listeners, TCP, HTTP/1.1, HTTP/2 and HTTP/3 connections, the watched TLS files and the HTTP/3 endpoints ([Observability](quic.md#observability)); `ApplicationLog` is Ktor's `environment.log`; a warning about one call's answer goes to the application's log either way |
 | `qlog` | `QlogSink?` | `null` | 0.3.0 | stable | | a qlog trace per HTTP/3 connection; wrap a file sink in `AsyncQlogSink` |
 | `connectionListener` | `ConnectionListener?` | `null` | 0.3.0 | experimental | | lifecycle of every QUIC connection of the listeners |
 | `eventListener` | `KuicksilverServerEventListener?` | `null` | 0.3.0 | experimental | | connection and request events over HTTP/1.1, HTTP/2 and HTTP/3 |
@@ -1081,7 +1081,7 @@ above under the new name only. Behaviour that changed with the defaults is in th
 | `http3Settings { webTransport; webTransportMaxSessions; webTransportInitialMaxStreamsBidi; webTransportInitialMaxStreamsUni; webTransportInitialMaxData }` | `http3 { webTransport { enabled; maxSessionsPerConnection; initialMaxStreamsBidi; initialMaxStreamsUni; initialMaxData } }` | |
 | `webSocketsOverHttp3` | `webSockets { overHttp3 }` | |
 | `quicEarlyData` and `http3Settings.earlyData` | `http3 { earlyData { enabled; policy } }` | |
-| `logger` (null: standard error) | `observability { logger }` | null is the application's log (`environment.log`) now |
+| `logger` (null: standard error) | `observability { logger }` | not nullable; default `ServerObservability.ApplicationLog`, Ktor's `environment.log`, for every engine line |
 | `qlog`, `connectionListener`, `eventListener` | `observability { qlog; connectionListener; eventListener }` | |
 | HTTP/2 off | `http2 { enabled = true }` by default | `http2 { enabled = false }` keeps 0.2's HTTP/1.1 over TLS |
 

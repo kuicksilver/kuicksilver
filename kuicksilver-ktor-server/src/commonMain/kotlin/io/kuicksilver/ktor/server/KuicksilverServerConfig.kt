@@ -904,10 +904,13 @@ public class TcpLimitsConfig internal constructor() {
 @KuicksilverDsl
 public class ServerObservability internal constructor() {
     /**
-     * Where the HTTP/3 endpoints' diagnostics go (docs/guide/quic.md, "Observability"); null (the default) sends them to
-     * the application's log (`environment.log`), where the engine's own messages go too.
+     * Where the engine's own diagnostics go: its listeners, TCP, HTTP/1.1, HTTP/2 and HTTP/3 connections, the TLS files it
+     * watches, and the HTTP/3 endpoints (docs/guide/quic.md, "Observability"). [ApplicationLog] (the default) is the
+     * application's log, Ktor's `environment.log`; any other logger takes them all, as the client's `observability { logger }`
+     * does. A warning about one call's answer (a final 1xx over HTTP/2, a CONNECT the application answered over HTTP/1.1)
+     * goes to the application's log either way, with the application's own lines.
      */
-    public var logger: KuicksilverLogger? = null
+    public var logger: KuicksilverLogger = ApplicationLog
 
     /**
      * A qlog trace per HTTP/3 connection (docs/guide/quic.md, "qlog"); null (the default) traces nothing. Wrap a file sink in
@@ -922,6 +925,69 @@ public class ServerObservability internal constructor() {
     /** Hears connections and requests over HTTP/1.1, HTTP/2 and HTTP/3 (docs/guide/ktor.md, "Observability"); null for none. */
     @ExperimentalKuicksilverApi
     public var eventListener: KuicksilverServerEventListener? = null
+
+    /** Holds [ApplicationLog]. */
+    public companion object {
+        /**
+         * The default [logger]: the application's log (Ktor's `environment.log`), which the engine takes when it starts.
+         * Outside an engine's configuration it is [KuicksilverLogger.Default].
+         */
+        public val ApplicationLog: KuicksilverLogger =
+            object : KuicksilverLogger by KuicksilverLogger.Default {
+                override fun toString(): String = "ServerObservability.ApplicationLog"
+            }
+    }
+}
+
+/**
+ * [logger] as a Ktor [Logger], for the engine's own lines when `observability { logger }` is not the application's log: the
+ * plain forms (`warn(message)`, `warn(message, cause)`, ...) go to [logger] at their level (trace as debug); the rest of
+ * the interface (an SLF4J logger on the JVM) is a quiet logger's.
+ */
+internal class KuicksilverLoggerAsKtor(
+    private val logger: KuicksilverLogger,
+    quiet: Logger = KtorSimpleLogger("io.kuicksilver.ktor.server"),
+) : Logger by quiet {
+    override fun error(message: String) = logger.log(LogLevel.Error, message, null)
+
+    override fun error(
+        message: String,
+        cause: Throwable,
+    ) = logger.log(LogLevel.Error, message, cause)
+
+    override fun warn(message: String) = logger.log(LogLevel.Warn, message, null)
+
+    override fun warn(
+        message: String,
+        cause: Throwable,
+    ) = logger.log(LogLevel.Warn, message, cause)
+
+    override fun info(message: String) = logger.log(LogLevel.Info, message, null)
+
+    override fun info(
+        message: String,
+        cause: Throwable,
+    ) = logger.log(LogLevel.Info, message, cause)
+
+    override fun debug(message: String) {
+        if (logger.isEnabled(LogLevel.Debug)) logger.log(LogLevel.Debug, message, null)
+    }
+
+    override fun debug(
+        message: String,
+        cause: Throwable,
+    ) {
+        if (logger.isEnabled(LogLevel.Debug)) logger.log(LogLevel.Debug, message, cause)
+    }
+
+    override fun trace(message: String) = debug(message)
+
+    override fun trace(
+        message: String,
+        cause: Throwable,
+    ) = debug(message, cause)
+
+    override fun toString(): String = logger.toString()
 }
 
 /** [log] (Ktor's `environment.log`) as a [KuicksilverLogger]: the QUIC endpoints' lines go where the application's go. */
