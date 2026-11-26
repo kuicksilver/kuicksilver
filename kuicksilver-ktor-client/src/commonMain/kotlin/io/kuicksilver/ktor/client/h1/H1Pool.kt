@@ -25,6 +25,7 @@ import io.ktor.utils.io.ClosedReadChannelException
 import io.ktor.utils.io.availableForRead
 import io.ktor.utils.io.discard
 import io.kuicksilver.http2.runtime.H2ClientConnection
+import io.kuicksilver.io.ConnectionEndedException
 import io.kuicksilver.ktor.client.Activity
 import io.kuicksilver.ktor.client.ActivityInput
 import io.kuicksilver.ktor.client.ActivityOutput
@@ -349,7 +350,7 @@ internal class H1Pool(
                     .markNow()
             try {
                 val bound = orderlyCloseTimeoutForTest
-                if (dropInput) tls?.cancelInput(kotlinx.io.IOException("the connection is closing"))
+                if (dropInput) tls?.cancelInput(ConnectionEndedException.LocalClose("the connection is closing"))
                 withTimeoutOrNull(bound) {
                     tls?.shutdown(drainTimeout = bound)
                     rawOut.flushAndClose()
@@ -660,7 +661,9 @@ internal class H1Pool(
                             c.client.shutdown()
                         } else {
                             // a peer that does not answer has not lost the transport: GOAWAY, close_notify, FIN, bounded
-                            c.client.abortInOrder(kotlinx.io.IOException("the HTTP/2 connection did not answer a health PING"))
+                            c.client.abortInOrder(
+                                ConnectionEndedException.PeerUnresponsive("the HTTP/2 connection did not answer a health PING"),
+                            )
                         }
                         continue
                     }
@@ -812,7 +815,9 @@ internal class H1Pool(
                                             // a peer that does not answer has not lost the transport: GOAWAY, close_notify,
                                             // FIN, bounded (RFC 9113 section 6.8, RFC 9846 section 6.1)
                                             found.client.abortInOrder(
-                                                kotlinx.io.IOException("the HTTP/2 connection did not answer a health PING"),
+                                                ConnectionEndedException.PeerUnresponsive(
+                                                    "the HTTP/2 connection did not answer a health PING",
+                                                ),
                                             )
                                         }
                                         continue
@@ -1300,7 +1305,7 @@ internal class H1Pool(
 
             /** A timeout expired: the reader is cut first, so the call's timeout surfaces on time; then the close. */
             fun closeAfterExpiry() {
-                conn.cancelInput(kotlinx.io.IOException("the socket timeout expired"))
+                conn.cancelInput(ConnectionEndedException.PeerUnresponsive("the socket timeout expired"))
                 closeAfterFailure(null)
             }
 

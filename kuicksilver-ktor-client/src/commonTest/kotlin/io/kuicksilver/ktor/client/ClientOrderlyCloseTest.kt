@@ -22,6 +22,7 @@ import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.http2.Http2ErrorCode
 import io.kuicksilver.http2.runtime.Http2Exception
+import io.kuicksilver.io.ConnectionEndedException
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.IO
@@ -33,6 +34,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -545,9 +547,18 @@ class ClientOrderlyCloseTest {
                 // and the new connection the remaining ~1.5 s of the same budget, as in ClientH2Test's health tests
                 testClient(engine = { connectTimeout = 3.seconds }).use { c ->
                     engine(c).h1.h2HealthAfterIdleMillis = 0 // every reuse is checked
+                    val started = mutableListOf<io.kuicksilver.http2.runtime.H2ClientConnection>()
+                    engine(c).h1.afterH2StartForTest = { client, _ -> started += client }
                     assertEquals(HttpProtocolVersion.HTTP_2_0, c.get("https://127.0.0.1:$port/").version)
                     assertEquals(HttpProtocolVersion.HTTP_2_0, c.get("https://127.0.0.1:$port/").version)
                     first.assertOneGoAwayThenCleanEnd(Http2ErrorCode.INTERNAL_ERROR)
+                    // the first connection ended for the peer's silence, by type, its message as before
+                    val end =
+                        generateSequence(started.first().closeCause) { it.cause }
+                            .filterIsInstance<ConnectionEndedException>()
+                            .firstOrNull()
+                    assertIs<ConnectionEndedException.PeerUnresponsive>(end, "${started.first().closeCause}")
+                    assertEquals("the HTTP/2 connection did not answer a health PING", end.message)
                 }
             }
         }

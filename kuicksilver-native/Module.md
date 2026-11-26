@@ -10,6 +10,12 @@ Opt-in markers: `ExperimentalKuicksilverApi` (may change without a deprecation c
 care to use safely), `InternalKuicksilverApi` (for Kuicksilver's own modules, never stable) and the `KuicksilverDsl`
 marker of the configuration builders.
 
+# Package io.kuicksilver.io
+
+`ConnectionEndedException`, the end of a TCP connection under an HTTP/1.1 or HTTP/2 exchange by its initiator: the peer
+or the network (`PeerClosed`, `PeerUnresponsive`) or this side (`LocalClose`). It lives in the bottom layer so that the
+HTTP/2 runtime, the TLS socket and the client engine throw the same types.
+
 # Package io.kuicksilver.native
 
 The native library loader (`KslLoader`, `NativeAvailability`), `PacketBuffer` (native memory for datagrams) and

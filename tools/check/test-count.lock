@@ -317,6 +317,7 @@ kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2RuntimeTest.nega
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2RuntimeTest.negative_aRequestReceiverCancelledWhileBeingResumedLosesNoRequest
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2RuntimeTest.negative_aResetBetweenAMalformedFailureAndItsRstSendsNothing
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2RuntimeTest.negative_aServerReleaseWhoseResetDispatchThrowsStillReturnsTheStream
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2RuntimeTest.negative_aTransportThePeerEndedIsPeerClosed
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2RuntimeTest.negative_bodyEndAfterAPendingResetFailsWithTheReset
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2RuntimeTest.negative_contentLengthMismatchIsMalformed
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2RuntimeTest.negative_dispatchFailureIsNotTakenForTheCoresRefusal
@@ -1743,6 +1744,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2FloodT
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2FloodTest.negative_priorityAndUnknownFloodFromTheServer
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2FloodTest.negative_settingsFloodFromTheServer
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2Test.aConnectionRegisteredWhileWaitingForAPermitIsUsed
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2Test.aHardCloseByTheClientIsALocalClose
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2Test.burstBeforeTheServerSettingsStaysWithinTheirLimit
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2Test.cancelSendsRstStreamCancel
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2Test.concurrentFirstRequestsOpenOneConnection
@@ -2883,6 +2885,7 @@ kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketAbortT
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketAddressAfterCloseTest.addressesStayReadableAfterClose
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketTlsTest.clientServerEchoOverRealSockets
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketTlsTest.closePropagatesShutdown
+kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketTlsTest.negative_aReadAfterTheCloseIsALocalClose
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketTlsTest.negative_closeIsBoundedWhenThePeerStopsReading
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketTlsTest.pinnedConnectAcceptsCorrectPinAndRejectsWrongPin
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketTlsTest.secondConnectionResumesOverSockets

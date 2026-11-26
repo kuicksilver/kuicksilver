@@ -14,6 +14,7 @@ import io.ktor.utils.io.availableForRead
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeByte
 import io.ktor.utils.io.writeFully
+import io.kuicksilver.io.ConnectionEndedException
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -139,6 +140,9 @@ class ReadSideFailureTest {
         assertFalse(failure is CancellationException, "the read side failed with $failure")
         val messages = generateSequence(failure) { it.cause }.mapNotNull { it.message }.toList()
         assertTrue(messages.any { expected in it }, "the read side failed with $failure, not \"$expected\"")
+        // our own end, by type: a caller tells it from the peer's without the message
+        val end = generateSequence(failure) { it.cause }.filterIsInstance<ConnectionEndedException>().firstOrNull()
+        assertTrue(end is ConnectionEndedException.LocalClose && expected in end.message.orEmpty(), "the read side failed with $failure")
     }
 
     private fun withPair(block: suspend (client: Socket, peer: Socket) -> Unit) =

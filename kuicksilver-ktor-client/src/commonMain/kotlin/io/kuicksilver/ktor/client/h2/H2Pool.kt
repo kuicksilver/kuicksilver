@@ -5,6 +5,7 @@
 package io.kuicksilver.ktor.client.h2
 
 import io.kuicksilver.http2.runtime.H2ClientConnection
+import io.kuicksilver.io.ConnectionEndedException
 import io.kuicksilver.ktor.client.evictEldest
 import io.kuicksilver.ktor.client.h1.PoolLimits
 import io.kuicksilver.ktor.client.h1.PooledConnection
@@ -12,7 +13,6 @@ import io.kuicksilver.ktor.client.h1.SpinLock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.io.IOException
 
 /**
  * One HTTP/2 connection in the TCP pool: it holds one slot of its route in the HTTP/1.1 [io.kuicksilver.ktor.client.h1.ConnectionPool]
@@ -45,7 +45,7 @@ internal class H2Conn(
      * closes one in order ([closeOrderly]) either.
      */
     override fun closeTransport() {
-        client.abort(IOException("the HTTP/2 connection was closed by the client"))
+        client.abort(ConnectionEndedException.LocalClose("the HTTP/2 connection was closed by the client"))
     }
 }
 

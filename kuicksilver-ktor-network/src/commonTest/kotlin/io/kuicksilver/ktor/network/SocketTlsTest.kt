@@ -25,6 +25,7 @@ import io.ktor.utils.io.reader
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.ktor.utils.io.writer
+import io.kuicksilver.io.ConnectionEndedException
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.SessionCache
@@ -247,6 +248,26 @@ class SocketTlsTest {
                 val c = withTimeout(20.seconds) { srv.client() }
                 c.tls.shutdown()
                 c.close()
+                withTimeout(10.seconds) { srv.job.await() }
+            } finally {
+                srv.close()
+            }
+        }
+
+    /** A read channel opened after close() fails at once with a LocalClose: this side closed the socket, not the peer. */
+    @Test fun negative_aReadAfterTheCloseIsALocalClose(): Unit =
+        runBlocking {
+            val srv = LoopbackServer.start { s -> runCatching { s.openReadChannel().readAvailable(ByteArray(1), 0, 1) } }
+            try {
+                val c = withTimeout(20.seconds) { srv.client() }
+                c.close()
+                val r = c.openReadChannel()
+                runCatching { withTimeout(10.seconds) { r.readAvailable(ByteArray(1), 0, 1) } }
+                withTimeout(10.seconds) { while (!r.isClosedForRead) r.awaitContent() }
+                val end =
+                    generateSequence(r.closedCause) { it.cause }.filterIsInstance<ConnectionEndedException>().firstOrNull()
+                assertIs<ConnectionEndedException.LocalClose>(end, "${r.closedCause}")
+                assertEquals("the TLS socket is closed: nothing more is read", end.message)
                 withTimeout(10.seconds) { srv.job.await() }
             } finally {
                 srv.close()

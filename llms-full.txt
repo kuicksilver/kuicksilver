@@ -5438,6 +5438,19 @@ diagnostics on that instance. A call that fails with it in the engine throws its
 carrying its diagnostics, and `callFailed` gets that copy; a call that meets it later, reading its response body, gets the instance itself, which carries
 none (the body's failure comes after the call's end), as does the `ConnectionLost` that `onClosed` hears.
 
+<a id="who-ended-the-connection"></a>
+**Who ended the connection** (experimental, 0.3.0). When the TCP connection under an HTTP/1.1 or HTTP/2 call ended, a
+`ConnectionEndedException` (package `io.kuicksilver.io`) among the exception's causes says who ended it, so a test
+harness or an app need not match messages: `PeerClosed` (the peer's FIN or a closed socket where more was expected),
+`PeerUnresponsive` (an HTTP/2 PING unanswered, the `pingInterval` keepalive or a pooled connection's health check, or
+nothing within the socket timeout) or `LocalClose` (this client closed it, or read after closing it: `Socket closed`, `The
+connection was aborted`). An HTTP/2 call
+usually fails with `Http2Exception.ConnectionClosed` whose cause is one of these:
+`generateSequence(e) { it.cause }.filterIsInstance<ConnectionEndedException>().firstOrNull()`. They are `IOException`s
+with the messages they always had, so existing `catch` blocks and log matches still work. A QUIC connection's end is a
+`QuicException.ConnectionLost` with its `initiator` instead, a TLS failure a `TlsException`, a timeout Ktor's
+`ConnectTimeoutException` or `SocketTimeoutException`.
+
 #### Graceful stop
 
 `stop(gracePeriodMillis, timeoutMillis)` stops accepting TCP connections, sends GOAWAY on every live HTTP/3 connection at

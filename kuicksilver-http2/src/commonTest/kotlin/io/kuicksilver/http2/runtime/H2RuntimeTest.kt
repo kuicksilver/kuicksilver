@@ -19,6 +19,7 @@ import io.kuicksilver.http2.frame.FrameEncoder
 import io.kuicksilver.http2.frame.H2
 import io.kuicksilver.http2.frame.SettingId
 import io.kuicksilver.http2.hpack.HpackEncoder
+import io.kuicksilver.io.ConnectionEndedException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
@@ -1320,7 +1321,28 @@ class H2RuntimeTest {
             assertTrue(srv.read().any { it is Frame.Ping && !it.ack })
             val e = assertFailsWith<Http2Exception.ConnectionClosed> { a.response() }
             assertTrue("PING" in (e.message ?: ""), e.message)
+            // the peer went silent: its own type, the message as before (callers tell it from our own close by type)
+            val end = generateSequence<Throwable>(e) { it.cause }.filterIsInstance<ConnectionEndedException>().firstOrNull()
+            assertIs<ConnectionEndedException.PeerUnresponsive>(end, "$e")
+            assertTrue(end.message!!.startsWith("no PING acknowledgement within"), end.message)
             assertTrue(client.isClosed || !client.isUsable)
+            a.release()
+        }
+
+    @Test fun negative_aTransportThePeerEndedIsPeerClosed() =
+        runTest {
+            val (srv, deferred) = raw()
+            srv.settings()
+            val client = deferred.await()
+            val a = client.get()
+            runCurrent()
+            srv.w.toClient.close() // the peer's FIN: the input ends where a response was expected
+            runCurrent()
+            val e = assertFailsWith<Http2Exception.ConnectionClosed> { a.response() }
+            val end = generateSequence<Throwable>(e) { it.cause }.filterIsInstance<ConnectionEndedException>().firstOrNull()
+            assertIs<ConnectionEndedException.PeerClosed>(end, "$e")
+            assertEquals("the peer closed the connection", end.message)
+            assertIs<kotlinx.io.IOException>(end) // what a catch (e: IOException) took before still takes it
             a.release()
         }
 

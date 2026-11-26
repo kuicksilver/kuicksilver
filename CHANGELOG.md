@@ -14,6 +14,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- Ktor client, HTTP/2 and the TLS socket (experimental): `ConnectionEndedException` (package `io.kuicksilver.io`, in
+  `kuicksilver-native`) says who ended a TCP connection under a call, so callers no longer match message strings.
+  `PeerClosed` is the peer's FIN where more was expected; `PeerUnresponsive` is an HTTP/2 PING unanswered (keepalive or
+  health check) or the socket timeout; `LocalClose` is this client closing the connection or reading after its close.
+  The sites that threw a plain `IOException` for these throw them now, the TCP socket's own `Socket closed` and `The
+  connection was aborted` included; the messages are unchanged and the types are still `IOException`s. An HTTP/2 call sees one as the cause of `Http2Exception.ConnectionClosed` (`docs/guide/ktor.md`, "Who
+  ended the connection"). `kuicksilver-native` now depends on `kotlinx-io-core`, which every other module already used.
 - Ktor client (experimental): `AltSvcStore.originOf(url)` gives the origin key the engine stores a URL's alternatives
   under, in the one canonical form the `AltSvcStore` KDoc now states: `scheme://host:port` with the host in lowercase,
   without a trailing dot, an IPv6 address in brackets and the port always written. A store that seeds or looks up an

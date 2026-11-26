@@ -26,6 +26,7 @@ import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.http2.Http2ErrorCode
 import io.kuicksilver.http2.Http2Settings
 import io.kuicksilver.http2.runtime.Http2Exception
+import io.kuicksilver.io.ConnectionEndedException
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
@@ -42,6 +43,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -716,6 +718,30 @@ class ClientH2Test {
                     assertEquals(0, pool.h2.connectionCount)
                     withTimeout(5.seconds) { pool.h2JobsForTest.toList().forEach { it.join() } }
                     assertEquals(emptyList(), pool.h2JobsForTest.toList())
+                }
+            }
+        }
+
+    /** The engine's hard close of an HTTP/2 connection is a LocalClose: this side ended it, whatever its message says. */
+    @Test fun aHardCloseByTheClientIsALocalClose() =
+        clientTest {
+            tlsH2WithSilentUdp(onRequest = { _, r -> ok(r) }) { port, _ ->
+                testClient().use { c ->
+                    val started = mutableListOf<io.kuicksilver.http2.runtime.H2ClientConnection>()
+                    engine(c).h1.afterH2StartForTest = { client, _ -> started += client }
+                    assertEquals(HttpProtocolVersion.HTTP_2_0, c.get("https://127.0.0.1:$port/").version)
+                    val client = started.single()
+                    io.kuicksilver.ktor.client.h2
+                        .H2Conn(client, "route", 0L)
+                        .close() // the hard close (closeTransport)
+                    withTimeout(5.seconds) { client.awaitClosed() }
+                    // the cause of the connection's Http2Exception.ConnectionClosed
+                    val end =
+                        generateSequence(client.closeCause) { it.cause }
+                            .filterIsInstance<ConnectionEndedException>()
+                            .firstOrNull()
+                    assertIs<ConnectionEndedException.LocalClose>(end, "${client.closeCause}")
+                    assertEquals("the HTTP/2 connection was closed by the client", end.message)
                 }
             }
         }
