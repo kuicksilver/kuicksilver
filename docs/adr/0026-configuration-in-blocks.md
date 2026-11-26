@@ -268,7 +268,11 @@ The design left these cases open or met them only in the code; each was decided 
   either. Tests that need a server with fewer streams set the server engine's own
   `allowFewerBidiStreamsForTest` (an `@InternalKuicksilverApi` field of its configuration, public because the Ktor
   client's tests start such a server), which the engine passes to its `Http3Endpoint.bind`: per engine, never a global
-  switch that another test running at the same time would see.
+  switch that another test running at the same time would see. The seams of the floors, in one place: the request-stream floor (section
+  6.1) has two halves, the `Http3Endpoint.bind` overload's `allowFewerBidiStreams` argument (kuicksilver-http3) and the
+  server engine configuration's `allowFewerBidiStreamsForTest` that feeds it and the engine's own check
+  (kuicksilver-ktor-server); the section 6.2 floors keep `Http3Endpoint.allowFewerUniStreamsForTest` and
+  `allowSmallerStreamWindowForTest`, internal to kuicksilver-http3, set and reset only by its own tests.
 - **WebTransport options are named as written, and the connection window fits the sessions.** The HTTP/3 SETTINGS
   builder recorded the three per-session limits under one made-up key, so the server's refusal named
   `http3 { settings { webTransport { limits } } }`, which does not exist. Each option is recorded under its own name, and

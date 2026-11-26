@@ -65,13 +65,13 @@ internal fun ConnectionCore.memoryCeiling(): Long =
         config.limits.qlogBytes,
     ).fold(0L, ::satAdd)
 
-/** [a] + [b] for non-negative values, Long.MAX_VALUE where the sum overflows. */
+/** [a] + [b], Long.MAX_VALUE where the sum overflows; both must be non-negative (a negative one is not checked for). */
 internal fun satAdd(
     a: Long,
     b: Long,
 ): Long = if (a > Long.MAX_VALUE - b) Long.MAX_VALUE else a + b
 
-/** [a] x [b] for non-negative values, Long.MAX_VALUE where the product overflows. */
+/** [a] x [b], Long.MAX_VALUE where the product overflows; both must be non-negative (a negative one is not checked for). */
 internal fun satMul(
     a: Long,
     b: Long,

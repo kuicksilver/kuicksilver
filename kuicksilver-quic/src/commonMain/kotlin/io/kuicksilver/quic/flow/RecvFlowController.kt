@@ -66,7 +66,9 @@ internal class RecvFlowController(
             epochStartOffset = consumed
         }
         val next = advertised(consumed, effective)
-        if (next <= limit) return -1 // at the clamp (2^62-1): no credit left to give
+        // no update when nothing grew: at the clamp (2^62-1) no credit is left to give, and after a lower floor or a smaller
+        // window the new limit may be below the last one, which stands (an advertised limit never goes down)
+        if (next <= limit) return -1
         limit = next
         return limit
     }

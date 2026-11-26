@@ -5554,6 +5554,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.flow.FlowControlTest.windowD
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.flow.FlowControlTest.windowDoublesWhenReadFasterThanAWindowPerFourRtt
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.flow.FlowControlTest.windowNeverShrinks
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.flow.StreamLimitsTest.maxStreamsRaisedAfterHalfClosed
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.flow.StreamLimitsTest.negative_maxStreamsNeverExceeds2Pow60
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.flow.StreamLimitsTest.negative_streamLimit
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.flow.StreamLimitsTest.peerStreamLimitUni100
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.flow.StreamLimitsTest.peerStreamOfWrongInitiatorIsStateError

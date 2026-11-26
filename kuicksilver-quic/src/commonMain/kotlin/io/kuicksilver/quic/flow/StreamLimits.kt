@@ -100,11 +100,18 @@ internal class StreamLimits(
         return announce(i)
     }
 
+    /**
+     * The new MAX_STREAMS of kind [i]: the streams closed plus the concurrency, at most 2^60 (RFC 9000 section 19.11: the
+     * value "cannot exceed 2^60"); -1 when the ceiling leaves it where it was (no frame is due).
+     */
     private fun announce(i: Int): Long {
         peerBlockedAtGranted = peerBlockedAtGranted and (1 shl i).inv()
         closedAtUpdate[i] = peerClosed[i]
-        peerLimit[i] = peerClosed[i] + if (i == 0) localMaxBidi else localMaxUni
-        return peerLimit[i]
+        val concurrency = if (i == 0) localMaxBidi else localMaxUni
+        val next = if (concurrency > MAX_STREAMS_LIMIT - peerClosed[i]) MAX_STREAMS_LIMIT else peerClosed[i] + concurrency
+        if (next <= peerLimit[i]) return -1
+        peerLimit[i] = next
+        return next
     }
 
     /**
@@ -139,3 +146,6 @@ internal class StreamLimits(
         return ourLimit[i]
     }
 }
+
+/** The largest MAX_STREAMS value, 2^60 (RFC 9000 sections 4.6 and 19.11): a stream ID must fit a variable-length integer. */
+internal const val MAX_STREAMS_LIMIT: Long = 1L shl 60
