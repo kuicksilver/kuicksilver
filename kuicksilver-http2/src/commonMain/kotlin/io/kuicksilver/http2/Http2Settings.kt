@@ -143,7 +143,10 @@ public class Http2Settings private constructor(
             @SecuritySensitive
             public var maxEmptyFrames: Int = 100
 
-            /** A server's budget for the client's RST_STREAM frames (Rapid Reset): 33 a second, 1000 at once, as nghttp2. */
+            /**
+             * A server's budget for the client's RST_STREAM frames (Rapid Reset, CVE-2023-44487): 33 a second, 1000 at once, as
+             * nghttp2. At most [MAX_RESETS] (100 times that): a larger budget no longer bounds a connection's stream churn.
+             */
             @SecuritySensitive
             public var resets: RateLimit = RateLimit(33, 1_000)
 
@@ -151,9 +154,22 @@ public class Http2Settings private constructor(
              * The glitch budget: 330 a second, 10 000 at once (nghttp2's numbers). Counted events: PRIORITY, unknown frame
              * types, SETTINGS, empty DATA without END_STREAM, a PING with no DATA or HEADERS of ours since the previous PING (a
              * bandwidth probe that follows our data is free, as grpc-go's ping strikes), and every stream error the peer causes.
+             * At most [MAX_GLITCHES] (100 times the default), for the same reason as [resets].
              */
             @SecuritySensitive
             public var glitches: RateLimit = RateLimit(330, 10_000)
+
+            /** Holds the ceilings of the budgets. */
+            public companion object {
+                /**
+                 * The largest [resets] budget: 3300 a second, 100 000 at once, 100 times nghttp2's. Rapid Reset floods run at
+                 * hundreds of thousands of resets a second on one connection; a budget near that would let them through.
+                 */
+                public val MAX_RESETS: RateLimit = RateLimit(3_300, 100_000)
+
+                /** The largest [glitches] budget: 33 000 a second, 1 000 000 at once, 100 times the default. */
+                public val MAX_GLITCHES: RateLimit = RateLimit(33_000, 1_000_000)
+            }
         }
 
         private fun int(
@@ -177,6 +193,13 @@ public class Http2Settings private constructor(
             require(f.maxContinuationFrames >= 0) { "floodLimits { maxContinuationFrames } must not be negative" }
             require(f.maxControlFramesQueued >= 1) { "floodLimits { maxControlFramesQueued } must be positive" }
             require(f.maxEmptyFrames >= 0) { "floodLimits { maxEmptyFrames } must not be negative" }
+            require(f.resets.perSecond <= FloodLimits.MAX_RESETS.perSecond && f.resets.burst <= FloodLimits.MAX_RESETS.burst) {
+                "floodLimits { resets } must be at most ${FloodLimits.MAX_RESETS}: a larger budget no longer bounds Rapid Reset " +
+                    "(CVE-2023-44487), got ${f.resets}"
+            }
+            require(f.glitches.perSecond <= FloodLimits.MAX_GLITCHES.perSecond && f.glitches.burst <= FloodLimits.MAX_GLITCHES.burst) {
+                "floodLimits { glitches } must be at most ${FloodLimits.MAX_GLITCHES}, got ${f.glitches}"
+            }
             return Http2Settings(
                 int("headerTableSize", headerTableSize, 0..65_536L),
                 int("maxConcurrentStreams", maxConcurrentStreams, 0..Int.MAX_VALUE.toLong()),

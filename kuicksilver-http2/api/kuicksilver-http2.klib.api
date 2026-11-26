@@ -95,6 +95,13 @@ final class io.kuicksilver.http2/Http2Settings { // io.kuicksilver.http2/Http2Se
             final var resets // io.kuicksilver.http2/Http2Settings.Builder.FloodLimits.resets|{}resets[0]
                 final fun <get-resets>(): io.kuicksilver.config/RateLimit // io.kuicksilver.http2/Http2Settings.Builder.FloodLimits.resets.<get-resets>|<get-resets>(){}[0]
                 final fun <set-resets>(io.kuicksilver.config/RateLimit) // io.kuicksilver.http2/Http2Settings.Builder.FloodLimits.resets.<set-resets>|<set-resets>(io.kuicksilver.config.RateLimit){}[0]
+
+            final object Companion { // io.kuicksilver.http2/Http2Settings.Builder.FloodLimits.Companion|null[0]
+                final val MAX_GLITCHES // io.kuicksilver.http2/Http2Settings.Builder.FloodLimits.Companion.MAX_GLITCHES|{}MAX_GLITCHES[0]
+                    final fun <get-MAX_GLITCHES>(): io.kuicksilver.config/RateLimit // io.kuicksilver.http2/Http2Settings.Builder.FloodLimits.Companion.MAX_GLITCHES.<get-MAX_GLITCHES>|<get-MAX_GLITCHES>(){}[0]
+                final val MAX_RESETS // io.kuicksilver.http2/Http2Settings.Builder.FloodLimits.Companion.MAX_RESETS|{}MAX_RESETS[0]
+                    final fun <get-MAX_RESETS>(): io.kuicksilver.config/RateLimit // io.kuicksilver.http2/Http2Settings.Builder.FloodLimits.Companion.MAX_RESETS.<get-MAX_RESETS>|<get-MAX_RESETS>(){}[0]
+            }
         }
     }
 

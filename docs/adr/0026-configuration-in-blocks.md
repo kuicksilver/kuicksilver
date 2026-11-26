@@ -246,3 +246,9 @@ The design left these cases open or met them only in the code; each was decided 
   the only configuration classes besides `TlsConfig` to keep them. They are `@InternalKuicksilverApi` now, and each class
   gains a stable `toBuilder()`, as `QuicConfig` and `QuicEndpointConfig` have, which copies every value, the server's
   `earlyDataContext` included. `TlsConfig` keeps its public readers for `TrustConfig.Custom`.
+- **The HTTP/2 flood budgets have a ceiling.** `floodLimits { resets }` and `glitches` took any `RateLimit`, so the Rapid
+  Reset defence (CVE-2023-44487) could be set to numbers no client reaches. A budget above 100 times its default
+  (nghttp2's), `RateLimit(3300, 100000)` for resets and `RateLimit(33000, 1000000)` for glitches, is refused by `build()`:
+  floods run at hundreds of thousands of resets a second on one connection, legitimate clients at a handful, so the ceiling
+  leaves room for any real application and still stops a flood. The ceilings are public (`FloodLimits.MAX_RESETS`,
+  `MAX_GLITCHES`).

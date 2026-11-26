@@ -58,6 +58,7 @@ public final class io/kuicksilver/http2/Http2Settings$Builder {
 }
 
 public final class io/kuicksilver/http2/Http2Settings$Builder$FloodLimits {
+	public static final field Companion Lio/kuicksilver/http2/Http2Settings$Builder$FloodLimits$Companion;
 	public final fun getGlitches ()Lio/kuicksilver/config/RateLimit;
 	public final fun getMaxContinuationFrames ()I
 	public final fun getMaxControlFramesQueued ()I
@@ -68,6 +69,11 @@ public final class io/kuicksilver/http2/Http2Settings$Builder$FloodLimits {
 	public final fun setMaxControlFramesQueued (I)V
 	public final fun setMaxEmptyFrames (I)V
 	public final fun setResets (Lio/kuicksilver/config/RateLimit;)V
+}
+
+public final class io/kuicksilver/http2/Http2Settings$Builder$FloodLimits$Companion {
+	public final fun getMAX_GLITCHES ()Lio/kuicksilver/config/RateLimit;
+	public final fun getMAX_RESETS ()Lio/kuicksilver/config/RateLimit;
 }
 
 public final class io/kuicksilver/http2/Http2Settings$Companion {

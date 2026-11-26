@@ -1271,6 +1271,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   HTTP/3 did not serve stays at `observability { protocolChoiceLogLevel }` (Info), which the default logger leaves out.
 - HTTP/3: `Http3Settings.maxInformationalResponses`, ignored since 0.2.1, is removed (breaking). Interim responses are
   bounded by `maxFieldSectionSize` (RFC 9110 section 15.2).
+- HTTP/2: the flood budgets have a ceiling (breaking strictness): `http2Settings { floodLimits { resets } }` takes at most
+  `RateLimit(3300, 100000)` and `glitches` at most `RateLimit(33000, 1000000)`, 100 times their defaults
+  (`FloodLimits.MAX_RESETS`, `MAX_GLITCHES`), so the Rapid Reset defence (CVE-2023-44487) cannot be configured away.
 - QUIC: `quicConfig { maxIdleTimeout }` and `expert { maxAckDelay }` must be whole milliseconds, and `maxAckDelay` at
   least 0 (breaking strictness, RFC 9000 section 18.2). Both go on the wire in milliseconds while the connection timed
   itself on the full `Duration`: a fraction was advertised rounded down (`500.microseconds` as 0, "no idle timeout"). The

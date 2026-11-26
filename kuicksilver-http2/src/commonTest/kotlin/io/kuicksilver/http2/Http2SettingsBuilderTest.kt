@@ -74,4 +74,30 @@ class Http2SettingsBuilderTest {
         val g = assertFailsWith<IllegalArgumentException> { http2Settings { floodLimits { maxControlFramesQueued = 0 } } }
         assertTrue("floodLimits { maxControlFramesQueued }" in g.message.orEmpty(), g.message)
     }
+
+    /**
+     * Self-attack on the Rapid Reset defence (CVE-2023-44487): a budget beyond 100 times nghttp2's would let a flood through,
+     * so the flood budgets have a ceiling; the ceiling itself is accepted.
+     */
+    @Test fun negative_floodBudgetsAboveTheirCeilingAreRefused() {
+        for (bad in listOf(RateLimit(3_301, 1_000), RateLimit(33, 100_001), RateLimit(Int.MAX_VALUE, Int.MAX_VALUE))) {
+            val e = assertFailsWith<IllegalArgumentException>("$bad") { http2Settings { floodLimits { resets = bad } } }
+            assertEquals(
+                "floodLimits { resets } must be at most RateLimit(perSecond=3300, burst=100000): a larger budget no longer bounds " +
+                    "Rapid Reset (CVE-2023-44487), got $bad",
+                e.message,
+            )
+        }
+        val g = assertFailsWith<IllegalArgumentException> { http2Settings { floodLimits { glitches = RateLimit(33_001, 10) } } }
+        assertTrue(g.message.orEmpty().startsWith("floodLimits { glitches } must be at most"), g.message)
+        val top =
+            http2Settings {
+                floodLimits {
+                    resets = Http2Settings.Builder.FloodLimits.MAX_RESETS
+                    glitches = Http2Settings.Builder.FloodLimits.MAX_GLITCHES
+                }
+            }
+        assertEquals(3_300, top.resetsPerSecond)
+        assertEquals(100_000, top.resetBurst)
+    }
 }
