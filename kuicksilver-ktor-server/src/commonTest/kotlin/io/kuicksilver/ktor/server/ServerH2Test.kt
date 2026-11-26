@@ -80,7 +80,6 @@ class ServerH2Test {
     ): Pair<Server, Int> =
         tlsServer(
             configure = {
-                http2 { enabled = true }
                 http3 { enabled = false }
                 configure()
             },
@@ -170,10 +169,14 @@ class ServerH2Test {
             }
         }
 
-    /** 0.3.0: HTTP/2 is opt-in; without `http2` the ALPN of a TLS connector stays `http/1.1`, as in 0.2. */
-    @Test fun disabledByDefaultOffersOnlyHttp11() =
+    /** HTTP/2 is on by default since 0.3.0; `http2 { enabled = false }` keeps the ALPN of a TLS connector at `http/1.1`, as in 0.2. */
+    @Test fun disabledOffersOnlyHttp11() =
         serverTest {
-            val (server, port) = tlsServer(configure = { http3 { enabled = false } }) { routing { get("/") { call.respondText("ok") } } }
+            val (server, port) =
+                tlsServer(configure = {
+                    http3 { enabled = false }
+                    http2 { enabled = false }
+                }) { routing { get("/") { call.respondText("ok") } } }
             try {
                 RawH2Client.connect(port, listOf("h2", "http/1.1")).use { assertEquals("http/1.1", it.alpn) }
                 client().use { c ->
@@ -332,7 +335,7 @@ class ServerH2Test {
     @Test fun negative_altSvcGoesOutAsAnAltSvcFrameOnH2() =
         h3ServerTest {
             val (server, port) =
-                tlsServer(configure = { http2 { enabled = true } }) {
+                tlsServer {
                     routing {
                         get("/") { call.respondText("ok") }
                         get("/own") {
@@ -525,7 +528,6 @@ class ServerH2Test {
         serverTest {
             val server =
                 kuicksilverServer(null, configure = {
-                    http2 { enabled = true }
                     connector {
                         host = "127.0.0.1"
                         port = 0

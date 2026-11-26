@@ -177,8 +177,8 @@ class EngineMainTest {
             @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
             return server.engine.configuration.http2.enabled
         }
-        assertEquals(false, http2())
-        assertEquals(true, http2("-P:kuicksilver.http2.enabled=true"))
+        assertEquals(true, http2(), "on by default since 0.3.0")
+        assertEquals(false, http2("-P:kuicksilver.http2.enabled=false"))
         assertFailsWith<IllegalArgumentException> { http2("-P:kuicksilver.http2.enabled=yes") }
     }
 

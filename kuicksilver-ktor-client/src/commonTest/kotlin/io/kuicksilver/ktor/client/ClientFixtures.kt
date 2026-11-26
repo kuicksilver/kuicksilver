@@ -66,6 +66,9 @@ internal suspend fun testServer(
                 tls()
             }
         }
+        // the client's HTTP/1.1 path over TLS is what most tests drive: HTTP/2, on by default on the server since 0.3.0,
+        // is turned on by the tests of the client's HTTP/2 path
+        http2 { enabled = false }
         configure()
     }
     val server =

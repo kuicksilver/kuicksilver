@@ -225,14 +225,14 @@ class ServerHttp3AdvertisingTest {
                             altSvcStore = store
                             expert {
                                 raceHeadStart = io.kuicksilver.ktor.client.RaceHeadStart.NoRace
-                            } // HTTP/1.1 only once HTTP/3 failed: the outcome does not depend on timing
+                            } // TCP only once HTTP/3 failed: the outcome does not depend on timing
                         }
                     }
                 }
             try {
-                // advertised: the client learns the alternative from an HTTP/1.1 response
+                // advertised: the client learns the alternative from an HTTP/2 response (HTTP/2 is on by default)
                 val learned = withTimeout(10.seconds) { client.get("$origin/") }
-                assertEquals(HttpProtocolVersion.HTTP_1_1, learned.kuicksilverDiagnostics?.protocol)
+                assertEquals(HttpProtocolVersion.HTTP_2_0, learned.kuicksilverDiagnostics?.protocol)
                 assertEquals(listOf(port), store.get(origin).map { it.port }, "Alt-Svc learned before Drain")
                 server.advertising(Http3Advertising.Drain)
                 val refused =
@@ -246,7 +246,7 @@ class ServerHttp3AdvertisingTest {
                 assertEquals(true, resp.endsWith("ok") && resp.contains("Alt-Svc: clear\r\n"), resp)
                 val refusedCall = withTimeout(10.seconds) { client.get("$origin/") }
                 val d = assertNotNull(refusedCall.kuicksilverDiagnostics)
-                assertEquals(HttpProtocolVersion.HTTP_1_1, d.protocol)
+                assertEquals(HttpProtocolVersion.HTTP_2_0, d.protocol)
                 assertEquals(FallbackReason.Refused, d.fallback, "${d.h3Failure}")
                 assertEquals(AlternativeSource.AltSvc, d.alternativeSource)
                 assertEquals("ok", refusedCall.bodyAsText())

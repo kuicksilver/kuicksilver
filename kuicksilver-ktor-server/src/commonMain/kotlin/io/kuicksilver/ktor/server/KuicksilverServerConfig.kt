@@ -486,12 +486,14 @@ public class Http1ServerConfig internal constructor() {
 @KuicksilverDsl
 public class Http2ServerConfig internal constructor() {
     /**
-     * Serve HTTP/2 on the TLS connectors; false by default, so their ALPN stays `http/1.1`. Without it a plain connector's
-     * client that sends the HTTP/2 preface is answered `505 HTTP Version Not Supported`, unless that connector has h2c. Over
-     * TLS 1.3, and over TLS 1.2 where `tls { versions = TlsVersions.Tls12And13 }` allows it (RFC 9113 section 9.2).
-     * WebSockets come over HTTP/2 too (RFC 8441), unless `webSockets { overHttp2 = false }`.
+     * Serve HTTP/2 on the TLS connectors; true by default (since 0.3.0): their ALPN offers `h2`, then `http/1.1`, so a
+     * client that offers both (browsers, OkHttp, the JDK's client, curl, Kuicksilver's) gets HTTP/2. False keeps the ALPN at
+     * `http/1.1`: the switch for a middlebox that breaks HTTP/2. Without it a plain connector's client that sends the
+     * HTTP/2 preface is answered `505 HTTP Version Not Supported`, unless that connector has h2c. Over TLS 1.3, and over
+     * TLS 1.2 where `tls { versions = TlsVersions.Tls12And13 }` allows it (RFC 9113 section 9.2). WebSockets come over
+     * HTTP/2 too (RFC 8441), unless `webSockets { overHttp2 = false }`.
      */
-    public var enabled: Boolean = false
+    public var enabled: Boolean = true
 
     /**
      * Null (the default): each HTTP/2 connection that breaks a flood limit of [settings] is ended with GOAWAY

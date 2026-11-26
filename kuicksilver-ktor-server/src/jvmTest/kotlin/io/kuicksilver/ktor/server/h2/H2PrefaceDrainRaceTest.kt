@@ -159,7 +159,6 @@ class H2PrefaceDrainRaceTest {
             val prefaceWon = CompletableDeferred<Unit>()
             val (server, port) =
                 tlsServer(configure = {
-                    http2 { enabled = true }
                     http3 { enabled = false }
                     prefaceWinsThenStop(prefaceWon)
                 }) { routing { get("/") { call.respondText("ok") } } }
@@ -431,7 +430,6 @@ class H2PrefaceDrainRaceTest {
         serverTest {
             val (server, port) =
                 tlsServer(configure = {
-                    http2 { enabled = true }
                     http3 { enabled = false }
                     holdUntilStopping()
                 }) { routing { get("/") { call.respondText("ok") } } }

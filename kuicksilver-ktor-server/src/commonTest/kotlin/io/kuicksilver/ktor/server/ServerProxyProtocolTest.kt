@@ -238,7 +238,7 @@ class ServerProxyProtocolTest {
     @Test fun http2CallsReportTheClient() =
         serverTest {
             val (server, port) =
-                tlsServer(configure = { http2 { enabled = true } }, connector = { proxyProtocol { trust("127.0.0.1") } }) { reportOrigin() }
+                tlsServer(connector = { proxyProtocol { trust("127.0.0.1") } }) { reportOrigin() }
             val selector = SelectorManager(Dispatchers.IO)
             try {
                 val tcp = connectTcp(selector, InetSocketAddress("127.0.0.1", port))

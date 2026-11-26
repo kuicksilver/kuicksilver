@@ -3490,7 +3490,7 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2Stream
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2StreamTest.negative_handlerAnsweringAResetStreamLeavesTheOthers
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2StreamTest.negative_handlerThrowingAfterItsStreamWasResetLeavesTheOthers
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2StreamTest.negative_malformedBodyUnderARunningHandlerLeavesTheConnection
-kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2Test.disabledByDefaultOffersOnlyHttp11
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2Test.disabledOffersOnlyHttp11
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2Test.expectContinueGets100BeforeTheHandlerReads
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2Test.expectContinueGetsAnInterim100
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2Test.gracefulStopTwoPhaseGoAway
@@ -4038,6 +4038,8 @@ kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.LoopbackSquatterT
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.NodeH2WebSocketInteropTest.nodeClientAgainstOurServer
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.NodeH2WebSocketInteropTest.ourClientAgainstNodeServer
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.RespondBytesHeapJvmTest.negative_largeBytesResponseFitsAHeapWithoutRoomForACopy
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.ServerDefaultAlpnJvmTest.alpnOrderIsH2ThenHttp11
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.ServerDefaultAlpnJvmTest.defaultTlsConnectorNegotiatesH2
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.ServerH2JdkClientTest.jdkClientOverH2
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.ServerH2JdkClientTest.oversizedFieldSectionGets431WithDate
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.ServerPemFilesJvmTest.negative_aCombinedPemIsRefusedWithReloadInterval

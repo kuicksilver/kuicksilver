@@ -240,7 +240,6 @@ class ServerTls12Test {
             val (server, port) =
                 tlsServer(configure = {
                     http3 { enabled = false }
-                    http2 { enabled = true }
                 }, connector = { tls { versions = TlsVersions.Tls12And13 } }) { routing { get("/") { call.respondText("h2") } } }
             try {
                 val o = tls12(port, listOf("h2", "http/1.1"), request = null)
@@ -339,7 +338,6 @@ class ServerTls12Test {
                 val server =
                     kuicksilverServer(log, configure = {
                         http3 { enabled = false }
-                        http2 { enabled = true }
                         tlsConnector {
                             tls { this.identity = identity }
                             host = "127.0.0.1"

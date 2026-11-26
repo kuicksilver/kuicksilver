@@ -27,7 +27,6 @@ class ServerSniTcpAlpnTest {
         val id = ServerFixtures.identity()
         return tlsServer(
             configure = {
-                http2 { enabled = true }
                 http3 { enabled = true }
             },
             connector = { tls { sniSelector = { ServerTlsOverride(id, alpn = alpn) } } },

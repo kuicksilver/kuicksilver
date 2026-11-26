@@ -60,7 +60,7 @@ class ServerConfigMappingTest {
         assertNull(c.tls.keylog)
         assertEquals(45.seconds, c.http1.idleTimeout)
         assertEquals(false, c.http1.allowBareLf)
-        assertEquals(false, c.http2.enabled, "HTTP/2 stays opt-in until the commit that turns it on")
+        assertEquals(true, c.http2.enabled, "on by default since 0.3.0")
         assertNull(c.http2.repeatOffenderPenalty)
         assertEquals(true, c.http3.enabled)
         assertEquals(true, c.http3.altSvc)

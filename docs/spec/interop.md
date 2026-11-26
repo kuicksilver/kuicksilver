@@ -190,7 +190,7 @@ Third-party clients outside the runner: `curl --http3-only` (the `ymuski/curl-ht
 ## h2spec: the HTTP/2 server (h2spec 2.6.0, 2026-11-06)
 
 `tools/interop/h2spec.sh` runs `summerwind/h2spec:2.6.0` (`-t -k`, TLS with ALPN `h2`, 5 s per case) against the Ktor
-server engine with `http2 = true` and default `Http2Settings` (`tools/interop/h2-server.sh`, `H2specServer.kt` in
+server engine as configured by default (HTTP/2 on, default `Http2Settings`) (`tools/interop/h2-server.sh`, `H2specServer.kt` in
 `kuicksilver-soak`). Every case must pass and none may be skipped; the script records the number of cases (146) so that a
 new image is noticed. The image is pinned by its registry digest in the script, and since 0.3.0 hosted CI runs it too
 (`build.yml`, job `linux-native`, the linuxX64 server); its counts appear on the documentation site's conformance page.

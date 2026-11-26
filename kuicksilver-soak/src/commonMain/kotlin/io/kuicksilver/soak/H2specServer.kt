@@ -58,7 +58,6 @@ public fun h2specServerMain(args: Array<String>) {
                         allowMisdirectedHosts = gateway
                     }
                 }
-                http2 { enabled = true }
                 http3 { enabled = false }
             }) {
                 routing {

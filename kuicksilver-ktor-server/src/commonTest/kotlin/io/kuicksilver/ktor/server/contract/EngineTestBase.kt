@@ -190,6 +190,8 @@ abstract class EngineTestBase<TEngine : ApplicationEngine, TConfiguration : Appl
                     host = "127.0.0.1"
                     port = 0
                 }
+                // the H1 suites drive HTTP/1.1 over TLS: HTTP/2, on by default since 0.3.0, is the H2 suites' to test
+                if (protocol == ContractProtocol.H1) (this as KuicksilverApplicationEngine.Configuration).http2 { enabled = false }
             }
             configure(this)
         }

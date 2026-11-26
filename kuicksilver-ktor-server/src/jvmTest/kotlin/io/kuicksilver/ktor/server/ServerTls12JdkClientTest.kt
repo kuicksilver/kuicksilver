@@ -306,7 +306,6 @@ class ServerTls12JdkClientTest {
             val server =
                 kuicksilverServer(null, configure = {
                     http3 { enabled = false }
-                    http2 { enabled = true }
                     tlsConnector {
                         tls {
                             identity =
@@ -367,7 +366,6 @@ class ServerTls12JdkClientTest {
             val (server, port) =
                 tlsServer(configure = {
                     http3 { enabled = false }
-                    http2 { enabled = true }
                 }, connector = { tls { versions = TlsVersions.Tls12And13 } }) {
                     routing { get("/") { call.respondText("h2 ${call.request.httpVersion}") } }
                 }
@@ -409,7 +407,6 @@ class ServerTls12JdkClientTest {
             val (server, port) =
                 tlsServer(configure = {
                     http3 { enabled = false }
-                    http2 { enabled = true }
                     http3 { altSvc = false }
                 }, connector = { tls { versions = TlsVersions.Tls12And13 } }) { routing { get("/") { call.respondText("h2") } } }
             try {

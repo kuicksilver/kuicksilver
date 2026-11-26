@@ -559,7 +559,7 @@ class GuideSamplesTest {
                         }
                     }
 
-                client.use { c -> assertEquals("HTTP/1.1 [client.test]", c.get("https://127.0.0.1:$port/").bodyAsText()) }
+                client.use { c -> assertEquals("HTTP/2 [client.test]", c.get("https://127.0.0.1:$port/").bodyAsText()) }
                 HttpClient(Kuicksilver) {
                     engine {
                         tls {
@@ -582,8 +582,9 @@ class GuideSamplesTest {
                 assertIs<QuicException.ConnectionLost.TransportClosed>(without, without.toString())
                 assertEquals(0x0174L, without.code)
                 assertIs<TlsException.AlertReceived>(without.cause, without.toString())
-                // over TCP (H1Only), and in Preferred mode, where HTTP/3 fails first and the call goes on over TCP: there the TLS
-                // handshake completes on the client's side and the alert ends the request, so the TCP failure is thrown alone
+                // over TCP (HTTP/3 off), and in Preferred mode, where HTTP/3 fails first and the call goes on over TCP: there the
+                // TLS handshake completes on the client's side and the alert ends the HTTP/2 connection (the server offers h2 by
+                // default), so the TCP failure is thrown alone
                 val h3Failures = mutableListOf<Throwable?>()
                 for (mode in listOf(null, Http3Discovery.Preferred)) {
                     val e =
@@ -615,9 +616,11 @@ class GuideSamplesTest {
                                 }
                             }.use { c -> c.get("https://127.0.0.1:$port/") }
                         }
-                    assertEquals("TLS alert received from the peer: certificate_required (116)", e.message, "$mode: $e")
-                    assertIs<TlsException.AlertReceived>(generateSequence(e) { it.cause }.last(), "$mode: $e")
-                    assertEquals(emptyList(), e.suppressed.toList(), "$mode: $e")
+                    assertIs<io.kuicksilver.http2.runtime.Http2Exception.ConnectionClosed>(e, "$mode: $e")
+                    assertEquals("the connection was lost: TLS alert received from the peer: certificate_required (116)", e.message)
+                    assertIs<TlsException.AlertReceived>(generateSequence<Throwable>(e) { it.cause }.last(), "$mode: $e")
+                    // nothing but the diagnostics of the failed call rides along
+                    assertEquals(emptyList(), e.suppressed.filter { it !is FailureDiagnostics }, "$mode: $e")
                     if (mode == null) {
                         assertEquals(emptyList(), h3Failures, "H1Only never tries HTTP/3")
                     } else {

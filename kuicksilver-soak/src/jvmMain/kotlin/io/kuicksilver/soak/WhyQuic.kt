@@ -88,7 +88,6 @@ internal fun whyQuicServer(
                     host = "127.0.0.1"
                     this.port = port
                 }
-                http2 { enabled = true }
                 http3 {
                     enabled = true
                     earlyData { enabled = true }

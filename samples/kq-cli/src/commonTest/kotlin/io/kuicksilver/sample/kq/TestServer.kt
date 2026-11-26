@@ -41,7 +41,6 @@ suspend fun startServer(
                 this.host = host
                 this.port = port
             }
-            http2 { enabled = true } // h2 before http/1.1 in ALPN
             http3 { earlyData { enabled = true } } // session tickets for QUIC, GET runs in 0-RTT
         }, module = Application::kqTestModule)
     server.startSuspend(false)

@@ -113,7 +113,7 @@ public class KuicksilverApplicationEngine(
         /** HTTP/2 on the TLS connectors; change it with [http2]. */
         public val http2: Http2ServerConfig = Http2ServerConfig()
 
-        /** Configures [http2] in place: `http2 { enabled = true }`. */
+        /** Configures [http2] in place: `http2 { enabled = false }`. */
         public fun http2(block: Http2ServerConfig.() -> Unit) {
             http2.block()
         }
@@ -583,7 +583,7 @@ public class KuicksilverApplicationEngine(
                 @OptIn(ExperimentalKuicksilverApi::class)
                 require(identity == null || h2c == H2cMode.Off) {
                     "h2c ($h2c) needs a plain connector, but $c serves TLS with the identity of tls { }: drop the identity " +
-                        "(kuicksilver.tls.*) for that port, or serve HTTP/2 there over TLS (http2 { enabled = true })"
+                        "(kuicksilver.tls.*) for that port, or serve HTTP/2 there over TLS (on by default)"
                 }
                 if (identity != null) {
                     val plain = c as? KuicksilverPlainConnector

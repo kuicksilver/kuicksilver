@@ -165,6 +165,7 @@ class ClientH3Test {
                         host = "::1"
                         port = 0
                     }
+                    http2 { enabled = false }
                 }) { routing { get("/") { call.respondText("v=${call.request.local.version}") } } }
             val started = runCatching { server.startSuspend(false) }
             if (started.isFailure) {
@@ -203,6 +204,7 @@ class ClientH3Test {
                         host = "::1"
                         port = 0
                     }
+                    http2 { enabled = false }
                 }) { routing { get("/") { call.respondText("v=${call.request.local.version}") } } }
             if (runCatching { server.startSuspend(false) }.isFailure) {
                 println("h1ToIpv6Loopback skipped: needs an IPv6 loopback")
