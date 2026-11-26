@@ -54,8 +54,9 @@ public class Http2Settings(
     public val maxHeaderBlockTime: Duration = 10.seconds,
     /**
      * The burst of the glitch budget; default 10 000 (the numbers are nghttp2's). Counted events: PRIORITY, unknown frame
-     * types, SETTINGS, empty DATA without END_STREAM, a PING with no DATA or HEADERS of ours since the previous PING (a
-     * bandwidth probe that follows our data is free, as grpc-go's ping strikes), and every stream error the peer causes.
+     * types, SETTINGS after the peer's first (its preface, RFC 9113 section 3.4, is free), empty DATA without END_STREAM, a
+     * PING with no DATA or HEADERS of ours since the previous PING (a bandwidth probe that follows our data is free, as
+     * grpc-go's ping strikes), and every stream error the peer causes.
      */
     public val glitchBurst: Int = 10_000,
     /** The refill rate of the glitch budget per second; 0: it never refills; default 330, as nghttp2. */

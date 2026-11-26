@@ -259,9 +259,9 @@ class ServerH2FloodTest {
     /**
      * MadeYouReset one request at a time: each WINDOW_UPDATE of 0 is answered with RST_STREAM(PROTOCOL_ERROR) before the
      * next request goes out, so the server's reset count does not depend on how it batches its reads or on how fast
-     * handlers end. Each of our resets is a glitch: the 49 the budget has left after the client's SETTINGS are answered
-     * with RST_STREAM, and the request that would take one more is answered with GOAWAY(ENHANCE_YOUR_CALM) instead, never
-     * later. The client writes only after an answer, so nothing it sends can arrive after the server closed. Requests
+     * handlers end. Each of our resets is a glitch: the 50 of the budget are answered with RST_STREAM (the client's preface
+     * SETTINGS takes none), and the request that would take one more is answered with GOAWAY(ENHANCE_YOUR_CALM) instead,
+     * never later. The client writes only after an answer, so nothing it sends can arrive after the server closed. Requests
      * refused because handlers of reset streams still run (REFUSED_STREAM) are not the client's errors (those streams are
      * closed for the protocol) and take nothing from the budget.
      */
@@ -297,8 +297,8 @@ class ServerH2FloodTest {
                     }
                     val end = assertNotNull(goAway, "no GOAWAY after $resets resets and $refused refusals")
                     assertEquals(calm, end.errorCode, "GOAWAY after $resets resets and $refused refusals")
-                    // the budget less the one the client's preface SETTINGS took (every SETTINGS frame is a glitch)
-                    assertEquals(MYR_GLITCHES - 1, resets, "resets before the GOAWAY ($refused refused)")
+                    // the whole budget: the client's preface SETTINGS takes none
+                    assertEquals(MYR_GLITCHES, resets, "resets before the GOAWAY ($refused refused)")
                 }
                 withTimeout(10.seconds) { server.engine.h2FloodEnds.first { it == 1L } }
                 withTimeout(10.seconds) { handlers.running.first { it == 0 } }

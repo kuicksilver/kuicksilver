@@ -335,7 +335,7 @@ the client](ktor.md#http2-on-the-client), [on the server](ktor.md#http2-on-the-s
 | `resetBurst` | `Int` | 1000 | at least 1 | 0.3.0 | a server's budget for the client's RST_STREAM frames (Rapid Reset), burst (as nghttp2) |
 | `resetsPerSecond` | `Int` | 33 | at least 0 | 0.3.0 | refill rate of that budget per second; 0: it never refills |
 | `maxHeaderBlockTime` | `Duration` | 10 s | positive | 0.3.0 | how long one field block (HEADERS and its CONTINUATION frames) may take to arrive |
-| `glitchBurst` | `Int` | 10 000 | at least 1 | 0.3.0 | burst of the glitch budget (PRIORITY, unknown frame types, SETTINGS, empty DATA, an unanswered-data PING, every stream error the peer causes) |
+| `glitchBurst` | `Int` | 10 000 | at least 1 | 0.3.0 | burst of the glitch budget (PRIORITY, unknown frame types, SETTINGS after the preface, empty DATA, an unanswered-data PING, every stream error the peer causes) |
 | `glitchesPerSecond` | `Int` | 330 | at least 0 | 0.3.0 | refill rate of the glitch budget per second; 0: it never refills |
 
 ## Ktor client engine

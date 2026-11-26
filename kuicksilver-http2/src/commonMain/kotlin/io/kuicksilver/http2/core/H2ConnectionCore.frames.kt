@@ -347,7 +347,9 @@ internal fun H2ConnectionCore.onSettings(
         ourSettingsAcknowledged()
         return
     }
-    glitch(now, "SETTINGS")
+    // the first one is the peer's connection preface (RFC 9113 section 3.4: "MUST" be its first frame, [onFrame] holds it
+    // to that), owed by every connection: no glitch. Every later SETTINGS frame costs one (CVE-2019-9515)
+    if (peerPrefaceSettingsTaken) glitch(now, "SETTINGS") else peerPrefaceSettingsTaken = true
     // SETTINGS_HEADER_TABLE_SIZE: the smallest and the last value of this frame (RFC 7541 section 4.2: both are signalled),
     // applied to the encoder with our acknowledgement below
     var tableMin = -1L

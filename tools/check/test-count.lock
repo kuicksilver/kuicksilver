@@ -88,6 +88,7 @@ kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.CompressionOrderTest.
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodClassesTest.goLikeSlowReaderTakesNoGlitch
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodClassesTest.negative_dataDribbleHoldsOneFramePerStream
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodClassesTest.negative_emptyFrameFloodsWithoutReading
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodClassesTest.negative_onlyThePrefaceSettingsIsFree
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodClassesTest.negative_pingFloodFillsTheQueueBeforeTheGlitchBudget
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodClassesTest.negative_pingFloodWithoutReading
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodClassesTest.negative_priorityShufflingWithoutReading
