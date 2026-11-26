@@ -328,8 +328,12 @@ see [Misdirected requests](server-proxies.md#misdirected-requests).
 The client offers TLS 1.2 and TLS 1.3 by default, over TCP; the server picks the highest both speak. TLS 1.2 runs under
 a fixed profile: ECDHE key exchange with AES-GCM or ChaCha20-Poly1305 (AEAD) suites only, so a server that offers only CBC
 suites or static RSA key exchange fails the handshake. TLS 1.3 only (`tls { versions = TlsVersions.Tls13 }`; the default is `TlsVersions.Tls12And13`) refuses TLS 1.2
-servers instead; Encrypted Client Hello needs it ([below](#encrypted-client-hello-experimental)). HTTP/3 is always TLS
-1.3 (QUIC). A server that fails: [troubleshooting](troubleshooting.md#the-client-cannot-connect-to-a-server-that-speaks-tls-12-only).
+servers instead; a host with an Encrypted Client Hello configuration gets TLS 1.3 only either way
+([below](#encrypted-client-hello-experimental)). HTTP/3 is always TLS 1.3 (QUIC). Under TLS 1.2 the certificates travel
+in the clear, the server's chain and the client's own: a client with a `tls { identity }` is better set to
+`TlsVersions.Tls13`. With `TlsVersions.Tls12And13` and HTTP/2 on, a `keyExchangeGroups` list without `SECP256R1` is
+refused (HTTP/2 over TLS 1.2 needs P-256, RFC 9113 section 9.2.2). Every refusal of a `tls { }` or `proxies { tls { } }`
+setting comes when the client engine is created. A server that fails: [troubleshooting](troubleshooting.md#the-client-cannot-connect-to-a-server-that-speaks-tls-12-only).
 
 ## TLS 1.2 on the server
 
@@ -421,9 +425,9 @@ val client =
   TCP; the TLS (or QUIC) hop to an `https://` or CONNECT-UDP proxy has a ClientHello of its own, which never offers the
   origin's configuration: it sends GREASE as `tls { ech { grease } }` says, and `proxies { tls { ech { configLists } } }`
   may set the proxy's own (its entry for the proxy's host is what that hop offers). A rejection on that hop fails the request as a proxy failure, never as a retry of the origin's ECH.
-- **TLS 1.3 only.** ECH needs TLS 1.3 (RFC 9849 section 6.1): with a `tls` block that allows TLS 1.2, as the default
-  does, `configLists` fails the engine's creation and the records' `ech` is not used; set `tls { versions }` to TLS 1.3
-  only (`TlsVersions.Tls13`).
+- **TLS 1.3 only.** ECH needs TLS 1.3 (RFC 9849 section 6.1): under the default `TlsVersions.Tls12And13`, the
+  connections to a host with an ECH configuration (from `configLists` or its HTTPS record) are TLS 1.3 only, the retry
+  after the server securely disabled ECH included; other hosts keep TLS 1.2.
 - **Unusable configurations.** A `configLists` entry with no ECHConfig this build can use, or any entry in a build without
   ECH (a system OpenSSL), fails the engine's creation with `IllegalArgumentException` (two different messages): a list
   given for a host never turns into GREASE with the host's name in the clear. The engine builds each entry's client

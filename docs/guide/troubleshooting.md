@@ -839,8 +839,8 @@ without pins unless `proxies { tls { trust = ... } }` says otherwise, so a proxy
 An alert or a closed connection usually means the proxy does not speak TLS on that port (an `http://` proxy named as
 `https://`); from a CONNECT-UDP proxy, `AlertReceived` with certificate_required (116) means it wants a client
 certificate, which only `proxies { tls { identity = ... } }` gives (the engine's `tls { identity }` is the origin's), and
-no_application_protocol (120) that it does not offer `h3`. A `proxies { tls { } }` limited to TLS 1.2 cannot reach a CONNECT-UDP
-proxy at all: QUIC is TLS 1.3. A failure of the origin's TLS behind the proxy is a `TlsException`, not a `ProxyTlsException`.
+no_application_protocol (120) that it does not offer `h3`. The QUIC hop to a CONNECT-UDP proxy is always TLS 1.3, whatever
+`proxies { tls { versions } }` allows over TCP. A failure of the origin's TLS behind the proxy is a `TlsException`, not a `ProxyTlsException`.
 
 ### A Ktor client call failed: over which transport?
 
@@ -850,8 +850,9 @@ setup that failed with its stage and address (a QUIC one also with `quicProgress
 a silent server, `HandshakeStarted` a server that answered and then stopped), and a connect timeout as one failure per
 attempt it cut short, or as `NameLookup`, `PoolWait` or `H2DialWait` when the time went to waiting before any address
 was tried (`PoolWait`: raise `pool { maxConnectionsPerRoute }`, or find the calls holding the connections): a `TlsHandshake` failure with `TlsException.AlertReceived`
-(`protocol_version` or `handshake_failure`) is a server the client's TLS versions and suites do not meet ([a server that
-speaks TLS 1.2 only](#the-client-cannot-connect-to-a-server-that-speaks-tls-12-only)); `TcpConnect` failures for every address mean nothing listens there or a
+(`protocol_version` or `handshake_failure`) is a client set to TLS 1.3 only (`TlsVersions.Tls13`) or an ECH host (always
+TLS 1.3) meeting a TLS 1.2 server, or a server that speaks neither TLS 1.2 with the client's suites nor TLS 1.3 ([a server
+that speaks TLS 1.2 only](#the-client-cannot-connect-to-a-server-that-speaks-tls-12-only)); `TcpConnect` failures for every address mean nothing listens there or a
 firewall rejects it; a `QuicHandshake` timeout is UDP blocked ([handshake timeout](#connect-fails-with-handshake-timeout-after-10s)).
 It is null on a connection's failure met while reading a response body (the instance every request on the connection
 gets carries no call's diagnostics) and on a cancellation; `callFailed` has the request's own diagnostics in its
@@ -884,7 +885,8 @@ or its cancellation.
 
 The client offers TLS 1.2 and 1.3 by default, so a TLS 1.2 server works, unless:
 
-- the client is set to TLS 1.3 only (`tls { versions = TlsVersions.Tls13 }`, which Encrypted Client Hello needs): the server
+- the client is set to TLS 1.3 only (`tls { versions = TlsVersions.Tls13 }`), or the host has an Encrypted Client Hello
+  configuration (`tls { ech { } }`, or one from its HTTPS record), which makes its connections TLS 1.3 only: the server
   answers `protocol_version`. Allow TLS 1.2 again for a client that must reach it, or give that server a client of its
   own;
 - the server offers only suites outside the client's TLS 1.2 profile (CBC suites, static RSA key exchange, finite-field

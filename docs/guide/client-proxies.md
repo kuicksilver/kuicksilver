@@ -184,8 +184,8 @@ connection has its own connection to the proxy, closed with it, a full handshake
 ticket of the proxy's ever shared with origins). Through several addresses of the proxy, an address whose TLS failed
 makes the request's failure a `ProxyTlsException` even when a later address only timed out (the timeout is then among
 its suppressed exceptions), as long as no address of the proxy completed its handshake: once one did, the CONNECT may
-have gone out, and a timeout of the tunnel or of the origin's handshake is a `ConnectTimeoutException`. QUIC is TLS 1.3 only (RFC 9001 section 4.2), so a `proxies { tls { } }` limited to TLS 1.2 cannot
-reach a CONNECT-UDP proxy; an ECH configuration that `proxies { tls { ech { } } }` gives the proxy is offered as given and not retried after a
+have gone out, and a timeout of the tunnel or of the origin's handshake is a `ConnectTimeoutException`. QUIC is TLS 1.3 only (RFC 9001 section 4.2), so the QUIC hop to a
+CONNECT-UDP proxy always uses TLS 1.3, whatever `proxies { tls { versions } }` allows over TCP; an ECH configuration that `proxies { tls { ech { } } }` gives the proxy is offered as given and not retried after a
 rejection (RFC 9849 section 6.1.6 applies to the origin's connection). Inside the tunnel the origin's connection has the engine's `tls { }`, as a direct one. The origin's name goes to the proxy, which
 resolves it: the engine does not look it up.
 
