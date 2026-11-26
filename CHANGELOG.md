@@ -1799,6 +1799,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/1.1 client: an idle pooled connection is now watched for the server's close (RFC 9112 section 9.5: "Implementations
+  SHOULD constantly monitor open connections for a received closure signal and respond to it as appropriate"). When the
+  server ends it (close_notify, or a FIN alone) or sends bytes no request asked for, the client closes it in order at once
+  (its close_notify, then its FIN) and drops it from the pool. A request that takes the connection first ends the watch
+  before it uses the connection, so a connection is either handed out or closed, never both. Before, the close was seen
+  only when the connection was next taken, at its eviction (`idleTimeout`, 5 minutes by default) or at the engine's
+  close, and the socket stayed half-closed until then.
 - WebTransport (experimental): on a draft-02 session, which Chrome and Firefox speak, a stream the peer resets before its
   header named a session now reaches the session's application with the reset's code (draft-02 section 4.3: an
   implementation that "intentionally allows only one session over a given HTTP/3 connection [...] SHALL forward the error

@@ -7,9 +7,12 @@ package io.kuicksilver.ktor.client.h1
 import io.ktor.client.engine.ClientEngineClosedException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.withContext
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
@@ -112,6 +115,22 @@ internal abstract class PooledConnection(
 
     /** True for the one caller that gives the slot back. */
     internal fun claimSlot(): Boolean = slotFlag.compareAndSet(0, 1)
+
+    /**
+     * Starts watching the connection, about to go idle, in [scope]: [onSignal] runs once the peer closed it or sent bytes
+     * no request asked for (RFC 9112 section 9.5: "Implementations SHOULD constantly monitor open connections for a
+     * received closure signal"). The watch reads nothing; one already running is kept. Nothing by default (no input).
+     */
+    internal open fun startIdleWatch(
+        scope: CoroutineScope,
+        onSignal: () -> Unit,
+    ) {}
+
+    /**
+     * Ends the watch [startIdleWatch] started, and waits until it no longer touches the input: the connection was taken
+     * for an exchange, which reads the input alone.
+     */
+    internal open suspend fun stopIdleWatch() {}
 }
 
 /**
@@ -152,6 +171,11 @@ internal class PoolLimits(
  */
 internal class ConnectionPool<C : PooledConnection>(
     private val limits: PoolLimits,
+    /**
+     * Where the idle connections are watched for the peer's close ([PooledConnection.startIdleWatch]); null: not watched
+     * (tests of the pool alone).
+     */
+    private val idleWatchers: CoroutineScope? = null,
     private val now: () -> Long,
 ) {
     private class Route<C>(
@@ -200,9 +224,18 @@ internal class ConnectionPool<C : PooledConnection>(
     /**
      * An idle connection to [route], or null: the caller holds a permit and must open a connection, then [adopt] it or
      * [releasePermit] when that fails. Waits in FIFO order while the limits are reached. Cancellation while waiting
-     * gives back whatever was granted meanwhile, so a slot is never lost or counted twice.
+     * gives back whatever was granted meanwhile, so a slot is never lost or counted twice. An idle connection comes with
+     * its watch over ([PooledConnection.stopIdleWatch]): the caller is its input's only reader.
      */
     suspend fun acquire(route: String): C? {
+        val c = take(route) ?: return null
+        // the connection left the idle list under the lock, so the watch can no longer close it ([closeIfIdle]); its end
+        // is waited for also by a caller cancelled meanwhile, who settles what it got as any other
+        withContext(NonCancellable) { c.stopIdleWatch() }
+        return c
+    }
+
+    private suspend fun take(route: String): C? {
         val toClose = ArrayList<C>()
         val waiter: Waiter<C>
         try {
@@ -273,11 +306,16 @@ internal class ConnectionPool<C : PooledConnection>(
      */
     fun release(c: C): Boolean {
         if (c.closed) return false
+        // before anyone can take it: whoever does stops this watch first ([acquire]). A close or bytes that came already
+        // are seen below (isOpen), or by the watch once the connection is idle; either way it is closed
+        idleWatchers?.let { scope -> c.startIdleWatch(scope) { closeIfIdle(c) } }
         val toClose = ArrayList<C>()
         val served = ArrayList<Waiter<C>>()
         val kept =
             lock.withLock {
                 val r = routes[c.route]
+                // isOpen reads the connection's channels, which the peer's side moves on its own: a racy snapshot, and a benign
+                // one (a close or bytes that come after it are seen by the watch, which closes the connection while idle)
                 if (shutDown || r == null || !c.isOpen || expired(c, now())) {
                     toClose += c
                     return@withLock false
@@ -303,6 +341,28 @@ internal class ConnectionPool<C : PooledConnection>(
         resumeAll(served)
         closeAll(toClose)
         return kept
+    }
+
+    /**
+     * Closes [c] in order when it is still idle (the peer closed it, or sent bytes no request asked for, while it was
+     * idle); nothing when it was taken meanwhile, or closed. Under the lock, so an idle connection is either taken or
+     * closed, never both. Returns whether it closed it.
+     */
+    fun closeIfIdle(c: C): Boolean {
+        val toClose = ArrayList<C>()
+        val served = ArrayList<Waiter<C>>()
+        val removed =
+            lock.withLock {
+                val r = routes[c.route] ?: return false
+                if (!r.idle.removeAll { it === c }) return false
+                if (c.claimSlot()) freeSlot(r)
+                toClose += c
+                dispatch(toClose, served)
+                true
+            }
+        resumeAll(served)
+        closeAll(toClose)
+        return removed
     }
 
     /** Called by [PooledConnection.close]: the slot comes back and the next waiter is served. */

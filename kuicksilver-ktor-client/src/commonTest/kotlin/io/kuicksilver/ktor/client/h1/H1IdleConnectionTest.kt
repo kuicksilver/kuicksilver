@@ -22,13 +22,17 @@ import io.kuicksilver.ktor.client.KuicksilverEngineConfig
 import io.kuicksilver.ktor.client.KuicksilverEventListener
 import io.kuicksilver.quic.KuicksilverLogger
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.yield
 import kotlinx.io.IOException
 import kotlinx.io.readString
 import kotlin.test.Test
@@ -76,6 +80,167 @@ class H1IdleConnectionTest {
             wire.fromServer.flush()
             assertNull(pool.acquire("r"))
             assertTrue(conn.closed)
+        }
+
+    /** [idle], with the pool's idle connections watched in [watchers] (as the engine's pool does). */
+    private suspend fun watchedIdle(
+        wire: Wire,
+        watchers: CoroutineScope,
+    ): Pair<ConnectionPool<H1Connection>, H1Connection> {
+        val pool = ConnectionPool<H1Connection>(KuicksilverEngineConfig().poolLimits(), watchers) { 0L }
+        assertNull(pool.acquire("r"))
+        val conn = H1Connection(NoSocket(wire), null, wire.fromServer, wire.toServer, "r")
+        pool.adopt(conn)
+        assertTrue(pool.release(conn))
+        return pool to conn
+    }
+
+    /** Waits until every watch [watchers] runs has ended (each ends once it acted on what it saw, or was stopped). */
+    private suspend fun watchesOver(watchers: CoroutineScope) =
+        watchers.coroutineContext[Job]!!
+            .children
+            .toList()
+            .forEach { it.join() }
+
+    /**
+     * RFC 9112 section 9.5: "Implementations SHOULD constantly monitor open connections for a received closure signal and
+     * respond to it as appropriate". A server that ends an idle keep-alive connection (its FIN, here on cleartext) gets
+     * the connection closed while it is idle: off the idle list, its slot back, the socket closed. Before, it was seen
+     * only when the connection was next taken, at its eviction (idleTimeout, 5 minutes) or the engine's close, and the
+     * socket stayed half-closed until then.
+     */
+    @Test fun negative_anIdleConnectionTheServerEndsIsClosedWhileIdle() =
+        runTest {
+            val watchers = CoroutineScope(Dispatchers.Default + SupervisorJob())
+            try {
+                val wire = Wire()
+                val (pool, conn) = watchedIdle(wire, watchers)
+                assertEquals(1, watchers.coroutineContext[Job]!!.children.count(), "the idle connection is watched")
+                wire.fromServer.flushAndClose()
+                watchesOver(watchers)
+                assertTrue(conn.closed, "the connection the server ended was closed while idle")
+                assertEquals(0, pool.idleCount)
+                assertEquals(0, pool.liveCount, "its slot came back")
+            } finally {
+                watchers.cancel()
+            }
+        }
+
+    /**
+     * Bytes no request asked for on an idle connection (RFC 9112 section 9.2: "the client SHOULD close the connection")
+     * close it while it is idle, with the server's side still open.
+     */
+    @Test fun negative_strayBytesCloseAnIdleConnectionWhileIdle() =
+        runTest {
+            val watchers = CoroutineScope(Dispatchers.Default + SupervisorJob())
+            try {
+                val wire = Wire()
+                val (pool, conn) = watchedIdle(wire, watchers)
+                wire.fromServer.writeStringUtf8("HTTP/1.1 408 Request Timeout\r\n\r\n")
+                wire.fromServer.flush()
+                watchesOver(watchers)
+                assertTrue(conn.closed)
+                assertEquals(0, pool.liveCount)
+            } finally {
+                watchers.cancel()
+            }
+        }
+
+    /**
+     * An idle connection taken for an exchange comes without its watch: the exchange reads the input alone, and what the
+     * server does then (its close here) is the exchange's to see, not a reason for the pool to close the connection.
+     */
+    @Test fun aWatchedIdleConnectionIsTakenWithoutItsWatch() =
+        runTest {
+            val watchers = CoroutineScope(Dispatchers.Default + SupervisorJob())
+            try {
+                val wire = Wire()
+                val (pool, conn) = watchedIdle(wire, watchers)
+                assertSame(conn, pool.acquire("r"))
+                assertEquals(0, watchers.coroutineContext[Job]!!.children.count(), "the watch ended with the take")
+                wire.fromServer.flushAndClose()
+                watchesOver(watchers)
+                assertEquals(0, watchers.coroutineContext[Job]!!.children.count(), "a taken connection is watched no more")
+                assertFalse(conn.closed, "the pool closed a connection it had handed out")
+                assertEquals(1, pool.liveCount)
+            } finally {
+                watchers.cancel()
+            }
+        }
+
+    /**
+     * The other edge: the server ended the connection before it was released (its close came with the end of the
+     * response). The release itself sees it and closes the connection; nothing goes idle, and the slot comes back.
+     */
+    @Test fun negative_aConnectionTheServerEndedBeforeItsReleaseIsClosedByTheRelease() =
+        runTest {
+            val watchers = CoroutineScope(Dispatchers.Default + SupervisorJob())
+            try {
+                val wire = Wire()
+                val pool = ConnectionPool<H1Connection>(KuicksilverEngineConfig().poolLimits(), watchers) { 0L }
+                assertNull(pool.acquire("r"))
+                val conn = H1Connection(NoSocket(wire), null, wire.fromServer, wire.toServer, "r")
+                pool.adopt(conn)
+                wire.fromServer.flushAndClose()
+                assertFalse(pool.release(conn), "a connection the server ended was kept")
+                watchesOver(watchers)
+                assertTrue(conn.closed)
+                assertEquals(0, pool.idleCount)
+                assertEquals(0, pool.liveCount, "its slot came back")
+            } finally {
+                watchers.cancel()
+            }
+        }
+
+    /**
+     * The server's close of an idle connection and a request that takes it, at once on other threads, many times: the
+     * connection is either handed out, and then never closed by its watch, or closed, and then the request gets a permit
+     * to open another; never both, and the slot is counted once (a stress test of an invariant that holds in every
+     * interleaving).
+     */
+    @Test fun negative_anIdleConnectionIsTakenOrClosedNeverBoth() =
+        runTest {
+            var taken = 0
+            var closed = 0
+            repeat(500) {
+                val watchers = CoroutineScope(Dispatchers.Default + SupervisorJob())
+                try {
+                    val wire = Wire()
+                    val (pool, conn) = watchedIdle(wire, watchers)
+                    // both sides start from one gate, and which one yields first alternates: either can win
+                    val go = CompletableDeferred<Unit>()
+                    val end =
+                        launch(Dispatchers.Default) {
+                            go.await()
+                            if (it % 2 == 0) yield()
+                            wire.fromServer.flushAndClose()
+                        }
+                    val take =
+                        async(Dispatchers.Default) {
+                            go.await()
+                            if (it % 2 == 1) yield()
+                            pool.acquire("r")
+                        }
+                    go.complete(Unit)
+                    val got = take.await()
+                    end.join()
+                    watchesOver(watchers)
+                    if (got === conn) {
+                        taken++
+                        assertFalse(conn.closed, "run $it: the watch closed the connection a request had taken")
+                    } else {
+                        closed++
+                        assertNull(got, "run $it")
+                        assertTrue(conn.closed, "run $it: a request got a permit while the connection stayed open")
+                    }
+                    assertEquals(1, pool.liveCount, "run $it: the connection or the permit, counted once")
+                    assertEquals(0, pool.idleCount, "run $it")
+                } finally {
+                    watchers.cancel()
+                }
+            }
+            assertEquals(500, taken + closed)
+            assertTrue(taken >= 1 && closed >= 1, "both sides won at least once: taken $taken, closed $closed")
         }
 
     /** An idle connection with nothing to read is reused. */
