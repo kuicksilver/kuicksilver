@@ -1021,7 +1021,7 @@ class ServerWebSocketH2Test {
      * at most its stream window (64 KiB) reaches it and the upgrade's writer is held once it is 64 KiB more ahead of the
      * stream (`H2StreamOutput.DEFAULT_LIMIT`): it never gets near the 4 MiB it wants to send. After the send-stall deadline
      * without window (here 300 ms, `sendStallTimeoutForTest`) the stream is reset with CANCEL and the session fails
-     * (docs/guide/ktor.md, "WebSockets over HTTP/2").
+     * (docs/guide/realtime.md, "WebSockets over HTTP/2").
      */
     @Test fun negative_clientThatStopsReadingStallsTheServerUntilTheDeadline() =
         serverTest {

@@ -56,7 +56,7 @@ import kotlin.time.Duration.Companion.seconds
 import io.kuicksilver.ktor.client.Kuicksilver as KuicksilverClient
 
 /**
- * `KuicksilverApplicationEngine.http3Advertising` (docs/guide/ktor.md, "Turning HTTP/3 off on the server"): `Alt-Svc` per
+ * `KuicksilverApplicationEngine.http3Advertising` (docs/guide/server.md, "Turning HTTP/3 off on the server"): `Alt-Svc` per
  * response (RFC 7838 section 3 `clear`, on HTTP/3 responses too, section 2.2), GOAWAY to live HTTP/3 connections (RFC 9114
  * section 5.2) and new QUIC connections refused with CONNECTION_REFUSED (RFC 9000 sections 5.2.2, 10.2.3 and 20.1) under
  * `Drain`. Every wait is on an event (a response, GOAWAY, a refusal) under a deadline that names it; nothing sleeps.

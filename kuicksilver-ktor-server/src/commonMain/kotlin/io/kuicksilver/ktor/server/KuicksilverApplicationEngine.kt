@@ -557,7 +557,7 @@ public class KuicksilverApplicationEngine(
         private set
 
     /**
-     * Whether HTTP/3 is advertised and new HTTP/3 connections accepted, switched at runtime (docs/guide/ktor.md, "Turning HTTP/3
+     * Whether HTTP/3 is advertised and new HTTP/3 connections accepted, switched at runtime (docs/guide/server.md, "Turning HTTP/3
      * off on the server"); [Http3Advertising.On] until set. Every response reads it as its head goes out (so the next
      * response on a keep-alive connection already follows a change), and every new client Initial when the QUIC endpoint
      * admits it. Setting [Http3Advertising.Drain] sends GOAWAY to every live HTTP/3 connection in the background and returns

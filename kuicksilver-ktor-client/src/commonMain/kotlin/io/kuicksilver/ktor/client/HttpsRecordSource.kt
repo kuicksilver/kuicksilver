@@ -15,7 +15,7 @@ import kotlin.time.Duration
 
 /**
  * Where the client engine looks up HTTPS resource records (RFC 9460) for an origin in [Http3Discovery.Auto]
- * ([ClientNetworkConfig.httpsRecords]; docs/guide/ktor.md, "HTTPS records"). A record that names `h3` in its `alpn` lets the
+ * ([ClientNetworkConfig.httpsRecords]; docs/guide/client-http3.md, "HTTPS records"). A record that names `h3` in its `alpn` lets the
  * first request to the origin race HTTP/3 against TCP at once, without waiting for an `Alt-Svc` header. The engine is an
  * SVCB-optional client (RFC 9460 section 3): a lookup that fails or answers late leaves the request on the path it would
  * have taken without records.

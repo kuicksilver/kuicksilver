@@ -65,13 +65,16 @@ import io.ktor.server.websocket.webSocket as serverWebSocket
 import io.kuicksilver.ktor.server.Kuicksilver as KuicksilverServer
 import io.kuicksilver.ktor.server.webTransport as webTransportRoute
 
-/** The client code blocks of docs/guide/ktor.md, kept compiling and running (block markers `guide:ktor:client*`). */
+/** The client code blocks of the Ktor engine pages of docs/guide, kept compiling and running (block markers `guide:ktor:client*`). */
 class GuideSamplesTest {
     @Test fun guideHasEveryMarker() {
         val guide =
             generateSequence(File("").absoluteFile) {
                 it.parentFile
-            }.map { File(it, "docs/guide/ktor.md") }.first { it.exists() }.readText()
+            }.map { File(it, "docs/guide") }
+                .first { it.isDirectory }
+                .listFiles { f -> f.name.endsWith(".md") }!!
+                .joinToString("\n") { it.readText() }
         assertTrue("guide:ktor:client" in guide, "marker client")
         assertTrue("guide:ktor:pool" in guide, "marker pool")
         assertTrue("guide:ktor:webtransport-client" in guide, "marker webtransport-client")
@@ -163,7 +166,9 @@ class GuideSamplesTest {
                     // guide:ktor:client-diagnostics
                     val response = client.get(url)
                     val d = response.kuicksilverDiagnostics
-                    if (d != null && d.protocol != HttpProtocolVersion.HTTP_3_0) {
+                    if (d == null) {
+                        println("not served by Kuicksilver: create the client with HttpClient(Kuicksilver)")
+                    } else if (d.protocol != HttpProtocolVersion.HTTP_3_0) {
                         println("HTTP/3 not used: ${d.fallback} (alternative ${d.alternative} via ${d.alternativeSource})")
                     }
 
@@ -251,12 +256,6 @@ class GuideSamplesTest {
                 }
             }
         observed.close()
-        // guide:ktor:zero-rtt-client
-        val client =
-            HttpClient(Kuicksilver) {
-                engine { http3 { earlyData { enabled = true } } }
-            }
-        client.close()
     }
 
     @Test fun altSvcStoreFileSample() {
@@ -692,6 +691,7 @@ class GuideSamplesTest {
                     }
 
                 client.use { it.get("https://127.0.0.1:$port/") }
+                // the server advertises HTTP/3 in this response: the engine's "no usable HTTP/3 alternative" line does not come
                 assertEquals(listOf("https://127.0.0.1:$port/ -> HTTP/1.1 (NoAlternative, fallback=NoAlternative, h3Failure=null)"), lines)
             } finally {
                 server.stopSuspend(100, 1000)
@@ -744,6 +744,8 @@ class GuideSamplesTest {
             val config = it.engine.config as KuicksilverEngineConfig
             assertEquals(Http3Discovery.Auto, config.http3.discovery)
         }
+        val currentPin = "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+        val backupPin = "sha256/u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7s="
         // guide:ktor:pinning
         val pinned =
             HttpClient(Kuicksilver) {
@@ -752,8 +754,8 @@ class GuideSamplesTest {
                         trust =
                             TrustConfig.Pinned(
                                 setOf(
-                                    SpkiSha256.parse("sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="), // the current key
-                                    SpkiSha256.parse("sha256/u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7s="), // the backup key
+                                    SpkiSha256.parse(currentPin), // your server's key: "sha256/<base64>", made as below
+                                    SpkiSha256.parse(backupPin), // a backup key you hold offline
                                 ),
                                 base = TrustConfig.Platform, // the chain is still verified; the pin comes on top
                             )

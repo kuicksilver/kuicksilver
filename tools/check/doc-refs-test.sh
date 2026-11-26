@@ -83,4 +83,11 @@ expect 1 "negative: the allowlist suppresses nothing else" allowed "'K4'"
 
 repo rev; commit rev base; printf 'Done in K3.\n' >> "$tmp/rev/docs/guide/a.md"; commit rev later
 expect 0 "--rev checks the given commit" rev "0 finding(s)" --rev HEAD~1
+# a guide section cited by name from a source comment: it must be a heading (or a labelled <a id>) of the cited page
+repo cite; printf '// see docs/guide/other.md, "Usage" and docs/guide/other.md ("Usage")\nclass Cite\n' > "$tmp/cite/mod/src/Cite.kt"; commit cite base
+expect 0 "a cited section that exists passes" cite "0 finding(s)"
+repo citewrap; printf '// see docs/guide/other.md, "Us\n// age")\nclass Cite\n' > "$tmp/citewrap/mod/src/Cite.kt"; commit citewrap base
+expect 0 "a cited section that wraps onto the next line passes" citewrap "0 finding(s)"
+repo citegone; printf '// see docs/guide/other.md, "Moved away"\nclass Cite\n' > "$tmp/citegone/mod/src/Cite.kt"; commit citegone base
+expect 1 "negative: a cited section the page does not have fails" citegone "section"
 exit $rc

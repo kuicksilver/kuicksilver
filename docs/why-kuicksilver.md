@@ -40,7 +40,7 @@ ships with the OS and adds nothing to the app; Cronet is Chromium's own network 
 
 | | HTTP/3 | WebTransport | CONNECT-UDP (RFC 9298) | ECH (RFC 9849) | 0-RTT | Connection migration |
 |---|---|---|---|---|---|---|
-| **Kuicksilver** | yes, client and server ([RFC 9114](spec/rfc-compliance.md#http)) | yes, experimental, client and server: draft-16 on the wire, with draft-02 and draft-14 codepoints accepted for browsers; tested with Chrome and Firefox over draft-02 ([details](spec/rfc/draft-ietf-webtrans-http3.md#webtransport)) | planned for 0.3.0 ([roadmap](roadmap.md#feature-parity-decided-2026-11-16)) | yes, experimental, from 0.3.0, client and server (shared mode) over QUIC and TCP, GREASE on by default, on OpenSSL 4.1 ([RFC 9849 row](spec/rfc/9849.md#ech), [ADR-0019](adr/0019-openssl-4-and-ech.md)) | yes, opt-in and experimental, with replay protection ([RFC 9001 §4.6](spec/rfc/9001.md#s4-6-0-rtt), ADR-0015) | yes: passive and active, preferred address, and following Android's and Apple's default network in the Ktor client ([RFC 9000 §9](spec/rfc/9000.md#s9-client-initiated-active-migration)) |
+| **Kuicksilver** | yes, client and server ([RFC 9114](spec/rfc-compliance.md#http)) | yes, experimental, client and server: draft-17 on the wire; servers also take drafts 16, 14 and 02 (browsers), clients also offer 16 and 02; tested with Chrome and Firefox over draft-02 ([details](spec/rfc/draft-ietf-webtrans-http3.md#webtransport)) | yes, experimental, from 0.3.0: HTTP/3 through a CONNECT-UDP proxy, and the proxy side ([client](guide/client-proxies.md#http3-through-a-connect-udp-proxy-experimental), [proxy](guide/http3.md#connect-udp-experimental)) | yes, experimental, from 0.3.0, client and server (shared mode) over QUIC and TCP, GREASE on by default, on OpenSSL 4.1 ([RFC 9849 row](spec/rfc/9849.md#ech), [ADR-0019](adr/0019-openssl-4-and-ech.md)) | yes, opt-in and experimental, with replay protection ([RFC 9001 §4.6](spec/rfc/9001.md#s4-6-0-rtt), ADR-0015) | yes: passive and active, preferred address, and following Android's and Apple's default network in the Ktor client ([RFC 9000 §9](spec/rfc/9000.md#s9-client-initiated-active-migration)) |
 | **Cronet** | yes ([Android docs][cronet-android]) | not checked | not checked | not checked | not checked | yes, says Google's Cronet transport for OkHttp ([cronet-transport-for-okhttp][cronet-okhttp]) |
 | **URLSession** | yes, on by default from iOS 15 and macOS 12, found through HTTPS records or Alt-Svc ([TN3102][tn3102], [WWDC21 10094][wwdc-h3]) | not checked | not checked | not checked | not checked | not checked |
 | **OkHttp** | no: "HTTP/3 is not natively supported by OkHttp" ([Protocol.kt][okhttp-protocol]); Google's Cronet transport adds it by replacing OkHttp's core, so OkHttp's caching, retries, authentication and network interceptors are bypassed and WebSockets are not supported ([cronet-transport-for-okhttp][cronet-okhttp]) | not checked | not checked | not checked | not checked | through the Cronet transport ([cronet-transport-for-okhttp][cronet-okhttp]) |
@@ -56,7 +56,8 @@ HTTP/2, qlog, PROXY protocol on the server. Per requirement, with the tests behi
 to cellular (`followDefaultNetwork`); the [Compose Multiplatform demo](../samples/compose-demo/README.md) shows it next
 to OkHttp and CIO.
 
-Where it is worse: CONNECT-UDP and ECH are not in a release yet; quic-go's companion library masque-go has CONNECT-UDP today. Multipath QUIC is
+Where it is worse: CONNECT-UDP and ECH are new in 0.3.0 and experimental, with less use behind them than quic-go's masque-go
+has. Multipath QUIC is
 planned for 0.4.0 ([roadmap](roadmap.md#040-planned)). WebTransport follows a draft and is
 experimental. Safari has not been tested against it ([interop](spec/interop.md#interop-webtransport-browsers-2026-10-22-and-2026-10-23)).
 
@@ -80,8 +81,8 @@ more CPU per GB. The handshake gap is on the
 
 - Planned for 0.4.0 ([roadmap](roadmap.md#040-planned)): HTTP/3 client benchmarks against Cronet and URLSession on a
   phone (requests per second, time to first byte, CPU and battery). No tool in the repository measures these yet.
-- TODO(measure): the handshake table again after the 0.3.0 changes (`SSL_CTX` shared per server configuration):
-  `tools/bench/run-table.sh --phases handshakes`.
+- The handshake figures were measured before 0.3.0 shared one `SSL_CTX` per server configuration; they have not been
+  measured again since.
 - Planned for 0.4.0 ([roadmap](roadmap.md#040-planned)): against Netty's HTTP/3 server on the JVM (goodput, CPU per
   GB). The engine interop bench (`kuicksilver-engine-interop`) checks correctness against it, not speed.
 
@@ -99,12 +100,9 @@ URLSession is part of the OS and adds nothing to an app. Cronet loaded from Goog
 either: "the application doesn't need to pay the binary size cost of carrying Cronet"
 ([cronet-transport-for-okhttp][cronet-okhttp]). We have no sourced size for the others.
 
-- TODO(measure): the size on iOS for 0.3.0: `tools/check/ios-size.sh` (the table above is of the 0.2.0 code; 0.3.0 adds
-  HTTP/2 and WebTransport, and certificate compression is planned to add a compression library).
-- TODO(measure): the measured arm64-v8a `libksl.so` size of 0.3.0, printed by `tools/check/size.sh` in the gate's size
-  step, and the size of the `kuicksilver-native` JVM jar with its five JNI libraries.
-- TODO(measure): the APK and IPA size delta of a minimal app with each stack (Kuicksilver's Ktor client, Cronet
-  embedded, OkHttp, URLSession) on the same app, after R8 and app thinning. No tool in the repository does this yet.
+The iOS and AAR figures above were measured on the 0.2.0 code; 0.3.0 adds HTTP/2, WebTransport and certificate
+compression, so expect its figures to be somewhat larger. An APK or IPA comparison of a minimal app with each stack has
+not been measured yet.
 
 ## Maturity and user base
 

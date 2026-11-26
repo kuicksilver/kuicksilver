@@ -13,7 +13,7 @@ val kuicksilver = providers.gradleProperty("kuicksilver.version").getOrElse("0.3
 // reveal) where the checkout is, and its SwiftPM checksum is the same in every checkout (tools/release/xcframework.sh).
 val repositoryRoot: String = rootProject.projectDir.resolve("../..").canonicalPath
 
-// Kuicksilver.xcframework for Swift-only applications (docs/guide/ios.md, "Swift-only"): a dynamic framework, so each
+// Kuicksilver.xcframework for Swift-only applications (docs/guide/ios.md, "Swift only"): a dynamic framework, so each
 // slice carries its own dSYM and its own PrivacyInfo.xcprivacy, distributed as a SwiftPM binaryTarget.
 //   ./gradlew -p samples/ios :kuicksilver-swift:assembleKuicksilverReleaseXCFramework
 //   -> kuicksilver-swift/build/XCFrameworks/release/Kuicksilver.xcframework (+ Kuicksilver.framework.dSYM per slice)

@@ -31,6 +31,8 @@ printf '#!/bin/sh\nif [ -n "${KSL_CENTRAL_STATUS:-}" ]; then echo "$KSL_CENTRAL_
 printf '#!/bin/sh\necho "curl called in a test: $*" >&2; exit 7\n' > "$tmp/bin/curl"
 chmod +x "$tmp/bin/central" "$tmp/bin/curl"
 export KSL_CENTRAL_PROBE="$tmp/bin/central" PATH="$tmp/bin:$PATH"
+# this month's earlier Central deployments, which an upload refuses to assume: none, for every case but the ones that test it
+export KSL_CENTRAL_USED_RELEASES=0 KSL_CENTRAL_USED_FILES=0 KSL_CENTRAL_USED_BYTES=0
 # the Swift package repository: empty (no version released there yet); swift-tagged.git already has 0.2.1 and 0.4.0-rc1
 for r in swift swift-tagged; do git init -q --bare -b main "$tmp/$r.git"; done
 ( w="$tmp/swift-w"; git init -q -b main "$w" && cd "$w" && git -c user.email=t@example.invalid -c user.name=t commit -q --allow-empty -m x \
@@ -66,6 +68,7 @@ tree_version() { # <X.Y.Z of every -SNAPSHOT fallback> <version the README, docs
   mkdir -p docs/guide
   printf '> The API can change between any two 0.x releases, and %s is on Maven Central.\n\n    implementation("io.kuicksilver:kuicksilver-ktor-client:%s")\n' "$p" "$p" > README.md
   printf '    implementation(platform("io.kuicksilver:kuicksilver-bom:%s"))\n.package(url: "https://github.com/kuicksilver/kuicksilver-swift", .upToNextMinor(from: "%s")),\n' "$p" "$p" > docs/install.md
+  printf '    implementation(platform("io.kuicksilver:kuicksilver-bom:%s"))\n' "$p" > docs/guide/quickstart.md
   printf '        implementation("io.kuicksilver:kuicksilver-http3:%s")   // or -quic\n    .package(url: "https://github.com/kuicksilver/kuicksilver-swift", .upToNextMinor(from: "%s")),\n            url: "https://github.com/kuicksilver/kuicksilver/releases/download/v%s/Kuicksilver.xcframework.zip",\n' "$p" "$p" "$p" > docs/guide/ios.md
 }
 commit() { git add -A; git commit -qm "$1"; }
@@ -659,6 +662,37 @@ hook_t "negative_releaseWithoutTagger"               "refuse:no kuicksilver.priv
 hook_t "negative_releaseTaggerNotAKeyUid"            "refuse:is not a user ID of the release key"   linked "zorbex quill" "kinchpik <339333647+kinchpik@users.noreply.github.com>" kinchpik "kinchpik <339333647+kinchpik@users.noreply.github.com>"
 hook_t "hook check: prints the tag identity"         "ok:tags by Kuicksilver <hello@kuicksilver.io>" linked "zorbex quill" "kinchpik <339333647+kinchpik@users.noreply.github.com>"
 
+# the month's Central quota and --count-only: run as given (with variables unset or set), the exit code and the output
+direct() { # <label> <exit code> <pattern> <checkout target> <command...>
+  local label="$1" want="$2" pat="$3" tgt="$4"; shift 4
+  git checkout -q "$tgt" || { echo "FAIL: checkout $tgt"; exit 2; }
+  local out rc; out=$("$@" 2>&1); rc=$?
+  if [ "$rc" = "$want" ] && grep -qE -- "$pat" <<< "$out"; then pass=$((pass+1)); echo "ok   $label"
+  else fail=$((fail+1)); echo "FAIL $label: rc=$rc (expected $want)"; printf '%s\n' "$out" | tail -5 | sed 's/^/     | /'; fi
+}
+direct "negative_centralUsedUnset" 1 "KSL_CENTRAL_USED_RELEASES, KSL_CENTRAL_USED_FILES and KSL_CENTRAL_USED_BYTES are not all set" \
+  release/0.4.x env -u KSL_CENTRAL_USED_FILES bash tools/release/local-release.sh 0.4.0-rc1 --central-prerelease
+direct "negative_centralUsedEmpty" 1 "KSL_CENTRAL_USED_RELEASES, KSL_CENTRAL_USED_FILES and KSL_CENTRAL_USED_BYTES are not all set" \
+  release/0.4.x env KSL_CENTRAL_USED_FILES= bash tools/release/local-release.sh 0.4.0-rc1 --central-prerelease
+direct "negative_centralNoReleaseLeft" 1 "no Central release left this month" \
+  release/0.4.x env KSL_CENTRAL_USED_RELEASES=7 bash tools/release/local-release.sh 0.4.0-rc1 --central-prerelease
+direct "negative_centralQuotaNotANumber" 2 "take whole numbers, not 'lots'" \
+  release/0.4.x env KSL_CENTRAL_USED_BYTES=lots bash tools/release/local-release.sh 0.4.0-rc1 --central-prerelease
+direct "negative_countOnlyWithoutPublication" 2 "no publication of 0.4.0-rc1" \
+  release/0.4.x bash tools/release/local-release.sh 0.4.0-rc1 --count-only
+# a publication an earlier run left (build/ is ignored): counted without building; no release left this month is exit 3
+logs_before=$(ls build/release/logs 2>/dev/null | wc -l | tr -d ' ')
+mkdir -p build/release/m2/io/kuicksilver/kuicksilver-bom/0.4.0-rc1
+printf '<project/>\n' > build/release/m2/io/kuicksilver/kuicksilver-bom/0.4.0-rc1/kuicksilver-bom-0.4.0-rc1.pom
+direct "countOnly: counted, within" 0 "Central limits left this month: 3900 files" \
+  release/0.4.x bash tools/release/local-release.sh 0.4.0-rc1 --count-only
+direct "negative_countOnlyNoReleaseLeft" 3 "no release left this month" \
+  release/0.4.x env KSL_CENTRAL_USED_RELEASES=7 bash tools/release/local-release.sh 0.4.0-rc1 --count-only
+[ "$(ls build/release/logs 2>/dev/null | wc -l | tr -d ' ')" = "$logs_before" ] && { pass=$((pass+1)); echo "ok   countOnly: nothing built (no step log)"; } \
+  || { fail=$((fail+1)); echo "FAIL countOnly: a step ran"; }
+rm -r build/release/m2
+git checkout -q main
+
 # the end of a --github-prerelease run (local-release.sh from its Maven repository step to its last line) on a fixture
 # publication. Gradle is a stub that records its arguments (sbomZip writes an archive, signReleaseFiles a .asc per file)
 # and so is the signature check: nothing is built or signed. The invariants of the mode, for every run:
@@ -676,15 +710,17 @@ p_lines=$(grep -E '^\[ "\$gh" = 1 \] && sign_args\+=|^P=\(|^tagger=\$\(git confi
 tail_run() { # <dir> <version> <attack: none|unsigned-sbom|commit-zone|home-swift-repo>: the tail on <dir>/m2, output in $tail_out
   local d="$1"
   mkdir -p "$d/out/logs"; printf 'x' > "$d/x"; (cd "$d" && zip -q out/Kuicksilver.xcframework.zip x)
+  mkdir -p "$d/src"; for f in openssl-4.1.0.tar.gz openssl-4.1.0.tar.gz.asc zlib-1.4.tar.gz zlib-1.4.tar.gz.asc brotli-1.2.1.tar.gz; do printf 's' > "$d/src/$f"; done
   git init -q --bare -b main "$d/swift.git"
   if [ "$3" = home-swift-repo ]; then   # the package repository already holds a file naming a home directory
     ( git init -q -b main "$d/seed" && cd "$d/seed" && printf 'built in /Users/someone/src\n' > NOTES && git add NOTES \
       && TZ=UTC git -c user.email=t@example.invalid -c user.name=t commit -q -m seed && git push -q "$d/swift.git" main ) || exit 2
   fi
-  tail_out=$(cd "$root" && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=kuicksilver.privacy.tagger GIT_CONFIG_VALUE_0="Kuicksilver <hello@kuicksilver.io>" KSL_SWIFT_REPO="$d/swift.git" TL="$d" V="$2" ATTACK="$3" bash -c '
+  tail_out=$(cd "$root" && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=kuicksilver.privacy.tagger GIT_CONFIG_VALUE_0="Kuicksilver <hello@kuicksilver.io>" KSL_SWIFT_REPO="$d/swift.git" TL="$d" V="$2" ATTACK="$3" MODE="${TAIL_MODE:-github}" bash -c '
   set -euo pipefail
-  version=$V; out=$TL/out; logs=$out/logs; m2=$TL/m2; signed=1; gh=1; dry=0; problems=0; n=0; started=1794688855
-  given="$V --github-prerelease"; stamp=$TL/none.stamp; xcf=$out/Kuicksilver.xcframework.zip; push_branch=main
+  version=$V; out=$TL/out; logs=$out/logs; m2=$TL/m2; signed=1; dry=0; problems=0; n=0; started=1794688855
+  if [ "$MODE" = central ]; then gh=0; central_pre=1; given="$V --central-prerelease"; else gh=1; central_pre=0; given="$V --github-prerelease"; fi
+  src_dir=$TL/src; stamp=$TL/none.stamp; xcf=$out/Kuicksilver.xcframework.zip; push_branch=main
   head=$(git rev-parse HEAD); short=$(git rev-parse --short=7 HEAD); xcf_sum=$(shasum -a 256 "$xcf" | cut -d" " -f1)
   # an explicit zone in the environment overrides TZ for git
   [ "$ATTACK" = commit-zone ] && export GIT_AUTHOR_DATE="2026-11-15T10:00:00+0500" GIT_COMMITTER_DATE="2026-11-15T10:00:00+0500"
@@ -694,6 +730,8 @@ tail_run() { # <dir> <version> <attack: none|unsigned-sbom|commit-zone|home-swif
   gradle() { printf "%s\n" "$*" >> "$TL/tasks"; local a f
     for a in "$@"; do case "$a" in
       sbomZip) (cd "$TL" && printf "{}" > bom.json && zip -q "$out/kuicksilver-$version-sbom.zip" bom.json) ;;
+      # the Central upload: the portal that times out on a large bundle
+      publishToMavenCentral) if [ "$ATTACK" = upload-408 ]; then echo "Upload failed: 408 Request Timeout"; return 1; fi ;;
       -Pkuicksilver.release.sign=*) for f in $(tr , " " <<< "${a#*=}"); do
         # the signing that leaves one file unsigned
         [ "$ATTACK" = unsigned-sbom ] && [ "$f" = "$out/kuicksilver-$version-sbom.zip" ] && continue
@@ -746,6 +784,26 @@ tail_attack "negative_tailHomePathInPom (I3)"         "privacy: no home-director
 a="$tmp/attack-final"; V=0.4.0 mk_m2 "$a/m2" signed
 tail_attack "negative_tailFinalVersion"               "is not a prerelease"              "$a" 0.4.0 none
 
+# --central-prerelease: the same end of a run on a fixture publication, with the upload to Central (a stub) and the
+# prerelease's next steps: the Swift package checked against the local zip before Publish, the tag only after it, the
+# GitHub release a draft prerelease with the source tarballs attached, the site of the prerelease. A failed upload (the
+# portal's 408) still prints them, with the browser upload of the bundle in front, and the run fails.
+cl="$tmp/central"; mk_m2 "$cl/m2" signed; TAIL_MODE=central tail_run "$cl" "$V" none
+L="central prerelease: the end of a run (one upload, the prerelease's next steps in order)"
+order_ok=$(awk '/swift-package-check.sh local/ {a=NR} /Press Publish/ {b=NR} /consumer-smoke.sh --central/ {c=NR} / tag -s v/ {d=NR}
+  /gh release create/ {e=NR} /gh workflow run pages -f version=/ {f=NR} END {print (a && a<b && b<c && c<d && d<e && e<f) ? "yes" : "no"}' <<< "$tail_out")
+if [ "$tail_rc" = 0 ] && [ "$tail_central" = 1 ] && [ "$order_ok" = yes ] && grep -q -- '--draft --prerelease' <<< "$tail_out" \
+    && grep -q "$cl/src/openssl-4.1.0.tar.gz $cl/src/openssl-4.1.0.tar.gz.asc" <<< "$tail_out" && grep -q "$cl/src/brotli-1.2.1.tar.gz" <<< "$tail_out" \
+    && ! grep -q 'Publish Component' <<< "$tail_out"; then
+  pass=$((pass+1)); echo "ok   $L"
+else fail=$((fail+1)); echo "FAIL $L: rc=$tail_rc central=$tail_central order=$order_ok"; printf '%s\n' "$tail_out" | tail -30 | sed 's/^/     | /'; fi
+c4="$tmp/central-408"; mk_m2 "$c4/m2" signed; TAIL_MODE=central tail_run "$c4" "$V" upload-408
+L="negative_centralUploadFails: the next steps are printed with the browser upload, the run fails"
+if [ "$tail_rc" != 0 ] && grep -q 'Publish Component' <<< "$tail_out" && grep -q "io.kuicksilver-$V-\*.zip" <<< "$tail_out" \
+    && grep -q ' tag -s v' <<< "$tail_out" && grep -q 'swift-package-check.sh local' <<< "$tail_out"; then
+  pass=$((pass+1)); echo "ok   $L"
+else fail=$((fail+1)); echo "FAIL $L: rc=$tail_rc"; printf '%s\n' "$tail_out" | tail -20 | sed 's/^/     | /'; fi
+
 # the repository's own version files, so a pattern that drifts from their real layout is caught: the tree passes for the
 # version of its fallbacks, except that before the release commit the README's status line names the last published
 # version ("X.Y.Z is on Maven Central") while its dependency blocks, docs/install.md and the iOS guide already name the line's version;
@@ -754,7 +812,7 @@ new_repo "$tmp/real"
 for f in build-logic/src/main/kotlin/kuicksilver.kmp.gradle.kts build-logic/src/main/kotlin/kuicksilver.release.gradle.kts \
     kuicksilver-bom/build.gradle.kts samples/realtime-telemetry/build.gradle.kts samples/ios/shared/build.gradle.kts \
     samples/ios/kuicksilver-swift/build.gradle.kts samples/compose-demo/build.gradle.kts samples/kq-cli/build.gradle.kts \
-    tools/check/consumer-smoke.sh README.md docs/install.md docs/guide/ios.md; do
+    tools/check/consumer-smoke.sh README.md docs/install.md docs/guide/ios.md docs/guide/quickstart.md; do
   mkdir -p "$(dirname "$f")"; cp "$root/$f" "$f" || { echo "FAIL: $f is gone from the repository"; exit 2; }
 done
 line=$(sed -n 's/.*getOrElse("\([0-9]*\.[0-9]*\.[0-9]*\)-SNAPSHOT").*/\1/p' build-logic/src/main/kotlin/kuicksilver.kmp.gradle.kts)
@@ -763,7 +821,7 @@ published=$(grep -v 'Until [0-9.]* is on Maven Central' README.md \
 printf '# Changelog\n\n## [%s] - 2026-01-01\n' "$line" > CHANGELOG.md; git add -A; git commit -qm real
 # before the release the README names both versions, and the README and docs/install.md call the line's version the release
 # in preparation
-prep=$(printf 'README.md still calls %s the release in preparation\ndocs/install.md still calls %s the release in preparation' "$line" "$line")
+prep=$(printf 'README.md still calls %s the release in preparation\ndocs/install.md still calls %s the release in preparation\ndocs/guide/quickstart.md still calls %s the release in preparation' "$line" "$line" "$line")
 want=""; if [ -z "$published" ]; then want="$prep"
 elif [ "$published" != "$line" ]; then want=$(printf 'README.md names %s instead of %s\n%s' \
   "$(printf '%s\n%s\n' "$published" "$line" | sort -u | tr '\n' ' ' | sed 's/ $//')" "$line" "$prep"); fi

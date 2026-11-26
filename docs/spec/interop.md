@@ -442,7 +442,7 @@ Findings:
    ClientHello.legacy_version, the server MUST abort the handshake with a "protocol_version" alert."
    (`CioToServerTlsTest`). TLS 1.2 on the server is available as an opt-in, off by default:
    `tls { versions = TlsVersions.Tls12And13 }` ([TLS 1.2 on the
-   server](../guide/ktor.md#tls-12-on-the-server)).
+   server](../guide/engine-tls.md#tls-12-on-the-server)).
 9. **Ktor's OkHttp engine** sends every `Frame` as a whole message, its `fin` ignored (OkHttp has no fragments in its
    API): three fragments arrive as three messages. Not an error on either side; a fragmented message cannot be sent
    through that engine.

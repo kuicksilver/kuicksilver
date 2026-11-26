@@ -65,8 +65,13 @@
 #   --allow-toolchain-drift  warn instead of refusing when the NDK or Xcode differs from gradle/toolchains.toml.
 #   --central-prerelease     a prerelease to Maven Central after all: without it (or --github-prerelease) a prerelease
 #                            version is refused, also in a dry run, as Central grants a few releases a month only.
+#   --count-only             count the publication an earlier run (a dry run will do) left in build/release/m2 for this
+#                            version against what is left of the month's Central quota, and stop: no gate, no build.
 # Env: KSL_GRADLE  the Gradle launcher, which sets its own --max-workers (default ./gradlew --max-workers=2)
-#      KSL_CENTRAL_MAX_FILES (3900), KSL_CENTRAL_MAX_BYTES (150000000)  the portal's limits for this namespace
+#      KSL_CENTRAL_MAX_FILES (3900), KSL_CENTRAL_MAX_BYTES (150000000), KSL_CENTRAL_MAX_RELEASES (7)  the portal's
+#        monthly limits for this namespace
+#      KSL_CENTRAL_USED_FILES, KSL_CENTRAL_USED_BYTES, KSL_CENTRAL_USED_RELEASES (0)  what this month's earlier deployments
+#        took, as the portal shows it: the count is held to what is left of the month, not to the whole quota
 # Credentials (never in the repository, never printed): ~/.gradle/gradle.properties or ORG_GRADLE_PROJECT_* variables,
 #   mavenCentralUsername / mavenCentralPassword, and signing.keyId + signing.password + signing.secretKeyRingFile
 #   or signingInMemoryKey + signingInMemoryKeyId + signingInMemoryKeyPassword.
@@ -78,10 +83,10 @@ started=$(date +%s); given="$*"
 root="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$root"
 . tools/check/llvm-tool.sh
 
-version=""; dry=0; unsigned=0; resume=0; repro=0; release_commit=""; allow_over=0; allow_drift=0; gh=0; central_pre=0
+version=""; dry=0; unsigned=0; resume=0; repro=0; release_commit=""; allow_over=0; allow_drift=0; gh=0; central_pre=0; count_only=0
 while [ $# -gt 0 ]; do case "$1" in
   --dry-run) dry=1 ;; --github-prerelease) gh=1 ;; --central-prerelease) central_pre=1 ;; --unsigned) unsigned=1 ;; --resume) resume=1 ;; --repro) repro=1 ;; --allow-over-limit) allow_over=1 ;;
-  --allow-toolchain-drift) allow_drift=1 ;; --release-commit) release_commit="${2:?--release-commit <sha>}"; shift ;;
+  --allow-toolchain-drift) allow_drift=1 ;; --count-only) count_only=1 ;; --release-commit) release_commit="${2:?--release-commit <sha>}"; shift ;;
   -h|--help) sed -n '2,/^set -euo/p' "$0" | sed '$d'; exit 0 ;;
   -*) echo "unknown option $1" >&2; exit 2 ;;
   *) [ -z "$version" ] || { echo "one version only" >&2; exit 2; }; version="$1" ;;
@@ -92,7 +97,13 @@ esac; shift; done
 
 # io.kuicksilver's grant of 2026-11-14: 7 releases, 150 MB and 3900 files per month (2026-10-20: 100 MB, 2620 files;
 # Sonatype's default is 1167 files, 78 MB)
-max_files="${KSL_CENTRAL_MAX_FILES:-3900}"; max_bytes="${KSL_CENTRAL_MAX_BYTES:-150000000}"
+max_files="${KSL_CENTRAL_MAX_FILES:-3900}"; max_bytes="${KSL_CENTRAL_MAX_BYTES:-150000000}"; max_releases="${KSL_CENTRAL_MAX_RELEASES:-7}"
+used_files="${KSL_CENTRAL_USED_FILES:-0}"; used_bytes="${KSL_CENTRAL_USED_BYTES:-0}"; used_releases="${KSL_CENTRAL_USED_RELEASES:-0}"
+for x in "$max_files" "$max_bytes" "$max_releases" "$used_files" "$used_bytes" "$used_releases"; do
+  [[ "$x" =~ ^[0-9]+$ ]] || { echo "KSL_CENTRAL_MAX_* and KSL_CENTRAL_USED_* take whole numbers, not '$x'" >&2; exit 2; }
+done
+# what is left of the month: the count of this deployment is held to it
+left_files=$((max_files - used_files)); left_bytes=$((max_bytes - used_bytes)); left_releases=$((max_releases - used_releases))
 if [ -n "${KSL_GRADLE:-}" ]; then read -r -a G <<< "$KSL_GRADLE"; else G=(./gradlew --max-workers=2); fi   # a launcher sets its own --max-workers
 out=build/release; logs="$out/logs"; art="$out/jni-artifacts"; m2="$root/$out/m2"
 mkdir -p "$logs"
@@ -104,6 +115,33 @@ problems=0
 refuse() { # a precondition: fatal for a release, a warning in a dry run
   if [ "$dry" = 1 ]; then echo "  WARN (a release would refuse): $*"; problems=$((problems+1)); else echo "REFUSED: $*" >&2; exit 1; fi
 }
+count() { # what the Central bundle holds: every artifact + .md5 + .sha1 + .asc (vanniktech 0.37: no maven-metadata, no checksums of .asc)
+  local asc_est=870
+  find "$m2/io/kuicksilver" -path "*/$version/*" -type f ! -name 'maven-metadata*' ! -name '*.md5' ! -name '*.sha1' ! -name '*.sha256' ! -name '*.sha512' |
+  while read -r f; do printf '%s %s %s\n' "$(basename "$(dirname "$(dirname "$f")")")" "$(wc -c < "$f" | tr -d ' ')" "$f"; done |
+  awk -v asc="$asc_est" '
+    { a=$1; m=a; sub(/-(jvm|android|iosarm64|iossimulatorarm64|macosarm64|linuxx64|linuxarm64|mingwx64)$/, "", m)
+      if ($3 ~ /\.asc$/) { ascb[m]+=$2; nasc[m]++; next }
+      if (!((m, a) in pub)) { pub[m, a]=1; pubs[m]++ }; arts[m]++; bytes[m]+=$2 }
+    END { for (m in arts) printf "%s %d %d %d %d\n", m, pubs[m], arts[m], arts[m]*4, bytes[m] + arts[m]*72 + (nasc[m] ? ascb[m] : arts[m]*asc) }' |
+  sort | awk -v maxf="$left_files" -v maxb="$left_bytes" -v signed="$signed" -v usedf="$used_files" -v usedb="$used_bytes" '
+    BEGIN { printf "     %-26s %5s %10s %8s %12s\n", "module", "pubs", "artifacts", "upload", "bytes" }
+    { printf "     %-26s %5d %10d %8d %12d\n", $1, $2, $3, $4, $5; P+=$2; A+=$3; T+=$4; B+=$5 }
+    END { printf "     %-26s %5d %10d %8d %12d  (%.2f MB)\n", "total", P, A, T, B, B/1000000
+      printf "     Central limits left this month: %d files, %d bytes (%d files, %d bytes used before): %s\n", maxf, maxb, usedf, usedb, (T<=maxf && B<=maxb) ? "within" : "ABOVE"
+      if (!signed) print "     (unsigned here: each .asc counted as 870 bytes, an armored 4096-bit RSA signature)"
+      exit (T<=maxf && B<=maxb) ? 0 : 3 }'
+}
+# --count-only: the count of the publication an earlier run left in $m2, against what is left of the month, then stop
+if [ "$count_only" = 1 ]; then
+  ls "$m2"/io/kuicksilver/kuicksilver-bom/"$version"/*.pom > /dev/null 2>&1 \
+    || { echo "--count-only: no publication of $version in $m2: run tools/release/local-release.sh $version --dry-run first" >&2; exit 2; }
+  signed=0; [ -z "$(find "$m2/io/kuicksilver" -path "*/$version/*" -name '*.asc' | head -1)" ] || signed=1
+  echo "== Central count of $version from $m2 (releases left this month: $left_releases of $max_releases)"
+  set +e; count; rc=$?; set -e
+  [ "$left_releases" -gt 0 ] || { echo "     no release left this month (KSL_CENTRAL_USED_RELEASES=$used_releases)"; rc=3; }
+  exit "$rc"
+fi
 once_more() { "$@" || { echo "(failed; one retry: Docker image builds and yum mirrors fail transiently)"; "$@"; }; }
 n=0
 step() { # <name> <command...>: runs it with its output in build/release/logs/<n>.log, stops the release on failure
@@ -121,6 +159,14 @@ echo "-- preconditions"
 [ "$gh" = 0 ] || [[ "$version" == *-* ]] || { echo "REFUSED: --github-prerelease takes a prerelease (X.Y.Z-alphaN|betaN|rcN), not $version: a final version goes to Maven Central" >&2; exit 1; }
 [ "$gh" = 0 ] || [ "$central_pre" = 0 ] || { echo "REFUSED: --github-prerelease and --central-prerelease exclude each other" >&2; exit 1; }
 [ "$central_pre" = 0 ] || [[ "$version" == *-* ]] || { echo "REFUSED: --central-prerelease takes a prerelease, not $version" >&2; exit 1; }
+# the month's Central quota: what earlier deployments took is the operator's to give (0 when there were none), never assumed
+if [ "$gh" = 0 ] && [ "$dry" = 0 ] && { [ -z "${KSL_CENTRAL_USED_RELEASES:+x}" ] || [ -z "${KSL_CENTRAL_USED_FILES:+x}" ] || [ -z "${KSL_CENTRAL_USED_BYTES:+x}" ]; }; then
+  refuse "KSL_CENTRAL_USED_RELEASES, KSL_CENTRAL_USED_FILES and KSL_CENTRAL_USED_BYTES are not all set: give this month's earlier deployments from the portal (0 when there were none)"
+fi
+# the month's Central quota counts releases too (a deployment that is dropped counts all the same)
+if [ "$gh" = 0 ] && [ "$left_releases" -le 0 ]; then
+  refuse "no Central release left this month ($used_releases of $max_releases used, KSL_CENTRAL_USED_RELEASES): wait for the next month"
+fi
 # Central grants a few releases a month and never removes one: a prerelease goes to GitHub only unless asked for
 [ "$gh" = 1 ] || [ "$central_pre" = 1 ] || [[ "$version" != *-* ]] || { echo "REFUSED: $version is a prerelease: --github-prerelease publishes it on GitHub only (docs/release.md, \"Prereleases on GitHub only\"); --central-prerelease sends it to Maven Central after all" >&2; exit 1; }
 [ -z "$(git status --porcelain)" ] || refuse "the working tree is not clean (git status)"
@@ -184,7 +230,7 @@ elif ! grep -qE "^## \[$version\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md; t
   refuse "CHANGELOG.md: '$(grep -E "^## \[$version\]" CHANGELOG.md | head -1)' has no release date (## [$version] - YYYY-MM-DD)"
 fi
 # the tree is the line of $version (docs/release.md, "Every release", step 2): every Gradle and sample version fallback is
-# <X.Y.Z>-SNAPSHOT of it, and for a final version the README, docs/install.md and the iOS guide name it as the version to depend on. A
+# <X.Y.Z>-SNAPSHOT of it, and for a final version the README, docs/install.md, the iOS guide and the quickstart name it as the version to depend on. A
 # release commit made without that step would ship README coordinates of the previous version, or be another line's tree.
 base="${version%%-*}"
 for f in build-logic/src/main/kotlin/kuicksilver.kmp.gradle.kts build-logic/src/main/kotlin/kuicksilver.release.gradle.kts \
@@ -195,13 +241,13 @@ for f in build-logic/src/main/kotlin/kuicksilver.kmp.gradle.kts build-logic/src/
   [ "$have" = "$base-SNAPSHOT " ] || refuse "$f names ${have:-no X.Y.Z-SNAPSHOT version }instead of $base-SNAPSHOT: this tree is not the $base line (the commit that prepares $version sets every fallback)"
 done
 if [ "$base" = "$version" ]; then
-  for f in README.md docs/install.md docs/guide/ios.md; do   # coordinates, the SwiftPM package version and xcframework URL, "X.Y.Z is on Maven Central"
+  for f in README.md docs/install.md docs/guide/ios.md docs/guide/quickstart.md; do   # coordinates, the SwiftPM package version and xcframework URL, "X.Y.Z is on Maven Central"
     have=$(grep -oE 'io\.kuicksilver:kuicksilver-[a-z0-9-]+:[0-9][-.A-Za-z0-9]*|releases/download/v[0-9][-.A-Za-z0-9]*/|kuicksilver-swift", \.upToNextMinor\(from: "[0-9][-.A-Za-z0-9]*"|[0-9]+\.[0-9]+\.[0-9]+[-.A-Za-z0-9]* is on Maven Central' "$f" 2>/dev/null \
       | sed -E 's/^io\.kuicksilver:kuicksilver-[a-z0-9-]+://; s/^releases\/download\/v([^/]*)\/$/\1/; s/^kuicksilver-swift", \.upToNextMinor\(from: "([^"]*)"$/\1/; s/ is on Maven Central$//' | sort -u | tr '\n' ' ' || true)
     [ "$have" = "$version " ] || refuse "$f names ${have:-no version }instead of $version (the commit that prepares $version sets the coordinates)"
   done
   # while a version is prepared on main, the README and docs/install.md say so; the release commit of that version removes it (docs/release.md)
-  for f in README.md docs/install.md; do
+  for f in README.md docs/install.md docs/guide/quickstart.md; do
     if grep -qE "release in preparation|Until $(printf '%s' "$version" | sed 's/\./\\./g') is on Maven Central" "$f" 2>/dev/null; then
       refuse "$f still calls $version the release in preparation (\"release in preparation\" or \"Until $version is on Maven Central\"): the release commit removes that note"
     fi
@@ -421,23 +467,6 @@ fi
 echo "-- publication into $out/m2 (count against the Central limits)"
 rm -rf "$m2"
 step "publish: publishToMavenLocal ($([ "$signed" = 1 ] && echo signed || echo unsigned))" "${G[@]}" "${P[@]}" -Dmaven.repo.local="$m2" publishToMavenLocal
-count() { # what the Central bundle holds: every artifact + .md5 + .sha1 + .asc (vanniktech 0.37: no maven-metadata, no checksums of .asc)
-  local asc_est=870
-  find "$m2/io/kuicksilver" -path "*/$version/*" -type f ! -name 'maven-metadata*' ! -name '*.md5' ! -name '*.sha1' ! -name '*.sha256' ! -name '*.sha512' |
-  while read -r f; do printf '%s %s %s\n' "$(basename "$(dirname "$(dirname "$f")")")" "$(wc -c < "$f" | tr -d ' ')" "$f"; done |
-  awk -v asc="$asc_est" '
-    { a=$1; m=a; sub(/-(jvm|android|iosarm64|iossimulatorarm64|macosarm64|linuxx64|linuxarm64|mingwx64)$/, "", m)
-      if ($3 ~ /\.asc$/) { ascb[m]+=$2; nasc[m]++; next }
-      if (!((m, a) in pub)) { pub[m, a]=1; pubs[m]++ }; arts[m]++; bytes[m]+=$2 }
-    END { for (m in arts) printf "%s %d %d %d %d\n", m, pubs[m], arts[m], arts[m]*4, bytes[m] + arts[m]*72 + (nasc[m] ? ascb[m] : arts[m]*asc) }' |
-  sort | awk -v maxf="$max_files" -v maxb="$max_bytes" -v signed="$signed" '
-    BEGIN { printf "     %-26s %5s %10s %8s %12s\n", "module", "pubs", "artifacts", "upload", "bytes" }
-    { printf "     %-26s %5d %10d %8d %12d\n", $1, $2, $3, $4, $5; P+=$2; A+=$3; T+=$4; B+=$5 }
-    END { printf "     %-26s %5d %10d %8d %12d  (%.2f MB)\n", "total", P, A, T, B, B/1000000
-      printf "     Central limits: %d files, %d bytes: %s\n", maxf, maxb, (T<=maxf && B<=maxb) ? "within" : "ABOVE"
-      if (!signed) print "     (unsigned here: each .asc counted as 870 bytes, an armored 4096-bit RSA signature)"
-      exit (T<=maxf && B<=maxb) ? 0 : 3 }'
-}
 set +e; count | tee "$out/count.txt"; within=${PIPESTATUS[0]}; set -e
 [ "$within" = 0 ] || [ "$within" = 3 ] || { echo "FAIL: counting the publication"; exit 1; }
 if [ "$within" = 3 ] && [ "$gh" = 1 ]; then echo "  note: above the Central limits (reported only: --github-prerelease uploads nothing to Central)"
@@ -587,21 +616,76 @@ if [ "$dry" = 1 ]; then
   exit 0
 fi
 echo "-- upload"
-step "release: publishToMavenCentral (one deployment, not released)" "${G[@]}" "${P[@]}" publishToMavenCentral
+# the source tarballs the build verified, attached to the GitHub release next to the six files (docs/release.md, step 6)
+src_dir="${src_dir:-build/openssl-work/src}"
+src_tars=$(ls "$src_dir"/openssl-*.tar.gz "$src_dir"/openssl-*.tar.gz.asc "$src_dir"/zlib-*.tar.gz "$src_dir"/zlib-*.tar.gz.asc \
+  "$src_dir"/brotli-*.tar.gz 2>/dev/null | tr '\n' ' ' || true)
+[ -n "$src_tars" ] || echo "  WARN: no source tarballs in $src_dir: attach the verified OpenSSL, zlib and brotli tarballs to the GitHub release by hand (docs/release.md, step 6)"
+# the upload may fail on the network (the portal answers HTTP 408 to a slow upload of a large bundle): the next steps are
+# printed all the same, with the browser upload in their place
+n=$((n+1)); upload_log="$logs/$(printf '%02d' $n).log"
+printf '[%2d] %-58s' "$n" "release: publishToMavenCentral (one deployment, not released)"
+if "${G[@]}" "${P[@]}" publishToMavenCentral > "$upload_log" 2>&1; then upload_ok=1; echo "ok"
+else upload_ok=0; echo "FAIL (see $upload_log)"; tail -15 "$upload_log" | sed 's/^/     | /'; fi
+if [ "$upload_ok" = 1 ]; then
+  first="Deployment uploaded; nothing is released yet. Next, by hand:"
+  portal="  1. https://central.sonatype.com/publishing/deployments: the deployment of io.kuicksilver $version must read VALIDATED"
+else
+  first="The upload FAILED; nothing is released. If the portal answered HTTP 408 (a timeout on a large bundle), the bundle
+may have arrived all the same: look before uploading again, since every deployment counts against the month's releases."
+  portal="  1. https://central.sonatype.com/publishing/deployments: a deployment of io.kuicksilver $version is there? Use it.
+     Only if there is none: https://central.sonatype.com/publishing, Publish Component, and the bundle the run left in
+     build/publish/, io.kuicksilver-$version-*.zip, the newest one of this version (older bundles stay in that folder:
+     check the name and the time). The deployment must read VALIDATED"
+fi
+if [ "$central_pre" = 1 ]; then
 cat <<NEXT
 
-Deployment uploaded; nothing is released yet. Next, by hand:
-  1. https://central.sonatype.com/publishing/deployments: the deployment of io.kuicksilver $version must read VALIDATED
+$first
+$portal
+     (every module, every platform publication, the BOM, signatures and checksums). If it FAILED: Drop it, fix, run again
+     (a dropped deployment still counts against the month's quota).
+  2. Before Publish (a version on Central can never be removed): the Swift package against the local zip,
+       tools/release/swift-package-check.sh local $version
+  3. Press Publish. It reads PUBLISHING, then PUBLISHED (minutes); repo1.maven.org follows within about an hour.
+  4. Consumer check from Central: tools/check/consumer-smoke.sh --central $version
+  5. Only once the deployment reads PUBLISHED, the tag (UTC):
+       export TZ=UTC
+       git $(printf '%q ' "${tag_id[@]}")tag -s v$version -m "Kuicksilver $version" $short && git push origin $push_branch v$version
+  6. The GitHub release as a draft prerelease, with notes that link the CHANGELOG section at the tag
+     (https://github.com/kuicksilver/kuicksilver/blob/v$version/CHANGELOG.md#<its section>; at most 125,000 characters):
+       gh release create v$version --draft --prerelease --verify-tag --title "Kuicksilver $version" --notes-file <notes> \\
+         $sbom_zip $sbom_zip.asc $prov $prov.asc $xcf $xcf.asc $src_tars
+     (the zip under exactly that name: the Swift package names it, with checksum $xcf_sum). Then the draft's zip against
+     Package.swift, publish the draft, and the public URL:
+       tools/release/swift-package-check.sh remote $version --draft
+       gh release edit v$version --draft=false
+       tools/release/swift-package-check.sh remote $version
+  7. Only then the Swift package (its tag is immutable; swift-package-check.sh prepush right before its push):
+$swift_next
+  8. From an empty package, exact: "$version":
+       tools/release/swift-package-check.sh resolve $version
+  9. The documentation site of the prerelease (no /latest/): gh workflow run pages -f version=$version
+ 10. The release as a user checks it: tools/verify/verify-release.sh $version
+NEXT
+else
+cat <<NEXT
+
+$first
+$portal
      (every module, every platform publication, the BOM, signatures and checksums). If it FAILED: Drop it, fix, run again.
   2. Press Publish. It reads PUBLISHING, then PUBLISHED (minutes); repo1.maven.org follows within about an hour.
-  3. Consumer check from Central: samples/realtime-telemetry against io.kuicksilver:kuicksilver-bom:$version from
-     mavenCentral() only (docs/release.md, "Every release", step 5).
+  3. Consumer check from Central: tools/check/consumer-smoke.sh --central $version (docs/release.md, "Every release", step 5).
   4. Then, and only then: TZ=UTC git $(printf '%q ' "${tag_id[@]}")tag -s v$version -m "Kuicksilver $version" $short && git push origin $push_branch v$version,
      and the GitHub release from the tag with release notes that link the CHANGELOG section at the tag,
      https://github.com/kuicksilver/kuicksilver/blob/v$version/CHANGELOG.md#<its section> (a release body takes at most
-     125,000 characters), with these six files attached:
-     $sbom_zip(.asc), $prov(.asc) and $xcf(.asc)
+     125,000 characters), with these files attached:
+     $sbom_zip(.asc), $prov(.asc), $xcf(.asc)
+     and the source tarballs: $src_tars
      (the zip under exactly that name: the Swift package names it, with checksum $xcf_sum).
   5. Once the GitHub release is published (the zip's URL resolves now), the Swift package:
 $swift_next
+  6. The release as a user checks it: tools/verify/verify-release.sh $version
 NEXT
+fi
+[ "$upload_ok" = 1 ] || exit 1

@@ -9,7 +9,7 @@ import io.ktor.util.logging.Logger
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 
 /**
- * Hears the server engine's connections and requests over HTTP/1.1, HTTP/2 and HTTP/3 (docs/guide/ktor.md, "Observability");
+ * Hears the server engine's connections and requests over HTTP/1.1, HTTP/2 and HTTP/3 (docs/guide/observability.md, "Observability");
  * set it with `eventListener` in the engine configuration. Every method has an empty default. A connection reports
  * [connectionOpened] once its TLS handshake (HTTP/1.1, HTTP/2) or QUIC handshake (HTTP/3) completed, and [connectionClosed] when
  * the engine is done with it; each request reports [requestStarted] before the application's pipeline and [requestEnded]

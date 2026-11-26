@@ -10,6 +10,7 @@ work: ports, firewalls, containers, load balancers, certificates, host settings 
 
 **Before you start**
 
+- Words such as origin, alternative, route or race: the [glossary](glossary.md).
 - A server built with `io.kuicksilver:kuicksilver-ktor-server` (version `0.3.0` or newer) and Ktor 3.6.x, on JVM 17 or
   newer or as a Kotlin/Native server on Linux, macOS or Windows ([Platforms](../stability.md#platforms)).
 - A certificate chain and private key (PEM) for the host name clients use. HTTP/3 uses the same certificate as TLS over TCP.
@@ -39,7 +40,7 @@ import io.kuicksilver.ktor.server.KuicksilverApplicationEngine
 
 This guide is for running `embeddedServer(Kuicksilver)` in production with HTTP/3 working: what has to reach the server,
 what the host and the network in front of it need, and how to check from both ends why a client does or does not use
-HTTP/3. The engine's options are in [Ktor: Server](ktor.md#server) and the
+HTTP/3. The engine's options are in [Server](server.md) and the
 [configuration reference](configuration.md#ktor-server); error messages are in
 [troubleshooting](troubleshooting.md). This page links there instead of repeating them.
 
@@ -57,7 +58,7 @@ documentation before you rely on them.
 3. The client opens QUIC to that UDP port. The TLS handshake there uses the origin's host name (SNI) and checks the
    same certificate, with ALPN `h3`.
 4. The client caches the alternative. If UDP does not get through it falls back to TCP; the Kuicksilver client then
-   marks the alternative broken for a while ([Ktor: Racing and fallback](ktor.md#racing-and-fallback)).
+   marks the alternative broken for a while ([Racing and fallback](client-http3.md#racing-and-fallback)).
 
 So the TCP port, the UDP port, the `Alt-Svc` header and the certificate all have to work for HTTP/3. When one of them
 is missing, clients quietly stay on HTTP/2 or HTTP/1.1.
@@ -71,7 +72,7 @@ identity (with `EngineMain`, the `kuicksilver.tls.*` keys). A Kuicksilver connec
 clients arriving as IPv4-mapped addresses, or `0.0.0.0` on a host without IPv6, which the start logs at Info ("no IPv6 on
 this host, so every interface is every IPv4 one (0.0.0.0)"); `host = "0.0.0.0"` keeps IPv4 alone. The deployment port of
 `EngineMain` without `ktor.deployment.host` does the same; Ktor's own `connector { }` keeps Ktor's default, `0.0.0.0`. The engine binds both as a pair: a fixed port whose UDP side is taken fails the start
-([Ktor: HTTP/3 on the server](ktor.md#http3-on-the-server)). Open, forward and publish **both** `<port>/tcp` and
+([HTTP/3 on the server](server.md#http3-on-the-server)). Open, forward and publish **both** `<port>/tcp` and
 `<port>/udp` everywhere on the way.
 
 The engine's `Alt-Svc` names the port it bound, `h3=":<bound port>"` (no host: the same host as the request).
@@ -86,8 +87,9 @@ load balancer exposes another number, clients would try the wrong port. Two fixe
   `http3 { endpoint { loops } }` above 1 without the accelerated socket); there the header would send clients to a port where nothing answers:
 
 ```kotlin
-// guide:deployment:public-alt-svc
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// identity: your certificate, io.kuicksilver.tls.TlsIdentity.fromPem(chainPem, keyPem.toCharArray())
+// guide:deployment:public-alt-svc
 val publicPort = 443   // the UDP port clients reach (the load balancer's or the NAT's), not the one bound here
 lateinit var engine: KuicksilverApplicationEngine
 val server = embeddedServer(Kuicksilver, configure = {
@@ -109,7 +111,7 @@ The sample also sends its header on HTTP/3 responses, where the engine sends non
 client already uses.
 
 The client side has its own rule: the Kuicksilver client ignores an alternative on an unprivileged port (1024 and up) for
-an origin on a privileged one, as Chromium does ([Ktor: Discovery and Alt-Svc](ktor.md#discovery-and-alt-svc)).
+an origin on a privileged one, as Chromium does ([Discovery and Alt-Svc](client-http3.md#discovery-and-alt-svc)).
 So for an origin on `https://host/` (port 443), HTTP/3 must also be reachable on a port below 1024, in practice UDP 443.
 
 `ma=86400` means clients remember the alternative for a day. To withdraw HTTP/3, use `Clear` or `Drain` ([Turning HTTP/3 off without a restart](#turning-http3-off-without-a-restart)), which
@@ -123,7 +125,7 @@ mode or `http3 { hints }`, `curl --http3`) use it.
 
 The engine does not publish DNS HTTPS records (RFC 9460); publishing one in your DNS zone is up to you. A record such as
 `example.com. 300 IN HTTPS 1 . alpn=h3,h2` lets clients that look them up (browsers, and the Kuicksilver client with
-`http3 { httpsRecords = ... }`, see [HTTPS records](ktor.md#https-records-experimental)) use HTTP/3 from the first
+`http3 { httpsRecords = ... }`, see [HTTPS records](client-http3.md#https-records-experimental)) use HTTP/3 from the first
 request; for a port other than 443 the name is `_<port>._https.<host>`.
 
 ## Firewalls and security groups
@@ -138,7 +140,7 @@ request; for a port other than 443 the name is `_<port>._https.<host>`.
   network ACL needs an outbound rule for UDP from the port to the clients' ports.
 - Many corporate and guest networks block UDP 443 on the client side. You cannot fix that from the server. Clients
   fall back to TCP: the Kuicksilver client reports `FallbackReason.HandshakeTimeout` and then `BrokenAlternative`
-  ([Ktor: Why did this request not use HTTP/3?](ktor.md#why-did-this-request-not-use-http3)).
+  ([Why did this request not use HTTP/3?](observability.md#why-did-this-request-not-use-http3)).
 
 ## Containers
 
@@ -271,7 +273,7 @@ The pod spec should declare `containerPort: 443` with `protocol: TCP` and anothe
   client counts against the node's address, and so does the stateless answer limit (8 per second per address): Retry
   packets and refusals beyond it are dropped, and those clients see a handshake timeout instead. Address validation
   tokens are also bound to the address the server sees.
-- **Rolling updates.** A graceful stop already does what an HTTP/3 client needs ([Ktor: Graceful stop](ktor.md#graceful-stop)):
+- **Rolling updates.** A graceful stop already does what an HTTP/3 client needs ([Graceful stop](server.md#graceful-stop)):
   GOAWAY to every live HTTP/3 connection, and new QUIC clients refused with CONNECTION_REFUSED (under the stateless rate
   limit) instead of timing out. Stop the server with Ktor's `shutdownGracePeriod` and `shutdownTimeout`; the larger of the
   two bounds the stop (keep the timeout ≥ the grace period), so keep the `preStop` delay plus `shutdownTimeout` below
@@ -279,7 +281,7 @@ The pod spec should declare `containerPort: 443` with `protocol: TCP` and anothe
   Clients like the Kuicksilver client recover quickly: it treats `CONNECTION_REFUSED` as transient, and a connection
   the pod closes with H3_NO_ERROR after its GOAWAY (at the end of the grace period) as an orderly end; either way the affected call falls
   back to TCP once (when it may be repeated) and the next one tries HTTP/3 again, which another pod may take. Neither
-  marks the alternative broken ([Ktor: Racing and fallback](ktor.md#racing-and-fallback); before 0.3.0 both did, for 5
+  marks the alternative broken ([Racing and fallback](client-http3.md#racing-and-fallback); before 0.3.0 both did, for 5
   minutes doubling up to 2 days). Switching a pod to `Http3Advertising.Drain` before it stops has a cost: its responses send
   `Alt-Svc: clear` for the whole origin, not just that pod, so clients that get one drop the alternative until another
   response announces it again. Use `Drain` to take HTTP/3 out of service, not for routine restarts.
@@ -299,12 +301,13 @@ them speaks UDP, so the probes check the TCP side and the HTTP/3 side is watched
   ([QUIC connection limits](#quic-connection-limits)); `handshakesFailedTimeout` growing means clients start handshakes
   that never finish (lost answers, [Reply addresses](#reply-addresses)).
 - **`Drain` is not unreadiness.** Under `Clear` or `Drain` the pod still serves HTTP/1.1 and HTTP/2, so keep its probes
-  passing; `http3Advertising` is part of the metrics instead. A [graceful stop](ktor.md#graceful-stop) stops accepting
+  passing; `http3Advertising` is part of the metrics instead. A [graceful stop](server.md#graceful-stop) stops accepting
   TCP connections, so the probes fail during it on their own; a `preStop` delay lets the Service drop the pod before that.
 
 ```kotlin
-// guide:deployment:health
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// identity: your certificate, io.kuicksilver.tls.TlsIdentity.fromPem(chainPem, keyPem.toCharArray())
+// guide:deployment:health
 lateinit var engine: KuicksilverApplicationEngine
 val server = embeddedServer(Kuicksilver, configure = {
     tlsConnector {
@@ -381,6 +384,30 @@ Notes on specific products (checked 2026-11-05):
   verified** for this page; see their documentation.
 - **HAProxy, Envoy, Caddy, other CDNs:** **not verified**. The table above still applies: find out whether the product
   passes QUIC through at layer 4 or terminates HTTP/3.
+
+### Behind a TLS-terminating L7 proxy
+
+When a proxy or CDN terminates TLS (and HTTP/3, if it speaks it) and forwards plain HTTP to the server, Kuicksilver only
+serves the proxy's TCP side. The simplest backend is a cleartext connector:
+
+```kotlin
+// guide:deployment:behind-l7-proxy
+embeddedServer(Kuicksilver, configure = {
+    plainConnector { port = 8080 } // cleartext HTTP/1.1 from the proxy: no TLS here, so no HTTP/3 and no Alt-Svc
+}, module = Application::module).start(wait = true)
+```
+
+- **HTTP/2 to the backend.** A proxy that speaks HTTP/2 to its upstream without TLS needs h2c on the connector:
+  `plainConnector { h2c = H2cMode.WithHttp11 }` (experimental; HTTP/1.1 and h2c on one port, told apart by the
+  preface: [h2c on the server](server.md#h2c-on-the-server)). Keep the hop on a trusted network.
+- **The client's address and scheme** come in the proxy's headers, `Forwarded` (RFC 7239) or `X-Forwarded-For`,
+  `-Proto` and `-Host`. Install Ktor's `ForwardedHeaders` or `XForwardedHeaders` plugin (`ktor-server-forwarded-header`)
+  so `call.request.origin` reports them, and let the proxy overwrite the headers, never pass a client's own through.
+- **No `Alt-Svc` from the backend.** A cleartext connector sends none. A backend that the proxy reaches over TLS (a
+  `tlsConnector`) sets `http3 { altSvc = false }`: its `Alt-Svc` would send clients to a UDP port they cannot reach. The
+  proxy announces HTTP/3 itself when it speaks it to clients.
+- A proxy that sends absolute-form `https://` targets on the cleartext port is answered `421` unless the connector
+  trusts it with `allowMisdirectedHosts` ([Misdirected requests](server-proxies.md#misdirected-requests)).
 
 ### NATs and idle connections
 
@@ -472,7 +499,7 @@ it gets:
 | JVM portable socket (when `ksl` is not used) | 8 MiB | the same OS limits |
 
 Kuicksilver does not read the size back, does not log it, and does not use `SO_RCVBUFFORCE`. The engine has no option
-for it ("UDP socket buffer sizes are not configurable yet", [Ktor: HTTP/3 on the server](ktor.md#http3-on-the-server)).
+for it ("UDP socket buffer sizes are not configurable yet", [HTTP/3 on the server](server.md#http3-on-the-server)).
 On Linux, raise the limits so the request is granted in full (values in bytes; 8 MiB, 8 388 608, covers the 7 MiB of
 the `ksl` socket and the 8 MiB of the JVM portable socket):
 
@@ -522,10 +549,10 @@ are covered by black-hole detection ([QUIC: Path MTU](quic.md#path-mtu),
 - One identity serves both sides: the same chain and key over TCP and over QUIC. The certificate must cover the host
   name clients use for the origin. The alternative in `Alt-Svc` has no host of its own, so the name is the same.
 - A `tlsConnector` with an `sniSelector` picks each name's identity on TCP and QUIC alike, so the `Alt-Svc` of a name's
-  TCP responses leads to a QUIC handshake that presents that name's certificate ([Ktor: Certificate per name](ktor.md#certificate-per-name-sni)).
+  TCP responses leads to a QUIC handshake that presents that name's certificate ([Certificate per name](engine-tls.md#certificate-per-name-sni)).
 - Renewed certificates can be put in place without a restart: a `TlsIdentity.Reloadable` and `reload(...)`, or `tls { pemFiles(chain, key); reloadInterval = 1.hours }`
   in code, or with `EngineMain` the key `kuicksilver.tls.reloadInterval` that watches the PEM files of `kuicksilver.tls.certificateChain` and
-  `kuicksilver.tls.privateKey` ([Ktor: Certificate rotation](ktor.md#certificate-rotation),
+  `kuicksilver.tls.privateKey` ([Certificate rotation](engine-tls.md#certificate-rotation),
   [TLS: Rotating the server certificate](tls.md#rotating-the-server-certificate)). Handshakes whose ClientHello arrives
   after the reload, on TCP and QUIC, take the new certificate; open connections keep theirs.
 - The CA bundle that verifies client certificates (mTLS) rotates the same way: a `TrustConfig.ReloadableCa` as
@@ -538,7 +565,7 @@ are covered by black-hole detection ([QUIC: Path MTU](quic.md#path-mtu),
 ## Turning HTTP/3 off without a restart
 
 On the server, `engine.http3Advertising` (experimental) is read per response and per new QUIC client
-([Ktor: Turning HTTP/3 off on the server](ktor.md#turning-http3-off-on-the-server)):
+([Turning HTTP/3 off on the server](server.md#turning-http3-off-on-the-server)):
 
 | Value | Use it when |
 |---|---|
@@ -553,7 +580,7 @@ set it on every instance.
 
 On the client, an application can switch HTTP/3 off from its remote configuration with `http3 { allowed }` and take
 open connections out of use with `client.closeHttp3Connections()`
-([Ktor: Turning HTTP/3 off remotely](ktor.md#turning-http3-off-remotely)).
+([Turning HTTP/3 off remotely](client-http3.md#turning-http3-off-remotely)).
 
 ## Security limits
 
@@ -575,10 +602,10 @@ The HTTP/3 listener runs the QUIC endpoint's protections ([QUIC: Admission and e
   the OS backlog holds new clients; keep it below `ulimit -n`) and `tcp { maxConnectionsPerIp }` (off by default: behind a
   proxy, load balancer, SNAT or NAT every client shares one address; enable it, e.g. 256, only when the server faces
   clients directly; one more from that address is reset at accept, which a proxy reports as 502/503), HTTP/1.1 and
-  HTTP/2 alike ([Connection limits](ktor.md#connection-limits)).
+  HTTP/2 alike ([Connection limits](server.md#connection-limits)).
 - **Transport and HTTP/3 settings.** `http3 { quic { } }` (idle timeout, windows, congestion control), `http3 { settings { } }`,
   `http2 { settings { } }`, and `requestHeaderTimeout` (every protocol) and `tcp { idleTimeout }` against slow clients
-  ([Ktor: Server](ktor.md#server)).
+  ([Server](server.md)).
 
 ### QUIC connection limits
 
@@ -611,8 +638,9 @@ the server sees real client addresses: it is what stops one address from taking 
 answer limit (8 per second per address) still applies to everyone behind a shared address.
 
 ```kotlin
-// guide:deployment:quic-limits
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// identity: your certificate, io.kuicksilver.tls.TlsIdentity.fromPem(chainPem, keyPem.toCharArray())
+// guide:deployment:quic-limits
 val server = embeddedServer(Kuicksilver, configure = {
     tlsConnector {
         tls { this.identity = identity }
@@ -654,7 +682,7 @@ kuicksilver.http3.endpoint {
   `maxConnections` or `maxConnectionsPerIp` ([QUIC connection limits](#quic-connection-limits)),
   `connectionsRefusedAcceptQueue` the accept queue, `connectionsRefusedAdmission` the admission policy.
 
-See [Ktor: Observability](ktor.md#observability-experimental) for a sample of the listeners. A debug log or a packet
+See [Observability](observability.md) for a sample of the listeners. A debug log or a packet
 capture answers the same question without code.
 
 ## Checking a deployment
@@ -681,10 +709,13 @@ chose TCP ([curl: HTTP/3](https://curl.se/docs/http3.html)). The repository runs
 engine in a container (`tools/check/deployment-guide.sh`), so the commands stay current.
 
 From a Kuicksilver client, every response says how it was served and, if not over HTTP/3, why:
-`response.kuicksilverDiagnostics?.fallback`, or one log line per call with `engine { observability { logger = KuicksilverLogger.platform(LogLevel.Info) } }`
-([Ktor: Why did this request not use HTTP/3?](ktor.md#why-did-this-request-not-use-http3)). Keep in mind that in `Auto`
-mode the first call to an origin goes over TCP, HTTP/2 or HTTP/1.1 (`NoAlternative`) unless a `FileAltSvcStore` remembers the
-alternative from an earlier run; HTTP/3 starts from the next call.
+`response.kuicksilverDiagnostics?.fallback`. With `engine { observability { logger = KuicksilverLogger.platform(LogLevel.Info) } }`
+the engine also logs one line per call that HTTP/3 could have served and did not (a lost race, a fallback, a broken
+alternative, a proxy), and one line per origin whose responses advertise no HTTP/3
+([Why did this request not use HTTP/3?](observability.md#why-did-this-request-not-use-http3)). So: `<origin>: no usable HTTP/3
+alternative, using HTTP/2.0` is a server that sends no `Alt-Svc` (check it with the curl lines above); a line
+with `fallback=HandshakeTimeout` or `marked broken` is a server that announces HTTP/3 that the client cannot reach. In `Auto` mode the first call to an origin goes over TCP, HTTP/2 or HTTP/1.1 (`NoAlternative`) unless a
+`FileAltSvcStore` remembers the alternative from an earlier run.
 
 ## Troubleshooting checklist
 

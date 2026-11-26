@@ -38,8 +38,12 @@ REPO = "https://github.com/kuicksilver/kuicksilver"
 DEV = "dev"   # the directory of the development snapshot (the current main), beside the release versions
 VERSION = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.]+))?$")
 # reading order of the guide index; a page not listed here follows in file name order
-GUIDE_ORDER = ["quic", "http3", "tls", "ktor", "deployment", "ios", "app-store", "configuration", "troubleshooting"]
+GUIDE_ORDER = ["quickstart", "ktor", "client", "client-http3", "client-proxies", "server", "server-proxies", "server-config-file",
+               "engine-tls", "realtime", "observability", "zero-rtt", "deployment", "migrating-from-okhttp",
+               "migrating-ktor-engines", "glossary", "configuration", "troubleshooting", "quic", "http3", "tls", "ios", "app-store"]
 SCHEME = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")
+# a marker line of tools/check/guide-sync.sh inside a code block: for the check, noise for a reader of the site
+GUIDE_MARKER = re.compile(r"^[ \t]*//[ \t]*guide:[a-z0-9-]+:[A-Za-z0-9_-]+(?:[ \t]*\([^)\n]*\))?[ \t]*\n", re.M)
 
 STYLE = """
 :root { --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0; --code: #f6f8fa; --link: #0969da; }
@@ -136,6 +140,7 @@ def render_guide(src, dst, version, ref, banner=""):
     for name in names:
         text = open(os.path.join(src, name + ".md"), encoding="utf-8").read()
         text = re.sub(r"\A<!--.*?-->\s*", "", text, flags=re.S)   # the licence header comment
+        text = GUIDE_MARKER.sub("", text)   # the `// guide:<page>:<name>` lines that tie a code block to its test
         tokens = md.parse(text)
         title, seen = name, {}
         for i, tok in enumerate(tokens):
@@ -219,8 +224,9 @@ def landing(out):
     if not versions and not dev:
         sys.exit(f"site.py: no version directory in {out}")
     finals = [v for v in versions if VERSION.match(v).group(4) is None]
-    # /latest/ is the newest final release only, never a prerelease or snapshot: a prerelease is not on Maven Central,
-    # so its pages as "the" version would name coordinates that do not resolve there. Without a final release: none.
+    # /latest/ is the newest final release only, never a prerelease or snapshot: a prerelease is a candidate to try, not
+    # the version to depend on (and one published on GitHub only has no Maven Central coordinates at all); its pages stay
+    # under /<version>/. Without a final release: none.
     latest = finals[-1] if finals else None
     shutil.rmtree(os.path.join(out, "latest"), ignore_errors=True)
     if latest:

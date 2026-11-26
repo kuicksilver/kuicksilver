@@ -23,7 +23,7 @@ import kotlin.reflect.KClass
  * `client.engine.coroutineContext.job.join()` first waits for every call in flight (a response body until it is read or
  * cancelled, a WebSocket or SSE session until it is closed), then for the pools, the UDP endpoints (every QUIC connection
  * on them and its qlog trace) and the selector to be closed. It has no bound of its own: wrap it in `withTimeout` where
- * an open body or session must not hold the exit (docs/guide/ktor.md, "Closing the client").
+ * an open body or session must not hold the exit (docs/guide/client.md, "Closing the client").
  */
 public data object Kuicksilver : HttpClientEngineFactory<KuicksilverEngineConfig> {
     /** Creates an engine configured by [block]. */

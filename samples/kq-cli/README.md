@@ -85,7 +85,7 @@ start.
   a connection negotiated is not in the public API. With more than one offered, kq says so instead of guessing.
 - In `Auto` mode a request right after the one that learned `Alt-Svc` usually still goes over the open HTTP/2
   connection (`not HTTP/3: H3NotReady`): the QUIC setup races in the background and serves later requests once it is up
-  ([Racing and fallback](../../docs/guide/ktor.md#racing-and-fallback)).
+  ([Racing and fallback](../../docs/guide/client-http3.md#racing-and-fallback)).
 - Session tickets live as long as the client: 0-RTT works between repeats of one run, never across runs.
 - Redirects are not followed (as curl without `-L`); there is no option to skip certificate verification.
 - `-H` with an empty value sends the field empty (curl removes the header instead); Ktor refuses `Transfer-Encoding`

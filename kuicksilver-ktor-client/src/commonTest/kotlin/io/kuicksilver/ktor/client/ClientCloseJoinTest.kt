@@ -60,7 +60,7 @@ internal class CountingQlogSink(
 }
 
 /**
- * `client.engine.coroutineContext.job.join()` after `HttpClient.close()` (docs/guide/ktor.md, "Closing the client"):
+ * `client.engine.coroutineContext.job.join()` after `HttpClient.close()` (docs/guide/client.md, "Closing the client"):
  * it returns once the pools and endpoints are closed and every connection's qlog trace with them.
  */
 class ClientCloseJoinTest {

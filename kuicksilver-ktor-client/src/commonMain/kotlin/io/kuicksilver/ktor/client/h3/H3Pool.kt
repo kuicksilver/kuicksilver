@@ -2306,7 +2306,7 @@ internal class H3Pool(
     private val retryOffered = kotlin.concurrent.atomics.AtomicReference(emptySet<Http3Connection>())
 
     /**
-     * Lets [c] follow the network with `http3 { migration }`, if set (docs/guide/ktor.md, "Connection migration"): once
+     * Lets [c] follow the network with `http3 { migration }`, if set (docs/guide/client-http3.md, "Connection migration"): once
      * its handshake has completed (RFC 9000 section 9: no migration before; a 0-RTT connection is handed out earlier), the
      * hook's migrator is started with its events going to the listener, and it is closed when [c] ends or the client
      * closes. The transport enforces the rest of section 9 (confirmation, `disable_active_migration`, zero-length IDs,

@@ -184,9 +184,9 @@ completed is handled by `Http3Settings.earlyData`:
 - `Http3EarlyDataPolicy.Reject425()`: non-replayable early requests are answered with `425 Too Early` and never reach
   the application.
 
-> **Replay warning.** An early request may be a copy an attacker sent again (RFC 9846 section 8). Handlers of requests
-> that run early, those with `receivedEarly = true`, must have no side effects. Narrow `replayable` if a GET handler
-> of yours changes state.
+> **Replay warning.** An early request may be a copy an attacker sent again. Whether to turn 0-RTT on, what must not run
+> early and how the server limits replays: [0-RTT](zero-rtt.md), the one page about it; the rules there hold for this
+> API too.
 
 ## Serving requests
 
@@ -352,8 +352,8 @@ writes one capsule whole, never interleaved with another; `close()` writes what 
 `capsules` keeps reading the peer's side.
 
 ```kotlin
-// guide:http3:capsules (server)
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:http3:capsules (server)
 val config = capsuleConfig { knownTypes = setOf(0x2843) }   // the capsule types the protocol defines
 val tunnel = request.acceptConnect().useCapsuleProtocol(config)
 tunnel.capsules.collect { tunnel.send(it) }                 // echo each capsule until the client's FIN
@@ -400,8 +400,8 @@ sends an Extended CONNECT with `:protocol` `connect-udp` whose path names the ta
 travel as HTTP datagrams with Context ID 0 (section 5), QUIC DATAGRAM frames when both sides negotiated HTTP/3 datagrams
 and DATAGRAM capsules otherwise. Both sides are here, over HTTP/3 only: HTTP/1.1 (`Upgrade: connect-udp`, section 3.2)
 and HTTP/2 (sections 3.4, 3.5) are not supported, as the Capsule Protocol is not on those versions here (ADR-0024). The Ktor
-engines offer it too: the server engine's `http3 { connectUdp }` ([Ktor: CONNECT-UDP over HTTP/3](ktor.md#connect-udp-over-http3-experimental))
-and the client engine's `proxies { connectUdp }` ([Ktor: HTTP/3 through a CONNECT-UDP proxy](ktor.md#http3-through-a-connect-udp-proxy-experimental)).
+engines offer it too: the server engine's `http3 { connectUdp }` ([CONNECT-UDP over HTTP/3](server.md#connect-udp-over-http3-experimental))
+and the client engine's `proxies { connectUdp }` ([HTTP/3 through a CONNECT-UDP proxy](client-proxies.md#http3-through-a-connect-udp-proxy-experimental)).
 
 A server serves it with a `UdpProxy`; the HTTP/3 settings need `enableConnectProtocol` (and `h3Datagram`, on by
 default). Authenticate the client before `serve`: "HTTP servers that support UDP proxying ought to restrict its use to

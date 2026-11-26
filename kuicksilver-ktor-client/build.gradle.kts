@@ -58,7 +58,7 @@ tasks.register("ksAndroidRuntimeJars") {
     doLast { androidRuntimeJars.forEach { println(it.absolutePath) } }
 }
 
-// ---- Simulator host-interop harness (docs/guide/quic.md, "iOS"): `iosHostInteropTest` starts a host peer (HostPeerMain, jvmTest)
+// ---- Simulator host-interop harness (docs/guide/ios.md): `iosHostInteropTest` starts a host peer (HostPeerMain, jvmTest)
 // before the simulator tests and stops it after; its control port reaches the simulator process as KSL_PEER_PORT, since simctl
 // hands every SIMCTL_CHILD_* variable to the app without the prefix. A plain iosSimulatorArm64Test runs HostInteropTest without
 // the variable, and those tests pass without doing anything.
@@ -135,7 +135,7 @@ tasks.register("iosHostInteropTest") {
     dependsOn(hostInteropRun)
 }
 
-// ---- Android connection migration on an emulator (docs/guide/ktor.md, "Connection migration"): `androidMigrationDeviceTest`
+// ---- Android connection migration on an emulator (docs/guide/client-http3.md, "Connection migration"): `androidMigrationDeviceTest`
 // starts AndroidMigrationPeerMain (jvmTest) on the host's 127.0.0.1, installs the device tests and runs
 // ClientMigrationAndroidTest with the server's port, so the download crosses the emulator's own network to 10.0.2.2 (a
 // server inside the device would be reached over its loopback whatever network a socket is bound to). Set ANDROID_SERIAL

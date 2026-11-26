@@ -16,7 +16,8 @@ release in preparation: every guide says "version `0.3.0` or newer", and feature
 kill switch and `Http3Advertising`, certificate reload, the QUIC connection limits of the server engine, HTTP/2,
 WebTransport, among others; see the [CHANGELOG](../CHANGELOG.md)) are not in 0.2.1.
 
-**Until 0.3.0 is on Maven Central**, build it from a checkout of `main` and use `0.3.0-SNAPSHOT` as the BOM version below,
+0.3.0-rc1, a release candidate, will be published on Maven Central before the final 0.3.0. **Until 0.3.0 is on Maven
+Central** (or, to try it earlier, until 0.3.0-rc1 is), build it from a checkout of `main` and use `0.3.0-SNAPSHOT` as the BOM version below,
 with `mavenLocal()` in your repositories. `./gradlew publishToMavenLocal` publishes every target, so it needs everything
 in [CONTRIBUTING.md](../CONTRIBUTING.md#building): Docker (OpenSSL and `libksl` for Linux and Windows), the Android NDK
 and, on macOS, Xcode. For a JVM application,
@@ -27,7 +28,7 @@ and, on macOS, Xcode. For a JVM application,
 
 publishes only the JVM jars, the multiplatform metadata and the BOM: no Android AAR (no NDK) and no Kotlin/Native
 klibs. The metadata still runs the C interop of every native target, so OpenSSL is still built for each of them (Docker,
-and Xcode on macOS), and the jar carries the native library of the machine that built it only (on an Apple Silicon Mac,
+and Xcode on macOS): there is no build without Docker today, not even for a JVM application, and the jar carries the native library of the machine that built it only (on an Apple Silicon Mac,
 macOS arm64), so the application runs on that kind of machine alone. [Building from source](guide/building.md) covers
 your own compiler and flags.
 
@@ -59,7 +60,10 @@ application { mainClass.set("com.example.MainKt") }
 ```
 
 An Android app with the Ktor client (`minSdk` 24; the AAR carries the native libraries for arm64-v8a, armeabi-v7a and
-x86_64, the `INTERNET` and `ACCESS_NETWORK_STATE` permissions and its R8 rules):
+x86_64, the `INTERNET` and `ACCESS_NETWORK_STATE` permissions and its R8 rules). Size: the native library is the bulk of
+what Kuicksilver adds; for arm64-v8a, `libksl.so` must stay under 3,550,000 bytes, which the release gate's Android size
+step checks (`tools/check/size.sh`), and an app split per ABI ships one such library; the `kuicksilver-native` AAR with
+its three ABIs was about 3.6 MB in the last measured release ([Why Kuicksilver](why-kuicksilver.md)):
 
 ```kotlin
 // app/build.gradle.kts
@@ -120,7 +124,7 @@ An app with no Kotlin of its own uses the Swift package
 | Artifact (`io.kuicksilver:`) | What it is | Guide |
 |---|---|---|
 | `kuicksilver-native` | the `ksl` C shim with OpenSSL inside (version pinned in `gradle/openssl.toml`), its JNI and cinterop bindings, the native loader | [architecture](architecture.md) |
-| `kuicksilver-tls` | TLS 1.3 configuration, trust (platform, private CA, SPKI pins, TOFU), TLS over any byte channel | [tls.md](guide/tls.md) |
+| `kuicksilver-tls` | TLS configuration, trust (platform, private CA, SPKI pins, TOFU), TLS over any byte channel | [tls.md](guide/tls.md) |
 | `kuicksilver-ktor-network` | `Socket.tls()` / `Socket.tlsServer()` for ktor-network sockets | [tls.md](guide/tls.md) |
 | `kuicksilver-quic` | QUIC transport: streams, datagrams, migration, coroutine API and sans-IO core | [quic.md](guide/quic.md) |
 | `kuicksilver-http3` | HTTP/3 and QPACK over `kuicksilver-quic` | [http3.md](guide/http3.md) |
@@ -141,10 +145,15 @@ minors are adopted in Kuicksilver releases; see [Supported Ktor versions](guide/
 
 ## Next
 
-- The Ktor client: discovery modes (`Auto`, `Preferred`, `H3Only`; `http3 { enabled = false }` for none), trust and pins, timeouts:
-  [Ktor engines](guide/ktor.md).
-- The Ktor server: one TLS connector serves HTTP/1.1 over TLS on TCP and HTTP/3 on UDP on the same port number, and
-  advertises HTTP/3 with `Alt-Svc`; open and forward both `443/tcp` and `443/udp`:
-  [deploying the HTTP/3 server](guide/deployment.md).
+- A first client and server in one screen: [Quickstart](guide/quickstart.md).
+- The Ktor client: [Ktor client engine](guide/client.md) (timeouts, HTTP/2, the pool) and
+  [HTTP/3 in the Ktor client](guide/client-http3.md) (discovery modes `Auto`, `Preferred`, `H3Only`; `http3 { enabled = false }` for none);
+  trust and pins: [TLS in the Ktor engines](guide/engine-tls.md).
+- The Ktor server: one TLS connector serves HTTP/2 and HTTP/1.1 on TCP and HTTP/3 on UDP on the same port number, and
+  advertises HTTP/3 with `Alt-Svc` ([Ktor server engine](guide/server.md)); open and forward both `443/tcp` and
+  `443/udp`: [deploying the HTTP/3 server](guide/deployment.md).
+- Coming from OkHttp, Retrofit or another Ktor engine:
+  [Migrating from OkHttp and Retrofit](guide/migrating-from-okhttp.md),
+  [Migrating from another Ktor engine](guide/migrating-ktor-engines.md).
 - Raw QUIC (your own protocol, streams and datagrams): [QUIC](guide/quic.md); HTTP/3 without Ktor: [HTTP/3](guide/http3.md).
 - Every option with its default: the [configuration reference](guide/configuration.md).

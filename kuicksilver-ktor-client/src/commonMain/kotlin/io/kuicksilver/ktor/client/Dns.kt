@@ -100,7 +100,7 @@ public class IpAddress private constructor(
  * The name resolution of the Ktor client engine (`KuicksilverEngineConfig.dns`), after OkHttp's `Dns`: the addresses of a
  * host name, which the engine then connects to with Happy Eyeballs (RFC 8305) over TCP (HTTP/1.1, HTTP/2) and QUIC
  * (HTTP/3). [Dns.System] is the default; an application gives its own to use another DNS server (DNS over HTTPS, say), a
- * fixed address for a name, or a policy of its own. It must be safe for concurrent use. docs/guide/ktor.md, "Name
+ * fixed address for a name, or a policy of its own. It must be safe for concurrent use. docs/guide/client.md, "Name
  * resolution".
  *
  * The contract:
@@ -152,7 +152,7 @@ public fun interface Dns {
     public companion object {
         /**
          * The system's resolver, the engine's default (as before 0.3.0): `getaddrinfo` once per address family on a bounded
-         * pool of threads, its answers kept for the platform's cache lifetimes (docs/guide/ktor.md, "Happy Eyeballs"). A
+         * pool of threads, its answers kept for the platform's cache lifetimes (docs/guide/client.md, "Happy Eyeballs"). A
          * resolver of your own may delegate to it for the names it does not handle. As a [FamilyDns] it answers each
          * family on its own; an address literal it answers without a lookup.
          */

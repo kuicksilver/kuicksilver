@@ -7,7 +7,7 @@ import io.kuicksilver.annotations.InternalKuicksilverApi
 import kotlinx.io.IOException
 
 /**
- * A TCP connection under an HTTP/1.1 or HTTP/2 exchange ended, and who ended it (docs/guide/ktor.md, "Who ended the
+ * A TCP connection under an HTTP/1.1 or HTTP/2 exchange ended, and who ended it (docs/guide/observability.md, "Who ended the
  * connection"): the peer or the network ([PeerClosed], [PeerUnresponsive]), or this side ([LocalClose]). An app or a test
  * harness tells "the server or the network went away" from "we closed it" by type instead of by message.
  *

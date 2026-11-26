@@ -14,6 +14,20 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- Ktor client: one log line per origin, at `observability { protocolChoiceLogLevel }` (`Info` by default), when the
+  origin's response advertised no HTTP/3 alternative (none usable in the store once its `Alt-Svc` was read): `kuicksilver: https://example.com: no usable HTTP/3 alternative, using
+  HTTP/2.0`. The per-call line of such calls stays at `Debug`, so the most common reason for "why not HTTP/3", a server
+  that sends no `Alt-Svc`, was silent at `Info` until now. Once per origin per client (host names compared without case), from a bounded memory of
+  1024 origins that forgets the least recently seen.
+- Documentation for newcomers: a one-screen [quickstart](docs/guide/quickstart.md) (the dependencies, a client that
+  names its engine, a server from PEM files with a local test certificate and the PKCS#8 key it needs, the defaults);
+  [migrating from OkHttp and Retrofit](docs/guide/migrating-from-okhttp.md) and [from another Ktor
+  engine](docs/guide/migrating-ktor-engines.md); one page on [0-RTT](docs/guide/zero-rtt.md). The Ktor engine guide is
+  split into task pages (the client, HTTP/3 in the client, proxies, the server, behind a load balancer, the
+  configuration file, TLS, WebSockets and WebTransport, observability); `docs/guide/ktor.md` keeps the first screens,
+  the imports and a map, and its old anchors lead to the new places. Troubleshooting covers `HttpClient()` picking
+  another engine, a private key that is not PKCS#8 and configuration refusals at start. Every Kotlin block of the new
+  pages is compiled; the quickstart and migration ones with no opt-in.
 - Conformance suites in the release gate and in hosted CI (`build.yml`, jobs `linux-native` and `linux`), beside
   h2spec: h3spec v0.1.15 against the HTTP/3 server (`tools/interop/h3spec.sh`; 85 of 86 cases pass, the 86th is
   h3spec's error, recorded with RFC 9114 section 7.1) and the Autobahn|Testsuite 25.10.1 against the WebSocket server
@@ -1147,8 +1161,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   GitHub can show them as Verified), and required by
   `local-release.sh` (docs/process.md, "Privacy pre-push hook"). `tools/check/build-paths.py` also refuses temporary
   directories (`/tmp/`, `/var/folders/`, ...), home-relative paths, and the user, host and configured names, looked up
-  at scan time. 0.3.0-rc1 is published this way, not on Maven Central (docs/release.md,
-  "Prereleases on GitHub only").
+  at scan time. 0.3.0-rc1 goes to Maven Central with `--central-prerelease` instead (docs/release.md,
+  "Prereleases on Maven Central").
 
 ### Changed
 

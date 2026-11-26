@@ -4,6 +4,7 @@
 
 package io.kuicksilver.ktor.client
 
+import io.ktor.client.HttpClient
 import io.ktor.client.engine.ProxyBuilder
 import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.client.request.HttpRequestData
@@ -38,6 +39,7 @@ import io.kuicksilver.tls.TrustConfig
 import io.kuicksilver.tls.tlsConfig
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
@@ -61,7 +63,7 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * Per-call protocol diagnostics through the engine (docs/guide/ktor.md, "Why did this request not use HTTP/3?"): the
+ * Per-call protocol diagnostics through the engine (docs/guide/observability.md, "Why did this request not use HTTP/3?"): the
  * response attribute, the log line, and their agreement with the event listener. Races whose order matters use
  * `raceHeadStart = RaceHeadStart.NoRace` (TCP only once HTTP/3 failed) or hold the HTTP/3 setup, so no outcome depends on
  * which loopback connection is faster.
@@ -117,6 +119,92 @@ class ClientDiagnosticsTest {
     }
 
     private fun okServer(): io.ktor.server.application.Application.() -> Unit = { routing { get("/") { call.respondText("ok") } } }
+
+    /**
+     * A server that advertises no HTTP/3 alternative: one line at the protocol-choice level (Info) for the origin's first
+     * call, none for its next ones (their own line is at Debug, which this logger leaves out), and one again for another
+     * origin.
+     */
+    @Test fun noAlternativeIsLoggedOncePerOrigin() =
+        h3Test {
+            val (one, portOne) = testServer(configure = { http3 { altSvc = false } }, module = okServer())
+            val (two, portTwo) = testServer(configure = { http3 { altSvc = false } }, module = okServer())
+            val log = DiagnosticLines(LogLevel.Info)
+            try {
+                testClient(Http3Discovery.Auto, engine = { observability { logger = log } }).use { c ->
+                    val first = c.get("https://127.0.0.1:$portOne/")
+                    assertEquals(FallbackReason.NoAlternative, first.kuicksilverDiagnostics?.fallback)
+                    assertEquals(
+                        listOf(
+                            LogLevel.Info to "kuicksilver: https://127.0.0.1:$portOne: no usable HTTP/3 alternative, using HTTP/1.1",
+                        ),
+                        log.lines,
+                    )
+                    c.get("https://127.0.0.1:$portOne/").bodyAsText()
+                    assertEquals(1, log.lines.size, "the origin's second call logs nothing at Info: ${log.lines}")
+                    c.get("https://127.0.0.1:$portTwo/").bodyAsText()
+                    assertEquals(
+                        "kuicksilver: https://127.0.0.1:$portTwo: no usable HTTP/3 alternative, using HTTP/1.1",
+                        log.lines
+                            .drop(1)
+                            .single()
+                            .second,
+                    )
+                }
+            } finally {
+                one.stopSuspend(100, 500)
+                two.stopSuspend(100, 500)
+            }
+        }
+
+    /** A server that advertises HTTP/3 in its first response: that call goes over TCP (NoAlternative) and logs no such line. */
+    @Test fun negative_noAlternativeLineNotForAnAdvertisingServer() =
+        h3Test {
+            val (server, port) = testServer(module = okServer())
+            val log = DiagnosticLines(LogLevel.Info)
+            try {
+                testClient(Http3Discovery.Auto, engine = { observability { logger = log } }).use { c ->
+                    val first = c.get("https://127.0.0.1:$port/")
+                    assertEquals(FallbackReason.NoAlternative, first.kuicksilverDiagnostics?.fallback)
+                    assertTrue(log.lines.none { "no usable HTTP/3 alternative" in it.second }, "${log.lines}")
+                }
+            } finally {
+                server.stopSuspend(100, 500)
+            }
+        }
+
+    /** Two first calls to an origin at once, its server advertising nothing: one line between them. */
+    @Test fun noAlternativeLineOnceForParallelFirstCalls() =
+        h3Test {
+            val (server, port) = testServer(configure = { http3 { altSvc = false } }, module = okServer())
+            val log = DiagnosticLines(LogLevel.Info)
+            try {
+                testClient(Http3Discovery.Auto, engine = { observability { logger = log } }).use { c ->
+                    coroutineScope {
+                        val a = async { c.get("https://127.0.0.1:$port/").bodyAsText() }
+                        val b = async { c.get("https://127.0.0.1:$port/").bodyAsText() }
+                        assertEquals("ok", a.await())
+                        assertEquals("ok", b.await())
+                    }
+                    assertEquals(1, log.lines.count { "no usable HTTP/3 alternative" in it.second }, "${log.lines}")
+                }
+            } finally {
+                server.stopSuspend(100, 500)
+            }
+        }
+
+    /** The memory of logged origins is bounded: past its size the least recently seen origin is forgotten (LRU). */
+    @Test fun noAlternativeMemoryIsBounded() =
+        clientTest {
+            HttpClient(Kuicksilver).use { c ->
+                val engine = c.engine as KuicksilverEngine
+                repeat(NO_ALTERNATIVE_LOG_ORIGINS) { assertTrue(engine.firstNoAlternative("https://h$it.test")) }
+                assertEquals(false, engine.firstNoAlternative("https://h0.test"), "seen: and now the most recent")
+                assertTrue(engine.firstNoAlternative("https://one-more.test"), "a new origin past the size")
+                assertTrue(engine.firstNoAlternative("https://h1.test"), "the least recently seen was forgotten")
+                assertEquals(false, engine.firstNoAlternative("https://h0.test"), "the recently seen one was kept")
+            }
+        }
 
     @Test fun h3WinnerHasNoFallback() =
         h3Test {
@@ -472,9 +560,10 @@ class ClientDiagnosticsTest {
             try {
                 testClient(Http3Discovery.Auto, engine = { observability { logger = log } }).use { c ->
                     c.get("https://127.0.0.1:$port/?token=secret")
-                    val line = log.lines.single().second
+                    val line = log.lines.single { "no usable HTTP/3 alternative" !in it.second }.second
                     assertEquals("kuicksilver: GET https://127.0.0.1:$port/ -> HTTP/1.1 (fallback=NoAlternative)", line)
                     assertFalse("secret" in line, line)
+                    assertFalse(log.lines.any { "secret" in it.second }, "no line carries the query: ${log.lines}")
                 }
             } finally {
                 server.stop(100, 500)

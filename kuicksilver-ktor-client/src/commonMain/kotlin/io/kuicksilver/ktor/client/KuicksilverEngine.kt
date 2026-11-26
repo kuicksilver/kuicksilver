@@ -29,6 +29,7 @@ import io.kuicksilver.ktor.client.dns.HttpsRecords
 import io.kuicksilver.ktor.client.dns.HttpsResolution
 import io.kuicksilver.ktor.client.dns.httpsQueryName
 import io.kuicksilver.ktor.client.h1.H1Pool
+import io.kuicksilver.ktor.client.h1.SpinLock
 import io.kuicksilver.ktor.client.h1.monotonicMillis
 import io.kuicksilver.ktor.client.h3.H3ClosedAfterGoAwayKey
 import io.kuicksilver.ktor.client.h3.H3NotSent
@@ -505,10 +506,16 @@ internal class KuicksilverEngine(
     /**
      * One line per answered call: at `observability { protocolChoiceLogLevel }` when HTTP/3 was an option, or the mode would have used it, and
      * the call went over another protocol; at Debug otherwise (HTTP/3 served it, or it was never a candidate). Built only
-     * when the logger wants that level.
+     * when the logger wants that level. A call over TCP for want of an alternative ([FallbackReason.NoAlternative]) whose
+     * response advertised no HTTP/3 either (the store holds no fresh, usable `h3` entry for the origin once the response's
+     * `Alt-Svc` was learned) also gets one line at the protocol-choice level, once per origin for this client
+     * ([noAlternativeLogged]): so "why not HTTP/3" has an answer at Info when the server sends no `Alt-Svc` at all, and an
+     * origin's first call that learns its alternative logs nothing. An origin that announces HTTP/3 only in an ALTSVC frame
+     * on its HTTP/2 connection (RFC 7838 section 4) may still get the line on its first call, when the frame is learned
+     * after the response.
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-    private fun logDiagnostics(
+    private suspend fun logDiagnostics(
         data: HttpRequestData,
         d: ProtocolDiagnostics,
     ) {
@@ -520,11 +527,46 @@ internal class KuicksilverEngine(
             }
         val logger = events.logger
         try {
+            if (d.fallback == FallbackReason.NoAlternative && logger.isEnabled(wanted)) {
+                val url = data.url
+                val origin =
+                    buildString {
+                        append(url.protocol.name).append("://").append(logSafe(uriHost(url.host.lowercase())))
+                        if (url.port != url.protocol.defaultPort) append(':').append(url.port)
+                    }
+                // what the response taught: the store after its Alt-Svc; the checks under the locks, the logging after them
+                val advertised = altSvcLock.withLock { altSvc.h3For(url) != null }
+                if (!advertised && firstNoAlternative(origin)) {
+                    logger.log(wanted, "kuicksilver: $origin: no usable HTTP/3 alternative, using ${d.protocol}")
+                }
+            }
             if (logger.isEnabled(level)) logger.log(level, d.line(data.method.value, data.url))
+        } catch (e: CancellationException) {
+            throw e // the call's cancellation (the Alt-Svc lock above suspends), never swallowed as a logger's failure
         } catch (_: Throwable) {
             // a logger that fails never fails the call (as EngineEvents.emit)
         }
     }
+
+    /**
+     * The origins whose call without an advertised HTTP/3 alternative was logged, least recently seen first (insertion
+     * order, a hit moves the origin to the end). Bounded: past [NO_ALTERNATIVE_LOG_ORIGINS] the least recently seen origin
+     * is forgotten, so a client that talks to very many origins may log a rarely seen one again, never grows without limit.
+     */
+    private val noAlternativeLogged = LinkedHashSet<String>()
+    private val noAlternativeLock = SpinLock()
+
+    /** True for the first call to [origin] without an alternative (since it was last forgotten). */
+    internal fun firstNoAlternative(origin: String): Boolean =
+        noAlternativeLock.withLock {
+            if (noAlternativeLogged.remove(origin)) {
+                noAlternativeLogged.add(origin) // seen again: the most recent now
+                return@withLock false
+            }
+            if (noAlternativeLogged.size >= NO_ALTERNATIVE_LOG_ORIGINS) noAlternativeLogged.remove(noAlternativeLogged.first())
+            noAlternativeLogged.add(origin)
+            true
+        }
 
     /** Tells the listener and [d] that [data] goes over [protocol] for [reason]; reasons that say it all set [d]'s fallback. */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -2015,3 +2057,6 @@ private inline fun checkTlsBlock(
         throw IllegalStateException("$what could not be checked: the native TLS library failed ($e)", e)
     }
 }
+
+/** How many origins [KuicksilverEngine] remembers having logged "no usable HTTP/3 alternative" for (least recently seen forgotten first). */
+internal const val NO_ALTERNATIVE_LOG_ORIGINS = 1024

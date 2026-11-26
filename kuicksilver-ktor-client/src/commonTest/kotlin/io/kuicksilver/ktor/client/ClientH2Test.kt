@@ -50,7 +50,7 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * HTTP/2 on the TCP path (RFC 9113; docs/guide/ktor.md, "HTTP/2"): ALPN `h2`, one multiplexed connection per route, the
+ * HTTP/2 on the TCP path (RFC 9113; docs/guide/client.md, "HTTP/2 on the client"): ALPN `h2`, one multiplexed connection per route, the
  * protocol race's TCP side, repeats of requests the server did not process, HTTP_1_1_REQUIRED, deadlines. The server is
  * our HTTP/2 runtime over a TLS listener on loopback (tlsH2WithSilentUdp), answering as each test needs.
  */

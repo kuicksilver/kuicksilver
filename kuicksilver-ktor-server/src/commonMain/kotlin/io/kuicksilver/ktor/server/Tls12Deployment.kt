@@ -37,7 +37,7 @@ internal fun checkTls12H2(
     log.info(
         "TLS 1.2 on ${tls.host}:${tls.port}: the certificate has no rsaEncryption key, so TLS 1.2 clients get HTTP/1.1, not " +
             "HTTP/2 (RFC 9113 section 9.2.2 requires TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 of HTTP/2 over TLS 1.2); TLS 1.3 " +
-            "clients get HTTP/2 (docs/guide/ktor.md, \"TLS 1.2 on the server\")",
+            "clients get HTTP/2 (docs/guide/engine-tls.md, \"TLS 1.2 on the server\")",
     )
 }
 

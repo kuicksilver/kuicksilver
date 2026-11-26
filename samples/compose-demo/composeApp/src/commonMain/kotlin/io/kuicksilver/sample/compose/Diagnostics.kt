@@ -31,7 +31,7 @@ fun ProtocolDiagnostics.toView(): DiagnosticsView =
         h3Failure = h3Failure?.let { it::class.simpleName ?: "Error" },
     )
 
-/** What to check for each [FallbackReason], after the table in its KDoc (docs/guide/ktor.md, "Why did this request not use HTTP/3?"). */
+/** What to check for each [FallbackReason], after the table in its KDoc (docs/guide/observability.md, "Why did this request not use HTTP/3?"). */
 fun fallbackHint(reason: FallbackReason): String =
     when (reason) {
         FallbackReason.NotSecure -> "HTTP/3 needs https://"

@@ -23,8 +23,8 @@ guides explain how options work together.
 stable. Every other option sits in a block, and the heading of its section is the block's path in the DSL
 (`engine { http3 { stall { } } }`): [Ktor client](#ktor-client), [Ktor server](#ktor-server), the
 [configuration-file keys](#hocon-keys) of `EngineMain`, and the [low-level](#low-level) builders that the engines' `quic { }`
-and `settings { }` blocks also take. A minimal working setup is in [Ktor: Server](ktor.md#server) and
-[Ktor: Client](ktor.md#client).
+and `settings { }` blocks also take. A minimal working setup is in [Server](server.md) and
+[Client](client.md).
 
 **The columns.** *Since* names the release that introduced the option under this name and in this block (`0.3.0`: the
 release in preparation; an option that moved to a block in 0.3.0 is `0.3.0`). *Status* is the option's stability
@@ -95,6 +95,30 @@ UDP on the same port.
 Behind an L4 load balancer that sends the PROXY protocol: `tlsConnector { proxyProtocol { trust("10.0.0.0/8") } }`. The
 same server from `application.conf`: [HOCON keys](#hocon-keys).
 
+## Which setting controls what
+
+Some goals have several settings that look alike. Each does one thing:
+
+| Goal | Setting | What it does |
+|---|---|---|
+| HTTP/3 off on the client | `engine { http3 { enabled = false } }` | TCP only, fixed when the client is created |
+| | `engine { http3 { allowed } }` | asked before each request: a remote kill switch; `client.closeHttp3Connections()` drops the open ones ([Turning HTTP/3 off remotely](client-http3.md#turning-http3-off-remotely)) |
+| | `engine { http3 { discovery } }` | when HTTP/3 is tried: after `Alt-Svc` (`Auto`), first (`Preferred`), only (`H3Only`) |
+| HTTP/3 off on the server | `http3 { enabled = false }` | no UDP listener at all |
+| | `http3 { altSvc = false }` | HTTP/3 is served but not announced (a load balancer announces it, or nobody) |
+| | `engine.http3Advertising` | at run time: announce, clear the announcement, drain ([Turning HTTP/3 off on the server](server.md#turning-http3-off-on-the-server)) |
+| Connections per client address | `http3 { endpoint { maxConnectionsPerIp } }` (256) | QUIC connections; `null` behind a NAT or kube-proxy, where clients share one address |
+| | `tcp { maxConnectionsPerIp }` (`null`) | TCP connections; 256 for a server that faces its clients directly ([Connection limits](server.md#connection-limits)) |
+| Connect timeout | `HttpTimeout`'s `connectTimeoutMillis` | wins when set |
+| | `engine { connectTimeout }` (10 s) | used when `HttpTimeout` sets none; also the QUIC and TLS handshake deadline |
+| Idle connections | client `pool { idleTimeout }` (5 min) | pooled connections without requests are closed after this |
+| | `http3 { quic { maxIdleTimeout } }` (30 s) | QUIC's own idle timeout, negotiated with the peer: an HTTP/3 connection closes after the smaller of this and `pool { idleTimeout }` unless `quic { keepAlive }` is set |
+| | server `tcp { idleTimeout }` (45 s) | TCP connections without requests (`ktor.deployment.connectionIdleTimeoutSeconds` in `EngineMain`) |
+| | server `requestHeaderTimeout` (30 s) | the time for a complete request head, on every protocol |
+| Keeping a quiet connection alive | `http3 { quic { keepAlive } }` | QUIC PINGs |
+| | `engine { http2 { pingInterval } }` | HTTP/2 PINGs, which also detect a dead connection |
+| | Ktor's `WebSockets { pingIntervalMillis }` | WebSocket pings |
+
 ## Where each option is set
 
 The DSL path of an option and its configuration-file key are the same (`http3 { endpoint { maxConnections } }` is
@@ -113,7 +137,7 @@ The DSL path of an option and its configuration-file key are the same (`http3 { 
 `HttpClient(Kuicksilver) { engine { … } }` (`KuicksilverEngineConfig`): `connectTimeout` at the top, everything else in
 the blocks `tls { ech { } }`, `http3 { earlyData { } stall { } webTransport { } quic { } settings { } expert { } }`,
 `http2 { settings { } }`, `http1 { }`, `pool { }`, `network { }`, `proxies { tls { } }`, `webSockets { }` and
-`observability { }`. Values are checked when the engine is created. Guide: [Ktor: Client](ktor.md#client).
+`observability { }`. Values are checked when the engine is created. Guide: [Client](client.md).
 
 ### `engine { }`
 
@@ -133,7 +157,7 @@ verify another name with `TrustConfig.ExpectedName`) and the handshake deadline 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
 | `trust` | `TrustConfig` | `TrustConfig.Platform` | 0.3.0 | stable | 🔒 | how the server is verified ([TrustConfig](#trustconfig)) |
-| `identity` | `TlsIdentity?` | `null` | 0.3.0 | stable | 🔒 | the client certificate, sent when a server asks for one ([Ktor: Mutual TLS](ktor.md#mutual-tls-client-certificates)) |
+| `identity` | `TlsIdentity?` | `null` | 0.3.0 | stable | 🔒 | the client certificate, sent when a server asks for one ([Mutual TLS](engine-tls.md#mutual-tls-client-certificates)) |
 | `versions` | `TlsVersions` | `TlsVersions.Tls12And13` (0.3.0; was `Tls13`) | 0.3.0 | stable | 🔒 | the TLS versions offered over TCP and to an `https://` proxy: TLS 1.3, or TLS 1.2 with a server without 1.3, under the RFC 9325 profile (ECDHE and AEAD only, Extended Master Secret, no renegotiation: a server's request ends an HTTP/2 connection, RFC 9113 section 9.2.1), as OkHttp and the browsers; `Tls13` refuses a TLS 1.2-only server; QUIC and every connection that offers ECH are TLS 1.3 only |
 | `cipherSuites` | `CipherSuites` | `CipherSuites.Default` | 0.3.0 | stable | 🔒 | TLS 1.3 suites in preference order |
 | `keyExchangeGroups` | `KeyExchangeGroups` | `KeyExchangeGroups.Default` | 0.3.0 | experimental | 🔒 | key-exchange groups and the key shares sent ([`tlsConfig(role) { }`](#tlsconfigrole--)) |
@@ -143,7 +167,7 @@ verify another name with `TrustConfig.ExpectedName`) and the handshake deadline 
 
 ### `engine { tls { ech { } } }`
 
-`EchClientConfig`, *experimental* (guide: [Encrypted Client Hello](ktor.md#encrypted-client-hello-experimental)). A
+`EchClientConfig`, *experimental* (guide: [Encrypted Client Hello](engine-tls.md#encrypted-client-hello-experimental)). A
 connection offers the `ech` of the HTTPS record of its endpoint, else the `configLists` entry of its host, else GREASE ECH;
 over TCP and QUIC alike, TLS 1.3 only.
 
@@ -155,7 +179,7 @@ over TCP and QUIC alike, TLS 1.3 only.
 
 ### `engine { http3 { } }`
 
-`Http3ClientConfig` (guide: [HTTP/3 on the client](ktor.md#http3-on-the-client)). Its `quic { }` block is a
+`Http3ClientConfig` (guide: [HTTP/3 on the client](client-http3.md#http3-on-the-client)). Its `quic { }` block is a
 [`quicConfig { }`](#low-level) for the HTTP/3 connections: the engine derives and refuses `handshakeTimeout`
 (`connectTimeout`), `expert { resetStreamAt }` and `expert { cancelErrorCode }`; `flowControl { initialStreamWindow }`
 must be at least 1024 (RFC 9114 section 6.2); `maxBidiStreams` and
@@ -174,12 +198,12 @@ limits `webTransport { initialMaxStreamsBidi; initialMaxStreamsUni; initialMaxDa
 | `discovery` | `Http3Discovery` | `Http3Discovery.Auto` | 0.2.0 | stable | | `Auto` (TCP first, HTTP/3 after `Alt-Svc`), `Preferred` (HTTP/3 first, TCP fallback), `H3Only` (no TCP); proxied requests never use HTTP/3 |
 | `hints` | `Set<HostPort>` | empty | 0.3.0 | stable | | origins known to speak HTTP/3 (Cronet's `addQuicHint`): HTTP/3 from their first request, as `Preferred`; `HostPort(host, port)` compares the host exactly as in URLs |
 | `altSvcStore` | `AltSvcStore` | `InMemoryAltSvcStore()` | 0.2.0 | stable | | where alternatives live; `FileAltSvcStore(path)` keeps them across restarts (on the JVM and Android also `FileAltSvcStore(file)` with a `java.io.File`, from API 24) |
-| `allowed` | `() -> Boolean` | `{ true }` | 0.3.0 | stable | | kill switch read once per `https://` request and `webTransport` call: false sends a request over TCP, HTTP/2 included (`H3Only` requests and `webTransport` fail with `UnsupportedOperationException`); a switch that throws allows HTTP/3 and is logged at most once per 5 minutes ([Turning HTTP/3 off remotely](ktor.md#turning-http3-off-remotely)) |
-| `migration` | `Http3ConnectionMigration?` | `null` (connections stay on the network they were opened on) | 0.3.0 | experimental | | pooled HTTP/3 connections follow the network (RFC 9000 section 9): `Http3ConnectionMigration.followDefaultNetwork(connectivity)` on Android, `followDefaultNetwork()` on iOS and macOS; while `network { networkId }` is not set, its networks are the engine's network ([Connection migration](ktor.md#connection-migration)) |
+| `allowed` | `() -> Boolean` | `{ true }` | 0.3.0 | stable | | kill switch read once per `https://` request and `webTransport` call: false sends a request over TCP, HTTP/2 included (`H3Only` requests and `webTransport` fail with `UnsupportedOperationException`); a switch that throws allows HTTP/3 and is logged at most once per 5 minutes ([Turning HTTP/3 off remotely](client-http3.md#turning-http3-off-remotely)) |
+| `migration` | `Http3ConnectionMigration?` | `null` (connections stay on the network they were opened on) | 0.3.0 | experimental | | pooled HTTP/3 connections follow the network (RFC 9000 section 9): `Http3ConnectionMigration.followDefaultNetwork(connectivity)` on Android, `followDefaultNetwork()` on iOS and macOS; while `network { networkId }` is not set, its networks are the engine's network ([Connection migration](client-http3.md#connection-migration)) |
 
 ### `engine { http3 { earlyData { } } }`
 
-`ClientEarlyDataConfig`, *experimental* ([0-RTT](ktor.md#0-rtt-opt-in-experimental), ADR-0015).
+`ClientEarlyDataConfig`, *experimental* ([0-RTT](zero-rtt.md), ADR-0015).
 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
@@ -188,7 +212,7 @@ limits `webTransport { initialMaxStreamsBidi; initialMaxStreamsUni; initialMaxDa
 ### `engine { http3 { stall { } } }`
 
 `StallConfig`, *experimental*: stall detection on the HTTP/3 connections the engine chose over TCP
-([Stalled HTTP/3 connections](ktor.md#stalled-http3-connections)).
+([Stalled HTTP/3 connections](client-http3.md#stalled-http3-connections)).
 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
@@ -199,7 +223,7 @@ limits `webTransport { initialMaxStreamsBidi; initialMaxStreamsUni; initialMaxDa
 
 ### `engine { http3 { webTransport { } } }`
 
-`ClientWebTransportConfig`, *experimental* ([WebTransport on the client](ktor.md#webtransport-on-the-client-experimental)).
+`ClientWebTransportConfig`, *experimental* ([WebTransport on the client](realtime.md#webtransport-on-the-client-experimental)).
 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
@@ -220,7 +244,7 @@ limits `webTransport { initialMaxStreamsBidi; initialMaxStreamsUni; initialMaxDa
 
 ### `engine { http2 { } }`
 
-`Http2ClientConfig` (guide: [HTTP/2 on the client](ktor.md#http2-on-the-client)). Its `settings { }` block
+`Http2ClientConfig` (guide: [HTTP/2 on the client](client.md#http2-on-the-client)). Its `settings { }` block
 (*experimental*) is an [`http2Settings { }`](#low-level): our windows, SETTINGS and the limits held against the server
 (its `maxConcurrentStreams` is what the server may open towards us, which a client never uses).
 
@@ -228,7 +252,7 @@ limits `webTransport { initialMaxStreamsBidi; initialMaxStreamsUni; initialMaxDa
 |---|---|---|---|---|---|---|
 | `enabled` | `Boolean` | `true` | 0.3.0 | stable | | offer `h2` and `http/1.1` in ALPN on every `https://` connection over TCP; `false` offers only `http/1.1`, as in 0.2 |
 | `pingInterval` | `Duration?` | `null` (no PINGs) | 0.3.0 | stable | | a PING this often on every HTTP/2 connection; one still unanswered at the next ends the connection and fails its calls; at least 100 ms |
-| `priorKnowledge` | `Set<HostPort>` | empty | 0.3.0 | experimental | 🔒 | the `http://` origins whose requests go over h2c, HTTP/2 over cleartext TCP with prior knowledge (RFC 9113 section 3.3): the preface at once, no fallback to HTTP/1.1, never for `https://`; cleartext, so only servers on a trusted network ([h2c on the client](ktor.md#h2c-on-the-client)) |
+| `priorKnowledge` | `Set<HostPort>` | empty | 0.3.0 | experimental | 🔒 | the `http://` origins whose requests go over h2c, HTTP/2 over cleartext TCP with prior knowledge (RFC 9113 section 3.3): the preface at once, no fallback to HTTP/1.1, never for `https://`; cleartext, so only servers on a trusted network ([h2c on the client](client.md#h2c-on-the-client)) |
 
 ### `engine { http1 { } }`
 
@@ -240,7 +264,7 @@ limits `webTransport { initialMaxStreamsBidi; initialMaxStreamsUni; initialMaxDa
 
 ### `engine { pool { } }`
 
-`PoolConfig` (guide: [Connection pool](ktor.md#connection-pool)).
+`PoolConfig` (guide: [Connection pool](client.md#connection-pool)).
 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
@@ -249,7 +273,7 @@ limits `webTransport { initialMaxStreamsBidi; initialMaxStreamsUni; initialMaxDa
 | `maxIdleConnectionsPerRoute` | `Int` | 4 | 0.3.0 | stable | | idle HTTP/1.1 keep-alive connections kept per route; not a connection limit; 0 keeps none |
 | `idleTimeout` | `Duration` | 5 min | 0.3.0 | stable | | idle HTTP/1.1 connections, and HTTP/2 and HTTP/3 connections without requests, are closed after this; for HTTP/3 the effective value is the smaller of this and `http3 { quic { maxIdleTimeout } }` (30 s) unless `quic { keepAlive }` is set |
 | `maxConnectionLifetime` | `Duration?` | `null` (no limit) | 0.3.0 | stable | | age after which a connection takes no new requests; a finite value spreads load after DNS or load-balancer changes |
-| `coalescing` | `Boolean` | `false` | 0.3.0 | experimental | 🔒 | an `https` request may go on another origin's HTTP/2 or HTTP/3 connection whose certificate passes every check for its host and whose address and port its host resolves to (RFC 9113 section 9.1.1, RFC 9114 section 3.3; ADR-0018); a 421 sends it once more on a connection of its own; never through a proxy, for a WebSocket, over h2c, under `Tofu` or under `ExpectedName` ([Connection coalescing](ktor.md#connection-coalescing-experimental)) |
+| `coalescing` | `Boolean` | `false` | 0.3.0 | experimental | 🔒 | an `https` request may go on another origin's HTTP/2 or HTTP/3 connection whose certificate passes every check for its host and whose address and port its host resolves to (RFC 9113 section 9.1.1, RFC 9114 section 3.3; ADR-0018); a 421 sends it once more on a connection of its own; never through a proxy, for a WebSocket, over h2c, under `Tofu` or under `ExpectedName` ([Connection coalescing](client.md#connection-coalescing-experimental)) |
 
 ### `engine { network { } }`
 
@@ -257,23 +281,23 @@ limits `webTransport { initialMaxStreamsBidi; initialMaxStreamsUni; initialMaxDa
 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
-| `dns` | `Dns` | `Dns.System` | 0.3.0 | experimental | 🔒 | resolves host names (the origin's, an alternative's, an HTTPS record target's, a proxy's; never an IP literal, never the origin's behind an HTTP or `socks5h` proxy); the answer is sorted by RFC 6724 and raced with Happy Eyeballs; bounded by the connect timeout; SNI and certificate checks use the host name, never the answer ([Name resolution](ktor.md#name-resolution-experimental)) |
-| `httpsRecords` | `HttpsRecordSource` | `HttpsRecordSource.Off` | 0.3.0 | experimental | | HTTPS resource records (RFC 9460) as a source of HTTP/3 and of ECH in `Auto`: `System` (the OS resolver) or `Exchange { query -> response }` (your DNS-over-HTTPS client); an `http://` request to an origin with usable records gets a `307` to its `https` URL ([HTTPS records](ktor.md#https-records-experimental)) |
+| `dns` | `Dns` | `Dns.System` | 0.3.0 | experimental | 🔒 | resolves host names (the origin's, an alternative's, an HTTPS record target's, a proxy's; never an IP literal, never the origin's behind an HTTP or `socks5h` proxy); the answer is sorted by RFC 6724 and raced with Happy Eyeballs; bounded by the connect timeout; SNI and certificate checks use the host name, never the answer ([Name resolution](client.md#name-resolution-experimental)) |
+| `httpsRecords` | `HttpsRecordSource` | `HttpsRecordSource.Off` | 0.3.0 | experimental | | HTTPS resource records (RFC 9460) as a source of HTTP/3 and of ECH in `Auto`: `System` (the OS resolver) or `Exchange { query -> response }` (your DNS-over-HTTPS client); an `http://` request to an origin with usable records gets a `307` to its `https` URL ([HTTPS records](client-http3.md#https-records-experimental)) |
 | `httpsRecordWait` | `Duration` | 50 ms | 0.3.0 | experimental | | how long a request waits for the HTTPS records after the origin's addresses resolved; 50 ms (RFC 9460 section 5.1) to 1 s |
-| `happyEyeballsDelay` | `Duration?` | 250 ms | 0.3.0 | stable | | Happy Eyeballs (RFC 8305) for the TCP and QUIC connects: the delay before the next address is tried while earlier attempts are pending; 100 ms..2 s, or `null` to try one address after another ([Happy Eyeballs](ktor.md#happy-eyeballs)) |
+| `happyEyeballsDelay` | `Duration?` | 250 ms | 0.3.0 | stable | | Happy Eyeballs (RFC 8305) for the TCP and QUIC connects: the delay before the next address is tried while earlier attempts are pending; 100 ms..2 s, or `null` to try one address after another ([Happy Eyeballs](client.md#happy-eyeballs)) |
 | `networkId` | `(() -> String?)?` | `null` (not set) | 0.3.0 | stable | | identifies the current network; a change forgets broken marks, QUIC confirmation, HTTPS records and alternatives without `persist=1`; while it is not set, the networks `http3 { migration }` follows take its place, and without either the engine sees no network change |
 
 ### `engine { proxies { } }`
 
 `ProxiesConfig`, *experimental*; Ktor's `proxy` on the engine configuration names an explicit proxy, which always wins
-(guide: [Proxies](ktor.md#proxies)).
+(guide: [Proxies](client-proxies.md#proxies)).
 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
 | `resolver` | `ProxyResolver` | `ProxyResolvers.System` | 0.3.0 | experimental | 🔒 | the proxy for requests `proxy` does not cover, per scheme, host and port (kept 30 s): `System` (the platform's settings), `Environment` (`https_proxy`, `no_proxy`...), `None` or your own; each lookup is bounded by `connectTimeout`; loopback is always direct with the built-ins |
 | `credentials` | `ProxyCredentials?` | `null` | 0.3.0 | experimental | 🔒 | for the explicit `proxy` only (a resolver's proxy carries its own): SOCKS5 username/password (RFC 1929) or `Proxy-Authorization: Basic` on an HTTP proxy's CONNECT and absolute-form requests; in clear to an `http://` or SOCKS5 proxy, only inside TLS to an `https://` one |
 | `tls { }` | `ClientTlsConfig` block | the engine's `tls { }` trust without what names the origin, no identity | 0.3.0 | experimental | 🔒 | the TLS of connections to an `https://` proxy and to a `connectUdp` proxy; the server name is the proxy's host and ALPN `http/1.1` (`h3` to a CONNECT-UDP proxy); an `ech { configLists }` entry for the proxy's host is offered to it |
-| `connectUdp` | `ConnectUdpProxy?` | `null` | 0.3.0 | experimental | 🔒 | a CONNECT-UDP proxy (RFC 9298, MASQUE) for HTTP/3: the `https` requests it applies to go over HTTP/3 inside a UDP tunnel through it, never over TCP or directly ([HTTP/3 through a CONNECT-UDP proxy](ktor.md#http3-through-a-connect-udp-proxy-experimental)) |
+| `connectUdp` | `ConnectUdpProxy?` | `null` | 0.3.0 | experimental | 🔒 | a CONNECT-UDP proxy (RFC 9298, MASQUE) for HTTP/3: the `https` requests it applies to go over HTTP/3 inside a UDP tunnel through it, never over TCP or directly ([HTTP/3 through a CONNECT-UDP proxy](client-proxies.md#http3-through-a-connect-udp-proxy-experimental)) |
 | `pacFullWebSocketUrl` | `Boolean` | `false` | 0.3.0 | experimental, delicate | 🔒 | with `ProxyResolvers.System` on Apple platforms and Windows: the PAC script the system settings name gets a `wss://` URI whole, path and query included (RFC 6455 section 4.1); off, every script gets `wss://host[:port]/` only, as browsers give it (CVE-2016-3763, CVE-2016-5134) |
 
 ### `engine { webSockets { } }`
@@ -286,12 +310,12 @@ limits `webTransport { initialMaxStreamsBidi; initialMaxStreamsUni; initialMaxDa
 
 ### `engine { observability { } }`
 
-`ClientObservability` (guide: [Ktor: Observability](ktor.md#observability-experimental)).
+`ClientObservability` (guide: [Observability](observability.md)).
 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
 | `logger` | `KuicksilverLogger` | `KuicksilverLogger.Default` | 0.3.0 | stable | | the engine's and its QUIC endpoints' diagnostics; `Default` is the platform's logger at warnings and up (SLF4J on the JVM, Logcat on Android, `NSLog` on Apple platforms, standard error elsewhere); `KuicksilverLogger.platform(LogLevel.Info)`, `KuicksilverLogger.Stderr`, `None` or your own |
-| `protocolChoiceLogLevel` | `LogLevel?` | `LogLevel.Info` | 0.3.0 | stable | | level of the logger's line for a call HTTP/3 could have served but did not, which the default logger (warnings and up) leaves out; calls over HTTP/3 or never meant for it are logged at `Debug`; `null` writes none ([Why did this request not use HTTP/3?](ktor.md#why-did-this-request-not-use-http3)). The first alternative marked broken on a network is one warning line whatever this says |
+| `protocolChoiceLogLevel` | `LogLevel?` | `LogLevel.Info` | 0.3.0 | stable | | level of the logger's line for a call HTTP/3 could have served but did not, which the default logger (warnings and up) leaves out; calls over HTTP/3 or never meant for it are logged at `Debug`, but the first call to each origin whose response advertised no HTTP/3 also gets one line at this level ("no usable HTTP/3 alternative"); `null` writes none ([Why did this request not use HTTP/3?](observability.md#why-did-this-request-not-use-http3)). The first alternative marked broken on a network is one warning line whatever this says |
 | `qlog` | `QlogSink?` | `null` | 0.3.0 | stable | | a qlog trace per HTTP/3 connection; wrap a file sink in `AsyncQlogSink` |
 | `eventListener` | `KuicksilverEventListener?` | `null` | 0.3.0 | experimental | | call, protocol, race, Alt-Svc, DNS and pool events |
 | `connectionListener` | `ConnectionListener?` | `null` | 0.3.0 | experimental | | lifecycle of every QUIC connection of the engine |
@@ -302,14 +326,14 @@ limits `webTransport { initialMaxStreamsBidi; initialMaxStreamsUni; initialMaxDa
 at the top, everything else in the blocks `tls { }`, `tlsConnector { tls { } proxyProtocol { } }`,
 `plainConnector { proxyProtocol { } }`, `http1 { }`, `http2 { settings { } }`,
 `http3 { earlyData { } webTransport { } quic { } settings { } endpoint { expert { } } }`, `webSockets { }`, `tcp { }`
-and `observability { }`. Values are checked when the server starts. Guide: [Ktor: Server](ktor.md#server).
+and `observability { }`. Values are checked when the server starts. Guide: [Server](server.md).
 
 ### `configure { }`
 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
 | `requestHeaderTimeout` | `Duration` | 30 s | 0.3.0 | stable | 🔒 | the time a client has to send a complete request head on every protocol: over HTTP/1.1 from the accepted connection (TLS handshake included) or the end of the previous response, then `408 Request Timeout` and close when part of a head arrived, a close without a response when nothing did; it also bounds `maxHeaderBlockTime` of `http2 { settings { } }` and `http3 { settings { } }` and the PROXY protocol header's wait (a connector with `proxyProtocol { }` needs at least 3 s) |
-| `shutdownGracePeriod`, `shutdownTimeout` (Ktor) | | Ktor's | 0.2.0 | stable | | `stop` sends GOAWAY and shuts the HTTP/3 endpoints down with the grace period ([Graceful stop](ktor.md#graceful-stop)) |
+| `shutdownGracePeriod`, `shutdownTimeout` (Ktor) | | Ktor's | 0.2.0 | stable | | `stop` sends GOAWAY and shuts the HTTP/3 endpoints down with the grace period ([Graceful stop](server.md#graceful-stop)) |
 
 Ktor's `connectionGroupSize`, `workerGroupSize` and `callGroupSize` are not used (the engine runs on `Dispatchers.IO`). Ktor's
 own connectors (`port = …`, `connector { }`) serve TLS once `tls { }` has an identity, and bind as Ktor says (`0.0.0.0`
@@ -322,7 +346,7 @@ On the running engine (*experimental*):
 
 | API | Default | What it does |
 |---|---|---|
-| `engine.http3Advertising` | `On` | `On`; `Clear` (`Alt-Svc: clear` on HTTP/1.1, HTTP/2 and HTTP/3 responses and in HTTP/2 ALTSVC frames, HTTP/3 still served); `Drain` (`clear`, GOAWAY to live HTTP/3 connections, new QUIC connections refused); read per response and per new client ([Turning HTTP/3 off on the server](ktor.md#turning-http3-off-on-the-server)) |
+| `engine.http3Advertising` | `On` | `On`; `Clear` (`Alt-Svc: clear` on HTTP/1.1, HTTP/2 and HTTP/3 responses and in HTTP/2 ALTSVC frames, HTTP/3 still served); `Drain` (`clear`, GOAWAY to live HTTP/3 connections, new QUIC connections refused); read per response and per new client ([Turning HTTP/3 off on the server](server.md#turning-http3-off-on-the-server)) |
 | `engine.http3Stats` | empty before the start | the QUIC endpoint counters of every HTTP/3 listener: datagrams, drops, refusals by admission, limits and the accept queue, handshakes ([Observability](deployment.md#observability)) |
 | `engine.updateLoadBalancer(next)` | | changes `http3 { endpoint { loadBalancer } }` on the running engine |
 
@@ -334,33 +358,33 @@ does not set is the engine's, and an identity or a trust set there replaces the 
 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
-| `identity` | `TlsIdentity?` | `null` | 0.3.0 | stable | 🔒 | the certificate chain and key, for TCP and QUIC; a `TlsIdentity.Reloadable` can be replaced at run time ([Certificate rotation](ktor.md#certificate-rotation)); setting it in a block that called `pemFiles` fails |
+| `identity` | `TlsIdentity?` | `null` | 0.3.0 | stable | 🔒 | the certificate chain and key, for TCP and QUIC; a `TlsIdentity.Reloadable` can be replaced at run time ([Certificate rotation](engine-tls.md#certificate-rotation)); setting it in a block that called `pemFiles` fails |
 | `pemFiles(certificateChain, privateKey)` | function | | 0.3.0 | stable | 🔒 | reads the chain (PEM, leaf first) and the unencrypted PKCS#8 key (`-----BEGIN PRIVATE KEY-----`) now, as `identity`; with `reloadInterval` the engine watches both files; a file larger than 1 MiB, a damaged one, an encrypted key or a key that does not match the chain is refused |
 | `reloadInterval` | `Duration?` | `null` (read once) | 0.3.0 | stable | | how often the files of `pemFiles`, `clientCaFile` and `ocspStaplingFile` are checked; a new chain is applied once two reads a second apart agree and the key matches it, a failure keeps what is in use and is retried; needs `pemFiles` (the start fails without); at least 1 s |
-| `clientAuth` | `ClientAuth` | `ClientAuth.None` | 0.3.0 | stable | 🔒 | ask for (`Optional`) or require (`Required`) client certificates; other than `None` it needs `clientTrust` or `clientCaFile` ([Ktor: Mutual TLS](ktor.md#mutual-tls-client-certificates)) |
+| `clientAuth` | `ClientAuth` | `ClientAuth.None` | 0.3.0 | stable | 🔒 | ask for (`Optional`) or require (`Required`) client certificates; other than `None` it needs `clientTrust` or `clientCaFile` ([Mutual TLS](engine-tls.md#mutual-tls-client-certificates)) |
 | `clientTrust` | `TrustConfig?` | `null` | 0.3.0 | stable | 🔒 | verifies client certificates: `AnchoredCa` or `ReloadableCa` (rotated for TCP and QUIC alike), optionally under `Pinned` |
 | `clientCaFile(path)` | function | | 0.3.0 | stable | 🔒 | reads the CA certificates client certificates are verified against from a PEM file now, as `clientTrust`; watched with `reloadInterval`; a file that holds a private key is refused |
-| `versions` | `TlsVersions` | `TlsVersions.Tls13` | 0.3.0 | stable | 🔒 | `Tls12And13` serves TLS 1.2 clients over TCP too, under the RFC 9325 profile (ECDHE and AEAD only, Extended Master Secret, no renegotiation); HTTP/3 stays TLS 1.3 ([TLS 1.2 on the server](ktor.md#tls-12-on-the-server)) |
+| `versions` | `TlsVersions` | `TlsVersions.Tls13` | 0.3.0 | stable | 🔒 | `Tls12And13` serves TLS 1.2 clients over TCP too, under the RFC 9325 profile (ECDHE and AEAD only, Extended Master Secret, no renegotiation); HTTP/3 stays TLS 1.3 ([TLS 1.2 on the server](engine-tls.md#tls-12-on-the-server)) |
 | `cipherSuites` | `CipherSuites` | `CipherSuites.Default` | 0.3.0 | stable | 🔒 | TLS 1.3 suites in preference order |
-| `sniSelector` | `(suspend (ClientHelloInfo) -> ServerTlsOverride?)?` | `null` | 0.3.0 | stable | | identity per SNI name over TCP and HTTP/3: an answer's `alpn` without `h3` keeps that name off HTTP/3 and out of `Alt-Svc`, one of `h3` alone keeps it off TCP ([Certificate per name](ktor.md#certificate-per-name-sni)) |
+| `sniSelector` | `(suspend (ClientHelloInfo) -> ServerTlsOverride?)?` | `null` | 0.3.0 | stable | | identity per SNI name over TCP and HTTP/3: an answer's `alpn` without `h3` keeps that name off HTTP/3 and out of `Alt-Svc`, one of `h3` alone keeps it off TCP ([Certificate per name](engine-tls.md#certificate-per-name-sni)) |
 | `sessionTickets` | `SessionTicketConfig` | `SessionTicketConfig.Default` | 0.3.0 | stable | 🔒 | session ticket keys and lifetimes of TLS resumption on TCP and of the QUIC side's tickets ([`SessionTicketConfig(…)`](#low-level)) |
 | `keyExchangeGroups` | `KeyExchangeGroups` | `KeyExchangeGroups.Default` | 0.3.0 | experimental | 🔒 | the server's key-exchange groups for TCP and HTTP/3, in its order of preference; no key shares; with `Tls12And13` at least one elliptic curve, and a TLS 1.2 client's P-256 certificate needs `secp256r1` ([Key exchange groups](tls.md#key-exchange-groups)) |
 | `ocspStapling` | `OcspStapling?` | `null` | 0.3.0 | experimental | | the OCSP response stapled on TCP and QUIC; `update` replaces it at run time ([Certificate revocation](tls.md#certificate-revocation)) |
 | `ocspStaplingFile(path)` | function | | 0.3.0 | experimental | | reads a DER `OCSPResponse` (at most 1 MiB) now, as `ocspStapling`; re-read every `reloadInterval`, or hourly without one; whether it is stapled is logged |
-| `echKeys` | `EchServerKeys?` | `null` | 0.3.0 | experimental | 🔒 | Encrypted Client Hello keys (RFC 9849, shared mode) of TCP and HTTP/3; `rotate` replaces them for new handshakes; the identity must cover the keys' `public_name` ([Encrypted Client Hello on the server](ktor.md#encrypted-client-hello-on-the-server)) |
+| `echKeys` | `EchServerKeys?` | `null` | 0.3.0 | experimental | 🔒 | Encrypted Client Hello keys (RFC 9849, shared mode) of TCP and HTTP/3; `rotate` replaces them for new handshakes; the identity must cover the keys' `public_name` ([Encrypted Client Hello on the server](engine-tls.md#encrypted-client-hello-on-the-server)) |
 | `keylog` | `KeylogSink?` | `null` | 0.3.0 | delicate | 🔒 | the handshake secrets of TCP and QUIC connections as RFC 9850 key log lines; keep it null in production |
 
 ### `configure { tlsConnector { } }`
 
 `KuicksilverTlsConnector.Builder`: a TLS connector, HTTP/2 and HTTP/1.1 over TLS on TCP and HTTP/3 on UDP on the same port
-([Ktor: HTTP/3 on the server](ktor.md#http3-on-the-server)). It needs an identity, from the engine's `tls { }` or its own.
+([HTTP/3 on the server](server.md#http3-on-the-server)). It needs an identity, from the engine's `tls { }` or its own.
 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
 | `host` | `String?` | `null` (every interface, IPv6 and IPv4) | 0.2.0 | stable | | the address to bind, for TCP and UDP alike; `null` binds `::` with one dual-stack socket per protocol (an IPv4 client arrives as an IPv4-mapped address, and `call.request.local` reports it as the IPv4 address it is), or `0.0.0.0` where the host has no IPv6 (logged at Info); `"0.0.0.0"` keeps IPv4 alone (0.2: `"0.0.0.0"` by default) |
 | `port` | `Int` | 443 | 0.2.0 | stable | | TCP port and UDP port of HTTP/3, 0..65 535; 0 picks a free pair (`resolvedConnectors()`) |
 | `proxyProtocol { }` | block | none | 0.3.0 | stable | 🔒 | the PROXY protocol on the TCP side ([below](#configure--tlsconnector--proxyprotocol----)) |
-| `allowMisdirectedHosts` | `Boolean` | `false` | 0.3.0 | delicate | 🔒 | `true` turns off the `421 Misdirected Request` for hosts the connection's certificate does not name (RFC 9110 section 7.4), on HTTP/1.1, HTTP/2 and HTTP/3: only for connectors whose every client is a trusted gateway ([Misdirected requests](ktor.md#misdirected-requests)) |
+| `allowMisdirectedHosts` | `Boolean` | `false` | 0.3.0 | delicate | 🔒 | `true` turns off the `421 Misdirected Request` for hosts the connection's certificate does not name (RFC 9110 section 7.4), on HTTP/1.1, HTTP/2 and HTTP/3: only for connectors whose every client is a trusted gateway ([Misdirected requests](server-proxies.md#misdirected-requests)) |
 
 `tls { }` on the connector takes the [`configure { tls { } }`](#ktor-server) options for this connector only.
 
@@ -373,7 +397,7 @@ does not set is the engine's, and an identity or a trust set there replaces the 
 | `host` | `String?` | `null` (every interface, IPv6 and IPv4) | 0.3.0 | stable | | the address to bind; `null` binds `::` dual-stack, or `0.0.0.0` where the host has no IPv6 |
 | `port` | `Int` | 80 | 0.3.0 | stable | | TCP port, 0..65 535; 0 picks a free one |
 | `allowMisdirectedHosts` | `Boolean` | `false` | 0.3.0 | delicate | 🔒 | `true` serves absolute-form `https://` targets, which a plain connection otherwise answers `421 Misdirected Request` (RFC 9110 section 7.4); only for connectors whose every client is a trusted gateway |
-| `h2c` | `H2cMode` | `H2cMode.Off` | 0.3.0 | experimental | 🔒 | HTTP/2 over cleartext TCP with prior knowledge (RFC 9113 section 3.3, ADR-0018): `WithHttp11` serves HTTP/1.1 and h2c, told apart by the client preface; `Only` serves h2c alone; `Upgrade: h2c` is never taken; cleartext, so only behind a trusted network or proxy; a connector the engine's `tls { }` identity makes TLS refuses it at start ([h2c on the server](ktor.md#h2c-on-the-server)) |
+| `h2c` | `H2cMode` | `H2cMode.Off` | 0.3.0 | experimental | 🔒 | HTTP/2 over cleartext TCP with prior knowledge (RFC 9113 section 3.3, ADR-0018): `WithHttp11` serves HTTP/1.1 and h2c, told apart by the client preface; `Only` serves h2c alone; `Upgrade: h2c` is never taken; cleartext, so only behind a trusted network or proxy; a connector the engine's `tls { }` identity makes TLS refuses it at start ([h2c on the server](server.md#h2c-on-the-server)) |
 | `proxyProtocol { }` | block | none | 0.3.0 | stable | 🔒 | the PROXY protocol on this connector ([below](#configure--tlsconnector--proxyprotocol----)) |
 
 ### `configure { tlsConnector { proxyProtocol { } } }`
@@ -381,7 +405,7 @@ does not set is the engine's, and an identity or a trust set there replaces the 
 `ProxyProtocolConfig.Builder`, on either connector (`plainConnector { proxyProtocol { } }` too): every TCP connection must
 start with a PROXY protocol header (v1 or v2) from one of the trusted sources, before the ClientHello; its client becomes
 `call.request.origin`, and `tcp { maxConnectionsPerIp }` then counts the proxy. HTTP/3 takes none
-([PROXY protocol](ktor.md#proxy-protocol)).
+([PROXY protocol](server-proxies.md#proxy-protocol)).
 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
@@ -399,7 +423,7 @@ start with a PROXY protocol header (v1 or v2) from one of the trusted sources, b
 
 ### `configure { http2 { } }`
 
-`Http2ServerConfig` (guide: [HTTP/2 on the server](ktor.md#http2-on-the-server)). Its `settings { }` block
+`Http2ServerConfig` (guide: [HTTP/2 on the server](server.md#http2-on-the-server)). Its `settings { }` block
 (*experimental*) is an [`http2Settings { }`](#low-level) for every HTTP/2 connection, `maxHeaderBlockTime` bounded by
 `requestHeaderTimeout`.
 
@@ -410,7 +434,7 @@ start with a PROXY protocol header (v1 or v2) from one of the trusted sources, b
 
 ### `configure { http3 { } }`
 
-`Http3ServerConfig` (guide: [HTTP/3 on the server](ktor.md#http3-on-the-server)): HTTP/3 on the UDP twin of every TLS
+`Http3ServerConfig` (guide: [HTTP/3 on the server](server.md#http3-on-the-server)): HTTP/3 on the UDP twin of every TLS
 connector's port. Its `quic { }` block is a [`quicConfig { }`](#low-level): the engine derives and refuses
 `expert { resetStreamAt }` (on with WebTransport) and `expert { cancelErrorCode }`; `flowControl { initialStreamWindow }`
 must be at least 1024 (RFC 9114 section 6.2); `maxBidiStreams` (at least 100, RFC 9114 section 6.1) and
@@ -427,11 +451,11 @@ UDP port open.
 |---|---|---|---|---|---|---|
 | `enabled` | `Boolean` | `true` | 0.3.0 | stable | | serve HTTP/3 on every TLS connector |
 | `altSvc` | `Boolean` | `true` | 0.3.0 | stable | | add `Alt-Svc: h3=":<port>"; ma=86400` to HTTP/1.1 and HTTP/2 responses over TLS, and on HTTP/2 also send it as an ALTSVC frame per origin, refreshed every 12 hours (RFC 7838 sections 3, 4; not when the application set its own, not on 421); `engine.http3Advertising` changes it at run time |
-| `connectUdp` | `Boolean` | `false` | 0.3.0 | experimental | 🔒 | take CONNECT-UDP requests (RFC 9298, ADR-0024) into the pipeline for `connectUdp(proxy)` routes; without it they are answered 501 ([CONNECT-UDP over HTTP/3](ktor.md#connect-udp-over-http3-experimental)) |
+| `connectUdp` | `Boolean` | `false` | 0.3.0 | experimental | 🔒 | take CONNECT-UDP requests (RFC 9298, ADR-0024) into the pipeline for `connectUdp(proxy)` routes; without it they are answered 501 ([CONNECT-UDP over HTTP/3](server.md#connect-udp-over-http3-experimental)) |
 
 ### `configure { http3 { earlyData { } } }`
 
-`ServerEarlyDataConfig`, *experimental* ([0-RTT](ktor.md#0-rtt-opt-in-experimental), ADR-0015).
+`ServerEarlyDataConfig`, *experimental* ([0-RTT](zero-rtt.md), ADR-0015).
 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
@@ -440,7 +464,7 @@ UDP port open.
 
 ### `configure { http3 { webTransport { } } }`
 
-`ServerWebTransportConfig`, *experimental* ([WebTransport](ktor.md#webtransport-over-http3-experimental)): WebTransport over
+`ServerWebTransportConfig`, *experimental* ([WebTransport](realtime.md#webtransport-over-http3-experimental)): WebTransport over
 HTTP/3 (draft-ietf-webtrans-http3-17) to `webTransport(path) { }` routes. It turns on Extended CONNECT, H3_DATAGRAM and
 RESET_STREAM_AT and needs QUIC datagrams.
 
@@ -486,14 +510,14 @@ RESET_STREAM_AT and needs QUIC datagrams.
 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
-| `overHttp2` | `Boolean` | `true` | 0.3.0 | stable | | with HTTP/2 on: advertise `SETTINGS_ENABLE_CONNECT_PROTOCOL` and serve RFC 8441 WebSockets (Extended CONNECT) to `webSocket {}` routes; browsers' `wss://` then comes over HTTP/2; `false` leaves WebSockets on HTTP/1.1 ([WebSockets over HTTP/2](ktor.md#websockets-over-http2)) |
+| `overHttp2` | `Boolean` | `true` | 0.3.0 | stable | | with HTTP/2 on: advertise `SETTINGS_ENABLE_CONNECT_PROTOCOL` and serve RFC 8441 WebSockets (Extended CONNECT) to `webSocket {}` routes; browsers' `wss://` then comes over HTTP/2; `false` leaves WebSockets on HTTP/1.1 ([WebSockets over HTTP/2](realtime.md#websockets-over-http2)) |
 | `overHttp3` | `Boolean` | `true` | 0.3.0 | stable | | accept RFC 9220 WebSockets over HTTP/3; with `false` a WebSocket CONNECT gets 501 |
 | `maxMessageSize` | `Long` (bytes) | 16 777 216 (16 MiB) | 0.3.0 | stable | 🔒 | the largest WebSocket frame, and message once reassembled, the server takes from a client (RFC 6455 section 10.4), over HTTP/1.1, HTTP/2 and HTTP/3; a frame whose header claims more, or that takes its message past it, closes the connection with 1009 before its payload is read; at least 1 |
 
 ### `configure { tcp { } }`
 
 `TcpLimitsConfig`: the TCP connections of every connector, HTTP/1.1 and HTTP/2 alike: their idle timeout and limits
-([Connection limits](ktor.md#connection-limits)).
+([Connection limits](server.md#connection-limits)).
 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
@@ -518,7 +542,7 @@ RESET_STREAM_AT and needs QUIC datagrams.
 `application.yaml`. A key is the path of its option in the server's DSL under `kuicksilver.`, with three exceptions: the
 TLS files (`kuicksilver.tls.certificateChain`, `privateKey`, `clientCa`, `ocspStapling`, `echKeys`), the
 `kuicksilver.connector` block for the deployment port (a Ktor connector, which has no DSL block) and Ktor's own
-`ktor.deployment.connectionIdleTimeoutSeconds`. Guide: [EngineMain and configuration keys](ktor.md#enginemain-and-configuration-keys).
+`ktor.deployment.connectionIdleTimeoutSeconds`. Guide: [EngineMain and configuration keys](server-config-file.md#enginemain-and-configuration-keys).
 Without `ktor.deployment.host` (and `-host`) the deployment port binds every interface of both families, as a
 `tlsConnector { }` without a `host`: one dual-stack socket per protocol on `::`, or `0.0.0.0` where the host has no IPv6
 (logged at Info); Ktor's own engines bind `0.0.0.0` there. An explicit `ktor.deployment.host = "0.0.0.0"` keeps IPv4 alone.
@@ -959,8 +983,8 @@ a bad value throws `IllegalArgumentException` when the object is built. Guide:
 
 `Http2Settings.Builder`, *experimental* (`http2Settings { }`, `Http2Settings.Default`, `toBuilder()`): the local side of an
 HTTP/2 connection. The Ktor engines take it in `http2 { settings { } }`. Byte and stream counts are `Long`; `build()` refuses
-a value its SETTINGS field cannot hold. Guide: [HTTP/2 on the client](ktor.md#http2-on-the-client),
-[on the server](ktor.md#http2-on-the-server); limits against floods: threat model 3.23.
+a value its SETTINGS field cannot hold. Guide: [HTTP/2 on the client](client.md#http2-on-the-client),
+[on the server](server.md#http2-on-the-server); limits against floods: threat model 3.23.
 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|

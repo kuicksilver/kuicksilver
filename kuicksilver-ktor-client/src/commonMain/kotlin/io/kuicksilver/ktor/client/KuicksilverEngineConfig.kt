@@ -267,7 +267,7 @@ public class ClientEarlyDataConfig {
 }
 
 /**
- * Stall detection on HTTP/3 connections the engine chose over TCP (docs/guide/ktor.md, "Stalled HTTP/3 connections"). While
+ * Stall detection on HTTP/3 connections the engine chose over TCP (docs/guide/client-http3.md, "Stalled HTTP/3 connections"). While
  * a request runs on such a connection (`Auto`, `Preferred`, [Http3ClientConfig.hints]; not [Http3Discovery.H3Only], which
  * has no TCP to go to, nor WebSockets and WebTransport sessions), a path that stopped carrying packets — [probeTimeouts]
  * probe timeouts in a row unanswered (RFC 9002 section 6.2) and no packet from the server for [minSilence] — drains the
@@ -378,7 +378,7 @@ public class Http3ClientConfig {
     public var altSvcStore: AltSvcStore = InMemoryAltSvcStore()
 
     /**
-     * A kill switch for HTTP/3 (docs/guide/ktor.md, "Turning HTTP/3 off remotely"), called once per `https://` request on
+     * A kill switch for HTTP/3 (docs/guide/client-http3.md, "Turning HTTP/3 off remotely"), called once per `https://` request on
      * the call's coroutine before anything connects: it must be quick and must not block, such as reading an
      * `AtomicBoolean` or a `StateFlow.value` that your remote configuration updates. While it returns false, requests go over
      * TCP (`ProtocolReason.Http3Disabled`; HTTP/2 stays on), open HTTP/3 connections take no new requests (calls running on
@@ -392,7 +392,7 @@ public class Http3ClientConfig {
 
     /**
      * Lets pooled HTTP/3 connections follow the device's network (connection migration, RFC 9000 section 9;
-     * docs/guide/ktor.md, "Connection migration"): on a switch from Wi-Fi to the mobile network, a connection moves to a
+     * docs/guide/client-http3.md, "Connection migration"): on a switch from Wi-Fi to the mobile network, a connection moves to a
      * socket bound to the new network over a validated path with a fresh connection ID, so a download over HTTP/3 carries
      * on. Null (the default) leaves every connection on the socket it was opened on. `Http3ConnectionMigration
      * .followDefaultNetwork(connectivity)` on Android and `Http3ConnectionMigration.followDefaultNetwork()` on iOS and macOS
@@ -474,12 +474,12 @@ public class Http3ClientConfig {
 }
 
 /**
- * HTTP/2 on the TCP path (RFC 9113; docs/guide/ktor.md, "HTTP/2"): every `https://` connection over TCP offers `h2` and
+ * HTTP/2 on the TCP path (RFC 9113; docs/guide/client.md, "HTTP/2 on the client"): every `https://` connection over TCP offers `h2` and
  * `http/1.1` in ALPN, and a server that picks `h2` gets one multiplexed connection per route instead of up to
  * `pool { maxConnectionsPerRoute }` HTTP/1.1 connections. An `http://` request uses HTTP/1.1, unless its origin is listed in
  * [priorKnowledge] (h2c). A `wss://` WebSocket goes over HTTP/2 (RFC 8441, Extended CONNECT) on a connection to its origin
  * that is there already and whose server allows it; otherwise it opens a connection of its own that offers `http/1.1` only
- * (docs/guide/ktor.md, "WebSockets over HTTP/2"). HTTP/3 is unaffected, and so is its kill switch. `h2` is offered over
+ * (docs/guide/realtime.md, "WebSockets over HTTP/2"). HTTP/3 is unaffected, and so is its kill switch. `h2` is offered over
  * TLS 1.2 too, which the default `tls { versions = Tls12And13 }` allows with a server without TLS 1.3 (RFC 9113 section
  * 9.2): over TLS 1.2 renegotiation stays refused, and a server that asks for one ends the connection with a connection
  * error of type PROTOCOL_ERROR (section 9.2.1); the TLS 1.2 suites are ECDHE with an AEAD only, none of them prohibited by
@@ -505,7 +505,7 @@ public class Http2ClientConfig {
      * their requests go over h2c with prior knowledge (RFC 9113 section 3.3), the client connection preface right after
      * the TCP connect, without TLS, without ALPN and without `Upgrade: h2c` (deprecated by section 3.1, never sent). Empty
      * by default. h2c is cleartext (CWE-319), so name only servers on a trusted network or behind a sidecar that protects
-     * the hop (docs/guide/ktor.md, "h2c"). No fallback: a listed server that does not speak h2c fails the call with the
+     * the hop (docs/guide/client.md, "h2c on the client"). No fallback: a listed server that does not speak h2c fails the call with the
      * connection error; only a server that ends the connection with HTTP_1_1_REQUIRED gets HTTP/1.1 from then on. An
      * `https://` URL never uses this. A `ws://` WebSocket to a listed origin goes as an Extended CONNECT (RFC 8441,
      * `:scheme http`) on the origin's h2c connection. On Android the app's cleartext policy applies as to any `http://`
@@ -593,7 +593,7 @@ public class PoolConfig {
      * `TrustConfig.ExpectedName`, and over HTTP/3 only where the request has an HTTP/3 endpoint of its own at the
      * connection's address. False (the default): every origin gets connections of its own; the one certificate then speaks
      * for the origins it covers, so turn it on only where the servers behind such a certificate answer 421 to the hosts they
-     * do not serve (docs/guide/ktor.md, "Connection coalescing"). Turned on, every HTTP/2 connection that may carry other
+     * do not serve (docs/guide/client.md, "Connection coalescing"). Turned on, every HTTP/2 connection that may carry other
      * origins sends `cookie` as a literal HPACK never indexes (RFC 7541 section 7.1).
      */
     @ExperimentalKuicksilverApi
@@ -608,7 +608,7 @@ public class ClientNetworkConfig {
      * Resolves host names to the addresses the engine connects to, over TCP and QUIC, with Happy Eyeballs (RFC 8305) on what
      * it answers: [Dns.System] (the default) or your own, after OkHttp's `Dns`. Its lookup is part of connecting
      * (`connectTimeout` bounds it), it never gets address literals, it is asked for an HTTP proxy's name but never for the
-     * origin's behind it, and its answers never stand in for the host name in TLS. See [Dns] and docs/guide/ktor.md,
+     * origin's behind it, and its answers never stand in for the host name in TLS. See [Dns] and docs/guide/client.md,
      * "Name resolution".
      */
     @ExperimentalKuicksilverApi
@@ -616,7 +616,7 @@ public class ClientNetworkConfig {
     public var dns: Dns = Dns.System
 
     /**
-     * Where [Http3Discovery.Auto] looks up HTTPS resource records (RFC 9460; docs/guide/ktor.md, "HTTPS records"):
+     * Where [Http3Discovery.Auto] looks up HTTPS resource records (RFC 9460; docs/guide/client-http3.md, "HTTPS records"):
      * [HttpsRecordSource.Off] (the default), the system resolver ([HttpsRecordSource.System]) or your DNS-over-HTTPS exchange
      * ([HttpsRecordSource.Exchange]). An `https://` request to a host name asks for the origin's records, follows AliasMode
      * records, and connects to their endpoints in priority order over the transports each allows, then to the origin as
@@ -639,7 +639,7 @@ public class ClientNetworkConfig {
     public var httpsRecordWait: Duration = 50.milliseconds
 
     /**
-     * Happy Eyeballs (RFC 8305) for the engine's connects, TCP and QUIC (docs/guide/ktor.md, "Happy Eyeballs"): the next
+     * Happy Eyeballs (RFC 8305) for the engine's connects, TCP and QUIC (docs/guide/client.md, "Happy Eyeballs"): the next
      * address is tried when this delay has passed since the last attempt started or as soon as an attempt failed, and the
      * first connection wins. 250 ms by default, as RFC 8305 section 8 recommends; 100 ms to 2 s, or null to try one address
      * after another. Any other value fails the engine's creation with IllegalArgumentException. `connectTimeout` bounds all
@@ -665,7 +665,7 @@ public class ProxiesConfig {
      * [ProxyResolvers.System] (the default: the platform's proxy settings), [ProxyResolvers.Environment] (`https_proxy`,
      * `no_proxy`...), [ProxyResolvers.None] for direct connections, or your own [ProxyResolver]. A request through a proxy
      * uses TCP only (HTTP/1.1, or HTTP/2 with the origin inside a tunnel) and neither uses nor learns `Alt-Svc`; `localhost`
-     * and loopback addresses always connect directly with the built-in resolvers. docs/guide/ktor.md, "Proxies".
+     * and loopback addresses always connect directly with the built-in resolvers. docs/guide/client-proxies.md, "Proxies".
      */
     @SecuritySensitive
     public var resolver: ProxyResolver = ProxyResolvers.System
@@ -692,7 +692,7 @@ public class ProxiesConfig {
      * given. The block is checked when the engine is created as an `https://` proxy's TCP connection takes it (its
      * `versions` included, so key-exchange groups TLS 1.2 cannot use fail under the default `Tls12And13`), even when it
      * serves only a [connectUdp] proxy, whose QUIC connections are TLS 1.3 whatever it says: set `versions = Tls13` there.
-     * docs/guide/ktor.md, "Proxies".
+     * docs/guide/client-proxies.md, "Proxies".
      */
     @SecuritySensitive
     public fun tls(block: ClientTlsConfig.() -> Unit) {
@@ -703,7 +703,7 @@ public class ProxiesConfig {
      * A CONNECT-UDP proxy (RFC 9298, MASQUE) for HTTP/3, or null (the default) for none. An `https` request it applies to
      * goes over HTTP/3 inside a UDP tunnel through it, whatever `proxy` or [resolver] say: never over TCP and never directly.
      * Such a request fails, with the reason, when the origin has no HTTP/3, when the proxy refuses the tunnel, with
-     * `http3 { enabled = false }` or while `http3 { allowed }` says no. docs/guide/ktor.md, "HTTP/3 through a CONNECT-UDP proxy".
+     * `http3 { enabled = false }` or while `http3 { allowed }` says no. docs/guide/client-proxies.md, "HTTP/3 through a CONNECT-UDP proxy".
      */
     @SecuritySensitive
     public var connectUdp: ConnectUdpProxy? = null
@@ -738,18 +738,19 @@ public class ClientWebSocketsConfig {
 @KuicksilverDsl
 public class ClientObservability {
     /**
-     * Where the engine's diagnostics go, its QUIC endpoints' included (docs/guide/ktor.md, "Observability");
+     * Where the engine's diagnostics go, its QUIC endpoints' included (docs/guide/observability.md, "Observability");
      * [KuicksilverLogger.Default] (the platform's logger, warnings and up) by default.
      */
     public var logger: KuicksilverLogger = KuicksilverLogger.Default
 
     /**
      * The level at which [logger] gets one line per answered call that HTTP/3 could have served but did not
-     * (docs/guide/ktor.md, "Why did this request not use HTTP/3?"): a lost race, a fallback, a broken alternative, a proxy,
+     * (docs/guide/observability.md, "Why did this request not use HTTP/3?"): a lost race, a fallback, a broken alternative, a proxy,
      * HTTP/3 turned off. [LogLevel.Info] by default, which the default logger (warnings and up) leaves out: use
      * `KuicksilverLogger.platform(LogLevel.Info)` to see them. Calls over HTTP/3, and calls HTTP/3 was never a candidate for,
-     * are logged at [LogLevel.Debug]. Null writes no line. The line names the method, scheme, host, port and path, never the
-     * query or the user info.
+     * are logged at [LogLevel.Debug], except the first call to each origin whose response left no usable HTTP/3 alternative:
+     * it also gets one line at this level, "<origin>: no usable HTTP/3 alternative, using <protocol>". Null writes no line. The line
+     * names the method, scheme, host, port and path, never the query or the user info.
      */
     public var protocolChoiceLogLevel: LogLevel? = LogLevel.Info
 

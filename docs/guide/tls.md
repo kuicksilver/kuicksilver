@@ -66,8 +66,8 @@ must also run elsewhere (another OS or CPU architecture) checks once at startup 
 catching `KslException` from the first connection:
 
 ```kotlin
-// guide:tls:availability
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:tls:availability
 if (!KslLoader.isAvailable()) fallBackToTcp()   // never throws; the outcome is cached for the process
 ```
 
@@ -157,7 +157,7 @@ lifetime of resumption keying material and taking the certificate's lifetime int
 ticket, but a chain of renewals ends 7 days after the full handshake that authenticated it (BoringSSL's
 `SSL_DEFAULT_SESSION_AUTH_TIMEOUT`) and at the leaf's notAfter; then the client runs a full handshake.
 
-The Ktor server engine can also watch the PEM files itself; see [Certificate rotation](ktor.md#certificate-rotation).
+The Ktor server engine can also watch the PEM files itself; see [Certificate rotation](engine-tls.md#certificate-rotation).
 
 ### Rotating the client CA
 
@@ -194,8 +194,8 @@ when the bundle changes. It follows the rules of the identity above:
   through `AnchoredCa`.
 
 ```kotlin
-// guide:tls:client-ca-rotation
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:tls:client-ca-rotation
 val clientCa = TrustConfig.reloadable(TrustConfig.AnchoredCa(Certificate.parsePem(caBundlePem)))
 val mtlsServer = tlsConfig(TlsRole.Server) {
     alpn = listOf("h3")
@@ -208,7 +208,7 @@ clientCa.reload(TrustConfig.AnchoredCa(Certificate.parsePem(renewedBundlePem)))
 ```
 
 The Ktor server engine can watch the CA file too: `tls { clientCaFile(path); reloadInterval = ... }` in code, or
-`EngineMain`'s `kuicksilver.tls.clientCa` with `kuicksilver.tls.reloadInterval` ([Certificate rotation](ktor.md#certificate-rotation)).
+`EngineMain`'s `kuicksilver.tls.clientCa` with `kuicksilver.tls.reloadInterval` ([Certificate rotation](engine-tls.md#certificate-rotation)).
 
 ### Certificate per name (SNI)
 
@@ -253,12 +253,13 @@ Host names are always checked (RFC 9525) and the check cannot be disabled; it ca
 for proxies (`ExpectedName` wraps `Platform`, `AnchoredCa` or `Custom`; to pin as well, put it inside `Pinned` — except
 around `Custom`, which `Pinned` refuses directly and through `ExpectedName`:
 `Pinned(pins, base = ExpectedName(name, base))`). Pins are an additional check against the validated chain, never a
-replacement for it.
+replacement for it. A pin's text and how to make one: [TLS in the Ktor engines: Certificate
+pinning](engine-tls.md#certificate-pinning).
 
 ```kotlin
 // guide:tls:trust
 val pinned = TrustConfig.Pinned(
-    pins = setOf(SpkiSha256.parse("sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")),
+    pins = setOf(SpkiSha256.parse(serverPin)),   // "sha256/<base64>" of your server's key
     scope = PinScope.Leaf,
     base = TrustConfig.AnchoredCa(listOf(rootCertificate)),   // or Platform
 )
@@ -576,8 +577,8 @@ Encrypted Client Hello (ECH, RFC 9849; experimental) hides the server name of a 
 the network sees names the configuration's `public_name`, and the real name travels encrypted under the server's key. It
 needs the server's ECH configuration list, which a server publishes in the `ech` parameter of its HTTPS record (RFC 9848).
 Through `TlsConfig` it works over QUIC and TCP; the Ktor engines use it too, the client from the HTTPS records or
-per host ([Encrypted Client Hello](ktor.md#encrypted-client-hello-experimental)) and the server with its keys
-([Encrypted Client Hello on the server](ktor.md#encrypted-client-hello-on-the-server)).
+per host ([Encrypted Client Hello](engine-tls.md#encrypted-client-hello-experimental)) and the server with its keys
+([Encrypted Client Hello on the server](engine-tls.md#encrypted-client-hello-on-the-server)).
 
 A client offers a list with `ech { configList }` (experimental, like the whole `ech { }` block; `EchConfigList.parse` for its bytes, `EchConfigList.parseBase64` for the
 record's presentation form). ECHConfigs this OpenSSL cannot use (another version, an unsupported suite or mandatory

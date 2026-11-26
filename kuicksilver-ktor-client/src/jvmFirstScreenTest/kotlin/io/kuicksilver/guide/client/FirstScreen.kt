@@ -1,7 +1,7 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
 
-// The first screen of the client (docs/guide/ktor.md, "Minimal example"; docs/guide/configuration.md, "First screen"): this
+// The first screen of the client (docs/guide/ktor.md, "Minimal example"; docs/guide/client.md, "First screen"; docs/guide/configuration.md, "First screen"): this
 // source set opts in to nothing and its warnings are errors, so an experimental option here fails the build (ADR-0026).
 // The mobile recipe's one experimental line (http3 { migration }) is compiled in androidDeviceTest's FirstScreenMobileSample.
 package io.kuicksilver.guide.client
@@ -46,4 +46,13 @@ internal fun firstScreenMobileStable(
             }
         }
     return client
+}
+
+internal fun privateCaClient(caPem: String): HttpClient {
+    // guide:ktor:private-ca
+    val internal =
+        HttpClient(Kuicksilver) {
+            engine { tls { trust = TrustConfig.AnchoredCa(Certificate.parsePem(caPem)) } } // caPem: your CA's PEM text
+        }
+    return internal
 }

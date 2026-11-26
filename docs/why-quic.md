@@ -118,7 +118,7 @@ than this "all 20 done" figure shows, which this run does not measure.
 Time from the call to the response head of a 1-byte `GET` on a new connection, RTT 100 ms, no loss. TCP needs one round
 trip for its handshake, TLS 1.3 one more, then the request one more; QUIC carries the TLS handshake in its own first
 round trip; with 0-RTT (`http3 { earlyData { enabled = true } }` in the client and on the server;
-[0-RTT](guide/ktor.md#0-rtt-opt-in-experimental)) a client that holds a session ticket from an earlier connection sends
+[0-RTT](guide/zero-rtt.md)) a client that holds a session ticket from an earlier connection sends
 the request in its first flight. The 0-RTT runs reuse one client: its connections are closed between runs
 (`closeHttp3Connections()`), and each run's new connection resumes with a ticket from the one before.
 
@@ -174,7 +174,7 @@ Every HTTP/3 download finished in its one request; no TCP download did. The TCP 
 reaches the client at once, and the client resumes with `Range`; a client without resume logic fails the download. A
 device that
 moves to another network (Wi-Fi to cellular) gets a new address rather than a new port; Kuicksilver follows it with
-`Http3ConnectionMigration` ([Connection migration](guide/ktor.md#connection-migration)), which this run does not
+`Http3ConnectionMigration` ([Connection migration](guide/client-http3.md#connection-migration)), which this run does not
 measure.
 
 ## When QUIC does not help
@@ -203,7 +203,7 @@ The client JVM's process CPU time (user and system, all threads, garbage collect
 
 - **UDP blocked or throttled.** Some networks drop UDP to port 443 or slow it down. The engine's default discovery
   learns HTTP/3 from `Alt-Svc` and races it against TCP, falling back to TCP and marking the alternative broken
-  ([Racing and fallback](guide/ktor.md#racing-and-fallback)); `H3Only` has no fallback and fails there. On such a
+  ([Racing and fallback](guide/client-http3.md#racing-and-fallback)); `H3Only` has no fallback and fails there. On such a
   network nothing above applies.
 
 ## Reproducing
