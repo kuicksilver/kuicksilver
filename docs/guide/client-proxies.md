@@ -15,6 +15,42 @@ PAC files, an explicit proxy, credentials) and how HTTP/3 goes through a CONNECT
 
 ## Proxies
 
+The usual setups first: one proxy with credentials, a resolver of your own, an `https://` proxy. With none of
+them the system's proxy settings apply. HTTP/3 never goes through an HTTP or SOCKS proxy (below).
+
+```kotlin
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:ktor:proxy
+val password = System.getenv("PROXY_PASSWORD") ?: ""
+// one proxy for everything, with credentials for it
+val viaProxy = HttpClient(Kuicksilver) {
+    engine {
+        proxy = ProxyBuilder.http("http://proxy.corp.test:3128")
+        proxies { credentials = ProxyCredentials("user", password) } // for `proxy` only
+    }
+}
+// a resolver of your own: its proxy carries its own credentials (ProxyResolvers.Environment takes them from https_proxy)
+val perHost = HttpClient(Kuicksilver) {
+    engine {
+        proxies {
+            resolver = ProxyResolver { url ->
+                if (url.host.endsWith(".internal.test")) null // direct
+                else ResolvedProxy.http("proxy.corp.test", 3128, ProxyCredentials("user", password))
+            }
+        }
+    }
+}
+// an https:// proxy: TLS to the proxy itself, the CONNECT and the credentials inside it
+val overTls = HttpClient(Kuicksilver) {
+    engine {
+        proxies {
+            resolver = ProxyResolver { ResolvedProxy.https("proxy.corp.test", 443, ProxyCredentials("user", password)) }
+            tls { trust = TrustConfig.Platform } // the proxy's own trust (default: the origin's, without pins)
+        }
+    }
+}
+```
+
 Where a request's proxy comes from:
 
 1. `engine { proxy = ... }` (Ktor's `ProxyConfig`) when set: it applies to every request, `localhost` and loopback
@@ -133,39 +169,6 @@ A proxied request uses TCP (`ProtocolReason.Proxy`: HTTP/1.1, or HTTP/2 inside a
 `UnsupportedOperationException` without contacting the proxy, and `HttpClient.webTransport` refuses the URL unless
 `http3 { webTransport { proxyPolicy } }` lets it bypass the proxy. To use HTTP/3 to a host, exempt it from the proxy
 (`no_proxy`, the OS bypass list), or connect directly everywhere with `proxies { resolver = ProxyResolvers.None }`.
-
-```kotlin
-@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
-// guide:ktor:proxy
-val password = System.getenv("PROXY_PASSWORD") ?: ""
-// one proxy for everything, with credentials for it
-val viaProxy = HttpClient(Kuicksilver) {
-    engine {
-        proxy = ProxyBuilder.http("http://proxy.corp.test:3128")
-        proxies { credentials = ProxyCredentials("user", password) } // for `proxy` only
-    }
-}
-// a resolver of your own: its proxy carries its own credentials (ProxyResolvers.Environment takes them from https_proxy)
-val perHost = HttpClient(Kuicksilver) {
-    engine {
-        proxies {
-            resolver = ProxyResolver { url ->
-                if (url.host.endsWith(".internal.test")) null // direct
-                else ResolvedProxy.http("proxy.corp.test", 3128, ProxyCredentials("user", password))
-            }
-        }
-    }
-}
-// an https:// proxy: TLS to the proxy itself, the CONNECT and the credentials inside it
-val overTls = HttpClient(Kuicksilver) {
-    engine {
-        proxies {
-            resolver = ProxyResolver { ResolvedProxy.https("proxy.corp.test", 443, ProxyCredentials("user", password)) }
-            tls { trust = TrustConfig.Platform } // the proxy's own trust (default: the origin's, without pins)
-        }
-    }
-}
-```
 
 ## HTTP/3 through a CONNECT-UDP proxy (experimental)
 

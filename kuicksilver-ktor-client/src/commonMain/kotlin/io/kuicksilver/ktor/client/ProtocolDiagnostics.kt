@@ -18,7 +18,7 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.nanoseconds
 
 /**
- * Which protocol served a call and, when it was not HTTP/3, why (docs/guide/ktor.md, "Why did this request not use
+ * Which protocol served a call and, when it was not HTTP/3, why (docs/guide/observability.md, "Why did this request not use
  * HTTP/3?"); which connection served it ([connection]); and for a call that failed, which transport the failure came from
  * ([transport]) and which connection setups failed ([connectFailures]). The engine attaches one to every response it
  * returns: read it with [HttpResponse.kuicksilverDiagnostics]. A call that fails has no response: its exception carries
@@ -199,7 +199,7 @@ public class ProtocolDiagnostics internal constructor() {
     public var alternativeSource: AlternativeSource? = null
         internal set
 
-    /** Whether HTTP/3 and TCP (HTTP/1.1 or HTTP/2) connection setups raced for this call (docs/guide/ktor.md, "Racing and fallback"). */
+    /** Whether HTTP/3 and TCP (HTTP/1.1 or HTTP/2) connection setups raced for this call (docs/guide/client-http3.md, "Racing and fallback"). */
     public var raced: Boolean = false
         internal set
 

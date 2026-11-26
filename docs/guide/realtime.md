@@ -318,3 +318,79 @@ client.prepareGet("$origin/video.mp4") { priority(urgency = 5, incremental = tru
     response.bodyAsChannel().discard()
 }
 ```
+
+## Behaviour reference
+
+How the client engine handles WebSocket handshakes, frames and closes, for when the sections above are not enough.
+
+### The client's WebSocket checks
+
+With `WebSocketExtensionsCapability` Ktor's `WebSockets` plugin offers the extensions installed with
+`extensions { install(...) }` in `Sec-WebSocket-Extensions` and negotiates them, over HTTP/1.1, HTTP/2 (RFC 8441) and HTTP/3 (RFC 9220).
+permessage-deflate on every target is `PerMessageDeflate` ([WebSocket compression](realtime.md#websocket-compression-experimental));
+Ktor's own `WebSocketDeflateExtension` exists on the JVM and Android only. Both engines check the
+handshake and the frames (RFC 6455 sections 4.1, 5, 8.1 and 9.1). The client checks the server's answer before a
+session opens and fails the call with `WebSocketException` ("Handshake exception: …") unless, over HTTP/1.1, it has
+`Upgrade: websocket`, a `Connection` with `Upgrade` and exactly one `Sec-WebSocket-Accept` that answers the request's
+key, and, over every protocol, at most one `Sec-WebSocket-Extensions` with only offered extensions and at most
+one `Sec-WebSocket-Protocol` naming a subprotocol the request offered (Ktor's plugin checks only the status). The key
+is the engine's, from OpenSSL's CSPRNG and new for every connection, and every frame the client sends is masked with a
+new key from the same source. A frame with an RSV bit that no negotiated extension defines (RSV1 for
+permessage-deflate, on the first frame of a message only, RFC 7692 section 6.1), a reserved opcode, a mask bit in the
+wrong direction (RFC 6455 section 5.1: a server's frames are never masked, a client's always are), a malformed
+control frame, fragment, length or Close frame fails the connection with code 1002; a text message or a Close reason
+that is not UTF-8 with 1007, after permessage-deflate, which the engine decompresses itself whichever extension
+negotiated it; an uncompressed frame or message over the engine's `webSockets { maxMessageSize }` (16 MiB by default)
+with 1009, from the frame's header, before its payload is read, and a compressed one as it inflates
+past the limit. The engine hands the session a Close
+frame with that code in place of the bad frame, Ktor's session answers it, so the code goes on the wire and is the
+session's `closeReason`, and `incoming` ends without the bad frame (a raw `webSocketRaw` session sees the Close in
+`incoming` and answers it itself). An extension the engine does not know (the application's own) may use every RSV
+bit; one implemented by an installed Ktor extension the bits its factory declares. A text message the application
+builds from bytes (`Frame.Text(fin, ByteArray)`) that is not UTF-8 is not sent (also when Ktor's
+`WebSocketDeflateExtension` compresses it): the session fails with `ProtocolViolationException`. An extension the
+application brings with its own specification defines its payload: with one agreed, text is not checked.
+
+### Which protocol a client WebSocket takes, and how it closes
+
+WebSockets use HTTP/1.1 `Upgrade` unless an HTTP/3 connection to the origin already allows Extended CONNECT and has
+not received GOAWAY (or the mode is `H3Only`), or an HTTP/2 one does ([HTTP/2 on the client](client.md#http2-on-the-client)); over HTTP/3 the handshake is RFC
+9220, over HTTP/2 RFC 8441, and the plugin sees the usual 101. Over HTTP/1.1 at most one
+WebSocket is connecting to an address and port at a time (RFC 6455 section 4.1): another one to the same address, under
+any name, opens its connection once the first handshake was answered or failed; through a proxy that resolves names,
+the name counts as the host. The connect timeout applies twice to such a WebSocket, in two phases: resolving the name,
+waiting for a pool slot and connecting (TCP and TLS) share one, as for any request; the answer to the handshake must then
+arrive within the same timeout again, counted from the moment the connection is in hand. The wait for another WebSocket
+to the address is in neither: only the call (its request timeout or cancellation) bounds it.
+
+A session's own Close goes out even when its call ends with a failure or a cancellation once that Close was queued,
+over every protocol: Ktor's `webSocketSession()` ends its call that way each time the session closes (it takes the
+session's cancelled outgoing channel for a failure), and the Close, and the frames queued before it, would otherwise be
+lost with the call (RFC 6455 section 7.1.2: the endpoint "MUST send a Close control frame"). The session runs on until
+it ends, within 5 s counted from its own Close for writing it and for the server's Close; past that the HTTP/1.1
+connection is closed at once, the HTTP/2 stream reset with CANCEL and the HTTP/3 stream reset with H3_REQUEST_CANCELLED.
+
+The transport is then closed the server's side first (RFC 6455 section 7.1.1: the client "SHOULD wait for a TCP Close
+from the server"): the engine reads and drops what the server still sends, waits for its FIN (close_notify, then the FIN,
+over TLS), its END_STREAM (HTTP/2) or its FIN (HTTP/3), and closes its own side after it, cleanly: close_notify and a FIN,
+END_STREAM, a FIN. A server that has not closed its side 5 s after both Closes (the close wait, counted again from
+there) gets the client's clean close then; over HTTP/2 and HTTP/3 the stream is reset (RST_STREAM CANCEL,
+STOP_SENDING H3_REQUEST_CANCELLED) only if the server's end has not come another 5 s later. Ktor's own WebSocket writer
+closes its channel right after its Close, which used to half-close the connection (or end the stream) at once; the
+engine no longer lets that through. The server engine closes first: its FIN right after its close_notify over TLS (the
+client's close_notify is not waited for), END_STREAM or FIN right after the session.
+
+How long `client.close()` can wait for a WebSocket whose server stays silent: it waits for the session's end, and that is
+bounded by three close waits (15 s) after the session's own Close at most: 5 s for the server's Close (then the session
+is cancelled and the connection or stream ended at once: an HTTP/1.1 connection is closed cleanly when everything the
+session wrote was whole and taken by the socket, and reset when something was still queued, cut inside a frame or failed,
+so nothing leaves after the wait (on macOS a server that stopped reading, its receive window at 0, ignores that reset
+until it sends something itself); an HTTP/2 or HTTP/3 stream is reset), 5 s for the server's close of the transport (then the client
+closes its side cleanly), and over HTTP/2 and HTTP/3 5 s more for the server's END_STREAM or FIN after the client's own
+(then the stream is reset). The session's end handlers are cut off two close waits after the session ended, whatever
+they still wait for. The pools close after that, as for any request (at most about 3 s more). The connection, its pool slot and the engine's
+`close()` wait for the session, not for the call: `client.close()` right after `close(reason)` still sends the Close
+before the pools close. A call that fails or is cancelled before the session queued its Close still closes it with the
+closing handshake (RFC 6455 sections 7.1.7 and 7.3): one Close, 1001 Going Away (or the application's own code when it sends
+one, as from a `finally`), bounded by the same close wait; only a call that ends during the handshake ends it at once. A coroutine of
+the session that fails is reported to the event listener (`webSocketFailed`).

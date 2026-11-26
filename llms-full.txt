@@ -376,7 +376,8 @@ val client = HttpClient(KuicksilverClient)
 Kuicksilver plugs into Ktor 3.6 as a server engine (`io.kuicksilver:kuicksilver-ktor-server`) and a client engine
 (`io.kuicksilver:kuicksilver-ktor-client`). Both speak HTTP/1.1 over TLS 1.3 (`kuicksilver-ktor-network`) and HTTP/3
 (`kuicksilver-http3`); both also speak HTTP/2 over TLS (`kuicksilver-http2`, ADR-0017), on by default on both since
-0.3.0 ([HTTP/2 on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md#http2-on-the-server)): one port serves HTTP/1.1, HTTP/2 and HTTP/3. The code blocks of the engine pages compile and run as `GuideSamplesTest`
+0.3.0 ([HTTP/2 on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md#http2-on-the-server)): one port serves HTTP/1.1, HTTP/2 and HTTP/3. Every Kotlin block of the engine pages is compiled, and most also run, in the
+test classes named `GuideSamplesTest`
 (`kuicksilver-ktor-server/src/jvmTest` and `kuicksilver-ktor-client/src/jvmTest`), and the first screens compile in a
 source set that opts in to nothing and fails on a warning (`src/jvmFirstScreenTest`), so they stay free of experimental
 API; the engines' other tests run on every
@@ -449,6 +450,8 @@ This page used to hold every section below; links to them land here and lead on.
 | <a id="certificate-pinning"></a>Certificate pinning | [TLS in the Ktor engines](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/engine-tls.md#certificate-pinning) |
 | <a id="priorities-experimental"></a>Priorities (experimental) | [WebSockets, WebTransport and priorities](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/realtime.md#priorities-experimental) |
 | <a id="websocket-compression-experimental"></a>WebSocket compression (experimental) | [WebSockets, WebTransport and priorities](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/realtime.md#websocket-compression-experimental) |
+| <a id="closing-the-client"></a>Closing the client | [Ktor client engine](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client.md#closing-the-client) |
+| <a id="who-ended-the-connection"></a>Who ended the connection | [Observability and diagnostics](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/observability.md#who-ended-the-connection) |
 | <a id="observability"></a><a id="observability-experimental"></a>Observability | [Observability and diagnostics](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/observability.md) |
 | <a id="why-did-this-request-not-use-http3"></a>Why did this request not use HTTP/3? | [Observability and diagnostics](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/observability.md#why-did-this-request-not-use-http3) |
 | <a id="which-connection-served-this-call"></a>Which connection served this call? | [Observability and diagnostics](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/observability.md#which-connection-served-this-call) |
@@ -602,33 +605,10 @@ timeouts, HTTP/2, h2c, the connection pool and coalescing, Happy Eyeballs and na
   certificates in [TLS in the Ktor engines](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/engine-tls.md); [proxies](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-proxies.md); why a request did not use HTTP/3
   in [Observability and diagnostics](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/observability.md).
 
-The client's first screen for the most common case, configuring nothing, is in the [Minimal example](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#minimal-example).
-A mobile app talking to its own API sets a handful of options, all stable but `migration`:
+### First screen
 
-```kotlin
-@file:OptIn(ExperimentalKuicksilverApi::class)   // only for http3 { migration }
-
-// guide:ktor:first-screen-mobile
-val client = HttpClient(Kuicksilver) {
-    engine {
-        connectTimeout = 10.seconds
-        http3 {
-            hints = setOf(HostPort("api.example.com", 443))                         // HTTP/3 from the first request
-            altSvcStore = FileAltSvcStore(File(context.cacheDir, "alt-svc"))        // remember HTTP/3 across restarts
-            allowed = { remoteConfig.http3Enabled }                                  // remote kill switch
-            migration = Http3ConnectionMigration.followDefaultNetwork(connectivity)  // Wi-Fi <-> LTE without a reset
-        }
-        tls { trust = TrustConfig.AnchoredCa(listOf(privateCa)) }                    // only for a private CA
-        observability { logger = KuicksilverLogger.platform(LogLevel.Info) }         // while you debug "why not HTTP/3"
-    }
-}
-```
-
-The default logger, `KuicksilverLogger.Default`, is the platform's (SLF4J on the JVM, Logcat on Android, `NSLog` on Apple
-platforms, standard error elsewhere) at warnings and up: the line per call that says why HTTP/3 was not used is Info
-([Why did this request not use HTTP/3?](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/observability.md#why-did-this-request-not-use-http3)), hence the `LogLevel.Info` logger while you
-debug. Every option, with its block, type, default and stability, is in the [configuration reference](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/configuration.md#ktor-client).
-With Ktor's timeouts:
+The most common client configures nothing: `HttpClient(Kuicksilver)` ([Minimal example](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#minimal-example)). With
+Ktor's timeouts, which most apps want (without `HttpTimeout` only the engine's 10 s connect timeout applies):
 
 ```kotlin
 // guide:ktor:client
@@ -640,72 +620,72 @@ val client = HttpClient(Kuicksilver) {
 }
 ```
 
-- `https://` and `wss://` go over TLS 1.3 with the same `tls { }` (trust, client certificate, versions, suites) whatever
-  the protocol;
-  SNI and verification use the URL's host. Over TCP, `https://` is HTTP/2 when the server picks `h2` in ALPN and
-  HTTP/1.1 otherwise ([HTTP/2 on the client](#http2-on-the-client)). `http://` and `ws://` are plain HTTP/1.1 over TCP. On Android they follow
-  the app's Network Security Configuration as OkHttp does: a host for which `NetworkSecurityPolicy.isCleartextTrafficPermitted`
-  is false (every host by default from `targetSdk` 28) is refused before any connection with an `IOException`
-  "CLEARTEXT communication to <host> not permitted by network security policy". The policy matches strings, so it is
-  asked about one spelling per address, and `<host>` in that message is this spelling: an IPv4 address in any form
-  inet_aton reads alike on every platform (`127.1`, `2130706433`) as its dotted quad (`127.0.0.1`); an IPv6 literal in
-  the text RFC 5952 recommends (`[0:0:0:0:0:0:0:1]` as `::1`), without its zone, so a rule for `fe80::1` holds on every
-  link and a `<domain>` written with a zone never matches; an IPv4-mapped literal (`[::ffff:192.0.2.1]`) as its dotted
-  quad (`192.0.2.1`), the address the connection goes to; and a name as it is. Write `<domain>` entries in these
-  spellings. A host that can be in none of them fails before the policy is asked, with an `IOException` of its own: an
-  IP literal that is no IPv6 address ("not an IP address"), an IPv4 form that platforms read differently (`010.0.0.1`),
-  a host beginning with a dot, and a name with non-ASCII characters: the engine does not map an internationalised name
-  to its A-label, so the URL must carry the A-label (`xn--...`), as the `<domain>` entry does.
-- HTTP/1.1 requests are written and responses parsed with Ktor's CIO code (vendored, see `docs/ktor-internal-api.md`):
-  chunked bodies, `Expect: 100-continue`, keep-alive with at most `pool { maxIdleConnectionsPerRoute }` idle connections per route
-  (a pooled connection the server already closed is replaced once, transparently, for idempotent requests; a POST
-  that failed on one is reported, never sent again). Requests on one connection are
-  sequential; `pipelining` is not used. Limits and idle cleanup: see "Connection pool" below. A response head (status
-  line and header fields) is limited to 64 KiB, the same as the HTTP/3 field section, and the interim (1xx) responses
-  skipped before the final one to 64 KiB in all, however many they are (RFC 9110 section 15.2); beyond either the
-  request fails with Ktor's `ParserException` and the connection is closed. A chunked response body must follow RFC
-  9112 section 7.1 exactly, as on the server: a chunk-size line with whitespace right before its CRLF (`5 \r\n`, which
-  Go's net/http and nginx tolerate) fails the response with "Whitespace before the end of a chunk size line" since
-  0.2.1. A proxy's response to `CONNECT` has the same
-  limits.
-- Requests go through a proxy when one applies (by default the platform's proxy settings): TCP only (HTTP/1.1, or HTTP/2
-  inside the tunnel), see [Proxies](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-proxies.md#proxies).
-- Timeouts come from `HttpTimeout`: the connect timeout (TCP + TLS, or the QUIC handshake; the name resolution and the
-  wait for a pool slot share it) fails with Ktor's `ConnectTimeoutException`, whose message names the timeout that fired
-  (`connect_timeout=500 ms`: `HttpTimeout`'s, else the engine's own `connectTimeout`), the socket timeout with `SocketTimeoutException`; the request timeout is the plugin's own.
-  The socket timeout is an inactivity timeout, as Ktor defines it ("maximum time of inactivity between two data
-  packets"): while the request body goes out and the response head is awaited, every piece of the body the connection
-  takes and every byte of the response that arrives restarts it, so an upload that keeps moving never times out however
-  long it takes, and one that stalls (the server stops reading, the application stops writing) fails that long after its
-  last progress; every read of the response body then has it on its own. Without `HttpTimeout` the engine's `connectTimeout` (10 s) applies.
-- Capabilities: `HttpTimeoutCapability`, `WebSocketCapability`, `WebSocketExtensionsCapability`, `SSECapability`; no
-  Unix sockets. With `WebSocketExtensionsCapability` Ktor's `WebSockets` plugin offers the extensions installed with
-  `extensions { install(...) }` in `Sec-WebSocket-Extensions` and negotiates them, over HTTP/1.1, HTTP/2 (RFC 8441) and HTTP/3 (RFC 9220).
-  permessage-deflate on every target is `PerMessageDeflate` ([WebSocket compression](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/realtime.md#websocket-compression-experimental));
-  Ktor's own `WebSocketDeflateExtension` exists on the JVM and Android only. Both engines check the
-  handshake and the frames (RFC 6455 sections 4.1, 5, 8.1 and 9.1). The client checks the server's answer before a
-  session opens and fails the call with `WebSocketException` ("Handshake exception: …") unless, over HTTP/1.1, it has
-  `Upgrade: websocket`, a `Connection` with `Upgrade` and exactly one `Sec-WebSocket-Accept` that answers the request's
-  key, and, over every protocol, at most one `Sec-WebSocket-Extensions` with only offered extensions and at most
-  one `Sec-WebSocket-Protocol` naming a subprotocol the request offered (Ktor's plugin checks only the status). The key
-  is the engine's, from OpenSSL's CSPRNG and new for every connection, and every frame the client sends is masked with a
-  new key from the same source. A frame with an RSV bit that no negotiated extension defines (RSV1 for
-  permessage-deflate, on the first frame of a message only, RFC 7692 section 6.1), a reserved opcode, a mask bit in the
-  wrong direction (RFC 6455 section 5.1: a server's frames are never masked, a client's always are), a malformed
-  control frame, fragment, length or Close frame fails the connection with code 1002; a text message or a Close reason
-  that is not UTF-8 with 1007, after permessage-deflate, which the engine decompresses itself whichever extension
-  negotiated it; an uncompressed frame or message over the engine's `webSockets { maxMessageSize }` (16 MiB by default)
-  with 1009, from the frame's header, before its payload is read, and a compressed one as it inflates
-  past the limit. The engine hands the session a Close
-  frame with that code in place of the bad frame, Ktor's session answers it, so the code goes on the wire and is the
-  session's `closeReason`, and `incoming` ends without the bad frame (a raw `webSocketRaw` session sees the Close in
-  `incoming` and answers it itself). An extension the engine does not know (the application's own) may use every RSV
-  bit; one implemented by an installed Ktor extension the bits its factory declares. A text message the application
-  builds from bytes (`Frame.Text(fin, ByteArray)`) that is not UTF-8 is not sent (also when Ktor's
-  `WebSocketDeflateExtension` compresses it): the session fails with `ProtocolViolationException`. An extension the
-  application brings with its own specification defines its payload: with one agreed, text is not checked.
-- `HttpClient()` without an engine finds Kuicksilver through `ServiceLoader` on the JVM with priority 0.5 (below OkHttp
-  and the platform engines at 1.0, above CIO at 0.0) and through Ktor's engine list on Kotlin/Native.
+A mobile app talking to its own API adds a handful of options, all stable but `migration`. `context` is the app's
+Android `Context`, `connectivity` the system's `ConnectivityManager` and `remoteConfig` your own remote configuration;
+`followDefaultNetwork` is an Android-only extension (the iOS and macOS one takes no argument):
+
+```kotlin
+@file:OptIn(ExperimentalKuicksilverApi::class)   // only for http3 { migration }
+import io.kuicksilver.ktor.client.followDefaultNetwork
+
+val connectivity = context.getSystemService(ConnectivityManager::class.java)
+// guide:ktor:first-screen-mobile
+val client = HttpClient(Kuicksilver) {
+    engine {
+        connectTimeout = 10.seconds
+        http3 {
+            hints = setOf(HostPort("api.example.com", 443))                         // HTTP/3 from the first request
+            altSvcStore = FileAltSvcStore(File(context.cacheDir, "alt-svc"))        // remember HTTP/3 across restarts
+            allowed = { remoteConfig.http3Enabled }                                  // remote kill switch
+            migration = Http3ConnectionMigration.followDefaultNetwork(connectivity)  // Wi-Fi <-> LTE without a reset
+        }
+        observability { logger = KuicksilverLogger.platform(LogLevel.Info) }         // while you debug "why not HTTP/3"
+    }
+}
+```
+
+The default logger, `KuicksilverLogger.Default`, is the platform's (SLF4J on the JVM, Logcat on Android, `NSLog` on Apple
+platforms, standard error elsewhere) at warnings and up: the line per call that says why HTTP/3 was not used is Info
+([Why did this request not use HTTP/3?](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/observability.md#why-did-this-request-not-use-http3)), hence the `LogLevel.Info`
+logger while you debug. On the JVM SLF4J needs a binding (`slf4j-simple`, Logback...), or it prints "No SLF4J providers"
+and drops the lines. Every option, with its block, type, default and stability, is in the [configuration
+reference](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/configuration.md#ktor-client).
+
+**A private CA is a separate client.** A trust other than the platform's holds for every host the client talks to: a
+client that trusts only your CA fails on every public host (`UnknownIssuer`). Give your internal API a client of its own:
+
+```kotlin
+// guide:ktor:private-ca
+val internal = HttpClient(Kuicksilver) {
+    engine { tls { trust = TrustConfig.AnchoredCa(Certificate.parsePem(caPem)) } }   // caPem: your CA's PEM text
+}
+```
+
+### Android and iOS
+
+- **Android.** `minSdk` 24; the AAR carries the native library for arm64-v8a, armeabi-v7a and x86_64, the `INTERNET`
+  and `ACCESS_NETWORK_STATE` permissions (merged into your manifest) and its R8 rules (applied by R8 as consumer rules,
+  nothing to add: [troubleshooting: Android](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/troubleshooting.md#android)). `http://` follows the app's Network Security
+  Config, and so does the default trust (`TrustConfig.Platform`), its `<pin-set>` included; another `TrustConfig` does
+  not read the Network Security Config's anchors or pins. Keep HTTP/3 alive across a switch between Wi-Fi and the mobile
+  network with `http3 { migration = Http3ConnectionMigration.followDefaultNetwork(connectivity) }`
+  ([Connection migration](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-http3.md#connection-migration)), and remember alternatives across app restarts with a
+  `FileAltSvcStore`. A runnable Android and iOS app: [compose-demo](https://github.com/kuicksilver/kuicksilver/blob/main/samples/compose-demo/README.md).
+- **iOS.** Through Kotlin Multiplatform (a static framework) or, without Kotlin, the Swift package: [iOS](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ios.md). App
+  Transport Security does not apply to Kuicksilver's own sockets ([App Store](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/app-store.md)); `followDefaultNetwork()`
+  follows the default path as on Android.
+
+### Closing the client
+
+`client.close()` returns at once: the calls in flight finish, then the engine closes its pools, its UDP endpoints (every
+QUIC connection on them, with its CONNECTION_CLOSE) and its selector in the background. An app that exits right after,
+and wants its qlog traces complete, waits for that with the usual Ktor engine idiom,
+`client.engine.coroutineContext.job.join()` (0.3.0). The join first waits for every call in flight: a response body
+until it is read or cancelled, a WebSocket or SSE session until it is closed. Only then are the endpoints closed, and the
+join returns once every one of them finished closing, which includes `close()` on the qlog trace of every connection.
+An `AsyncQlogSink` writes on its own coroutine, so `flush()` it after the join to have the files written. The join has no
+bound of its own: a body nobody reads or a session nobody closes holds it for as long as it stays open, so wrap the join
+in `withTimeout` where the exit must not wait for them.
 
 ### HTTP/2 on the client
 
@@ -1086,6 +1066,54 @@ The contract (the KDoc of `Dns` has it in full):
   name as SNI and verifies the certificate and the pins against that name over TCP and QUIC, whatever address your
   resolver gave. Connections are pooled per origin, never per address, and no connection is shared across origins.
 
+### Behaviour reference
+
+How the engine behaves in detail, for when a guide above is not enough.
+
+- `https://` and `wss://` go over TLS 1.3 with the same `tls { }` (trust, client certificate, versions, suites) whatever
+  the protocol;
+  SNI and verification use the URL's host. Over TCP, `https://` is HTTP/2 when the server picks `h2` in ALPN and
+  HTTP/1.1 otherwise ([HTTP/2 on the client](#http2-on-the-client)). `http://` and `ws://` are plain HTTP/1.1 over TCP. On Android they follow
+  the app's Network Security Configuration as OkHttp does: a host for which `NetworkSecurityPolicy.isCleartextTrafficPermitted`
+  is false (every host by default from `targetSdk` 28) is refused before any connection with an `IOException`
+  "CLEARTEXT communication to <host> not permitted by network security policy". The policy matches strings, so it is
+  asked about one spelling per address, and `<host>` in that message is this spelling: an IPv4 address in any form
+  inet_aton reads alike on every platform (`127.1`, `2130706433`) as its dotted quad (`127.0.0.1`); an IPv6 literal in
+  the text RFC 5952 recommends (`[0:0:0:0:0:0:0:1]` as `::1`), without its zone, so a rule for `fe80::1` holds on every
+  link and a `<domain>` written with a zone never matches; an IPv4-mapped literal (`[::ffff:192.0.2.1]`) as its dotted
+  quad (`192.0.2.1`), the address the connection goes to; and a name as it is. Write `<domain>` entries in these
+  spellings. A host that can be in none of them fails before the policy is asked, with an `IOException` of its own: an
+  IP literal that is no IPv6 address ("not an IP address"), an IPv4 form that platforms read differently (`010.0.0.1`),
+  a host beginning with a dot, and a name with non-ASCII characters: the engine does not map an internationalised name
+  to its A-label, so the URL must carry the A-label (`xn--...`), as the `<domain>` entry does.
+- HTTP/1.1 requests are written and responses parsed with Ktor's CIO code (vendored, see `docs/ktor-internal-api.md`):
+  chunked bodies, `Expect: 100-continue`, keep-alive with at most `pool { maxIdleConnectionsPerRoute }` idle connections per route
+  (a pooled connection the server already closed is replaced once, transparently, for idempotent requests; a POST
+  that failed on one is reported, never sent again). Requests on one connection are
+  sequential; `pipelining` is not used. Limits and idle cleanup: see "Connection pool" below. A response head (status
+  line and header fields) is limited to 64 KiB, the same as the HTTP/3 field section, and the interim (1xx) responses
+  skipped before the final one to 64 KiB in all, however many they are (RFC 9110 section 15.2); beyond either the
+  request fails with Ktor's `ParserException` and the connection is closed. A chunked response body must follow RFC
+  9112 section 7.1 exactly, as on the server: a chunk-size line with whitespace right before its CRLF (`5 \r\n`, which
+  Go's net/http and nginx tolerate) fails the response with "Whitespace before the end of a chunk size line" since
+  0.2.1. A proxy's response to `CONNECT` has the same
+  limits.
+- Requests go through a proxy when one applies (by default the platform's proxy settings): TCP only (HTTP/1.1, or HTTP/2
+  inside the tunnel), see [Proxies](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-proxies.md#proxies).
+- Timeouts come from `HttpTimeout`: the connect timeout (TCP + TLS, or the QUIC handshake; the name resolution and the
+  wait for a pool slot share it) fails with Ktor's `ConnectTimeoutException`, whose message names the timeout that fired
+  (`connect_timeout=500 ms`: `HttpTimeout`'s, else the engine's own `connectTimeout`), the socket timeout with `SocketTimeoutException`; the request timeout is the plugin's own.
+  The socket timeout is an inactivity timeout, as Ktor defines it ("maximum time of inactivity between two data
+  packets"): while the request body goes out and the response head is awaited, every piece of the body the connection
+  takes and every byte of the response that arrives restarts it, so an upload that keeps moving never times out however
+  long it takes, and one that stalls (the server stops reading, the application stops writing) fails that long after its
+  last progress; every read of the response body then has it on its own. Without `HttpTimeout` the engine's `connectTimeout` (10 s) applies.
+- Capabilities: `HttpTimeoutCapability`, `WebSocketCapability`, `WebSocketExtensionsCapability`, `SSECapability`; no
+  Unix sockets. How the engine checks WebSocket handshakes and frames: [WebSockets: behaviour
+  reference](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/realtime.md#behaviour-reference).
+- `HttpClient()` without an engine finds Kuicksilver through `ServiceLoader` on the JVM with priority 0.5 (below OkHttp
+  and the platform engines at 1.0, above CIO at 0.0) and through Ktor's engine list on Kotlin/Native.
+
 ## HTTP/3 in the Ktor client
 
 **What this page is for.** How the client engine finds a server's HTTP/3 and when it uses it: the discovery
@@ -1112,60 +1140,8 @@ connection migration between networks.
 | `Preferred` | HTTP/3 by prior knowledge, falling back to TCP (like `curl --http3`); `http3 { hints }` gives the same treatment to listed origins in `Auto` mode |
 | `H3Only` | HTTP/3 only (like `curl --http3-only`): failures are reported, never retried over TCP; an `http://` or `ws://` request (HTTP/3 needs `https`, RFC 9114 section 3.1), and with a proxy configured every request, fails with `UnsupportedOperationException` |
 
-HTTP/3 responses report `HttpProtocolVersion.HTTP_3_0`. One QUIC connection per origin carries all its requests; a
-request the server did not process (GOAWAY above its stream, `H3_REQUEST_REJECTED`) is repeated on a new connection
-without the application noticing. When HTTP/3 fails before the response headers, the request is repeated over TCP
-— always if it cannot have reached the server, otherwise only for idempotent methods whose body can be sent again
-(bytes, a `WriteChannelContent` writer, or no body). A streamed `ReadChannelContent` body that HTTP/3 already consumed
-is never replayed, neither on the fallback nor after a 421 or a `RequestNotProcessed`: the call fails with
-`H3BodyConsumed` and the application decides. The fallback uses the same `tls { }`: trust, pins and TLS 1.3 settings. When a call ends before its body was read, the rest of the stream is abandoned
-with `STOP_SENDING`. A response body the connection cut short (a reset, a lost connection) never looks complete:
-`bodyAsText`, `bodyAsBytes`, `readRemaining` and the other whole-body reads throw the cause, and the engine's own channel
-(`rawContent`, the server's request body) throws it from `readAvailable` instead of answering -1. `bodyAsChannel()`
-hands out Ktor's copy of the body, which keeps ktor-io's contract: its `readAvailable` answers -1 with the cause in
-`closedCause`, so a loop over that channel checks `closedCause` after -1 (or reads the rest with `readRemaining`).
-
-WebSockets use HTTP/1.1 `Upgrade` unless an HTTP/3 connection to the origin already allows Extended CONNECT and has
-not received GOAWAY (or the mode is `H3Only`), or an HTTP/2 one does ([HTTP/2 on the client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client.md#http2-on-the-client)); over HTTP/3 the handshake is RFC
-9220, over HTTP/2 RFC 8441, and the plugin sees the usual 101. Over HTTP/1.1 at most one
-WebSocket is connecting to an address and port at a time (RFC 6455 section 4.1): another one to the same address, under
-any name, opens its connection once the first handshake was answered or failed; through a proxy that resolves names,
-the name counts as the host. The connect timeout applies twice to such a WebSocket, in two phases: resolving the name,
-waiting for a pool slot and connecting (TCP and TLS) share one, as for any request; the answer to the handshake must then
-arrive within the same timeout again, counted from the moment the connection is in hand. The wait for another WebSocket
-to the address is in neither: only the call (its request timeout or cancellation) bounds it.
-
-A session's own Close goes out even when its call ends with a failure or a cancellation once that Close was queued,
-over every protocol: Ktor's `webSocketSession()` ends its call that way each time the session closes (it takes the
-session's cancelled outgoing channel for a failure), and the Close, and the frames queued before it, would otherwise be
-lost with the call (RFC 6455 section 7.1.2: the endpoint "MUST send a Close control frame"). The session runs on until
-it ends, within 5 s counted from its own Close for writing it and for the server's Close; past that the HTTP/1.1
-connection is closed at once, the HTTP/2 stream reset with CANCEL and the HTTP/3 stream reset with H3_REQUEST_CANCELLED.
-
-The transport is then closed the server's side first (RFC 6455 section 7.1.1: the client "SHOULD wait for a TCP Close
-from the server"): the engine reads and drops what the server still sends, waits for its FIN (close_notify, then the FIN,
-over TLS), its END_STREAM (HTTP/2) or its FIN (HTTP/3), and closes its own side after it, cleanly: close_notify and a FIN,
-END_STREAM, a FIN. A server that has not closed its side 5 s after both Closes (the close wait, counted again from
-there) gets the client's clean close then; over HTTP/2 and HTTP/3 the stream is reset (RST_STREAM CANCEL,
-STOP_SENDING H3_REQUEST_CANCELLED) only if the server's end has not come another 5 s later. Ktor's own WebSocket writer
-closes its channel right after its Close, which used to half-close the connection (or end the stream) at once; the
-engine no longer lets that through. The server engine closes first: its FIN right after its close_notify over TLS (the
-client's close_notify is not waited for), END_STREAM or FIN right after the session.
-
-How long `client.close()` can wait for a WebSocket whose server stays silent: it waits for the session's end, and that is
-bounded by three close waits (15 s) after the session's own Close at most: 5 s for the server's Close (then the session
-is cancelled and the connection or stream ended at once: an HTTP/1.1 connection is closed cleanly when everything the
-session wrote was whole and taken by the socket, and reset when something was still queued, cut inside a frame or failed,
-so nothing leaves after the wait (on macOS a server that stopped reading, its receive window at 0, ignores that reset
-until it sends something itself); an HTTP/2 or HTTP/3 stream is reset), 5 s for the server's close of the transport (then the client
-closes its side cleanly), and over HTTP/2 and HTTP/3 5 s more for the server's END_STREAM or FIN after the client's own
-(then the stream is reset). The session's end handlers are cut off two close waits after the session ended, whatever
-they still wait for. The pools close after that, as for any request (at most about 3 s more). The connection, its pool slot and the engine's
-`close()` wait for the session, not for the call: `client.close()` right after `close(reason)` still sends the Close
-before the pools close. A call that fails or is cancelled before the session queued its Close still closes it with the
-closing handshake (RFC 6455 sections 7.1.7 and 7.3): one Close, 1001 Going Away (or the application's own code when it sends
-one, as from a `finally`), bounded by the same close wait; only a call that ends during the handshake ends it at once. A coroutine of
-the session that fails is reported to the event listener (`webSocketFailed`).
+HTTP/3 responses report `HttpProtocolVersion.HTTP_3_0`; what happens to a request when HTTP/3 fails under it is in
+[Behaviour reference](#behaviour-reference), WebSockets over HTTP/3 in [WebSockets](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/realtime.md#websockets-over-http3).
 
 ### Discovery and Alt-Svc
 
@@ -1538,6 +1514,21 @@ published), shows both sides: a download over HTTP/3 with `followDefaultNetwork`
 (Android) or CIO and Darwin (iOS), while Wi-Fi is turned off, with the `connectionMigrated` events, an optional resume of
 the TCP download with `Range`, and the limits of such a comparison on an emulator.
 
+### Behaviour reference
+
+HTTP/3 responses report `HttpProtocolVersion.HTTP_3_0`. One QUIC connection per origin carries all its requests; a
+request the server did not process (GOAWAY above its stream, `H3_REQUEST_REJECTED`) is repeated on a new connection
+without the application noticing. When HTTP/3 fails before the response headers, the request is repeated over TCP
+— always if it cannot have reached the server, otherwise only for idempotent methods whose body can be sent again
+(bytes, a `WriteChannelContent` writer, or no body). A streamed `ReadChannelContent` body that HTTP/3 already consumed
+is never replayed, neither on the fallback nor after a 421 or a `RequestNotProcessed`: the call fails with
+`H3BodyConsumed` and the application decides. The fallback uses the same `tls { }`: trust, pins and TLS 1.3 settings. When a call ends before its body was read, the rest of the stream is abandoned
+with `STOP_SENDING`. A response body the connection cut short (a reset, a lost connection) never looks complete:
+`bodyAsText`, `bodyAsBytes`, `readRemaining` and the other whole-body reads throw the cause, and the engine's own channel
+(`rawContent`, the server's request body) throws it from `readAvailable` instead of answering -1. `bodyAsChannel()`
+hands out Ktor's copy of the body, which keeps ktor-io's contract: its `readAvailable` answers -1 with the cause in
+`closedCause`, so a loop over that channel checks `closedCause` after -1 (or reads the rest with `readRemaining`).
+
 ## Proxies in the Ktor client
 
 **What this page is for.** How the client engine goes through HTTP, HTTPS and SOCKS proxies (the system's settings,
@@ -1549,6 +1540,42 @@ PAC files, an explicit proxy, credentials) and how HTTP/3 goes through a CONNECT
 - The imports of the code blocks: [Ktor engines: Imports](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#imports).
 
 ### Proxies
+
+The usual setups first: one proxy with credentials, a resolver of your own, an `https://` proxy. With none of
+them the system's proxy settings apply. HTTP/3 never goes through an HTTP or SOCKS proxy (below).
+
+```kotlin
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// guide:ktor:proxy
+val password = System.getenv("PROXY_PASSWORD") ?: ""
+// one proxy for everything, with credentials for it
+val viaProxy = HttpClient(Kuicksilver) {
+    engine {
+        proxy = ProxyBuilder.http("http://proxy.corp.test:3128")
+        proxies { credentials = ProxyCredentials("user", password) } // for `proxy` only
+    }
+}
+// a resolver of your own: its proxy carries its own credentials (ProxyResolvers.Environment takes them from https_proxy)
+val perHost = HttpClient(Kuicksilver) {
+    engine {
+        proxies {
+            resolver = ProxyResolver { url ->
+                if (url.host.endsWith(".internal.test")) null // direct
+                else ResolvedProxy.http("proxy.corp.test", 3128, ProxyCredentials("user", password))
+            }
+        }
+    }
+}
+// an https:// proxy: TLS to the proxy itself, the CONNECT and the credentials inside it
+val overTls = HttpClient(Kuicksilver) {
+    engine {
+        proxies {
+            resolver = ProxyResolver { ResolvedProxy.https("proxy.corp.test", 443, ProxyCredentials("user", password)) }
+            tls { trust = TrustConfig.Platform } // the proxy's own trust (default: the origin's, without pins)
+        }
+    }
+}
+```
 
 Where a request's proxy comes from:
 
@@ -1668,39 +1695,6 @@ A proxied request uses TCP (`ProtocolReason.Proxy`: HTTP/1.1, or HTTP/2 inside a
 `UnsupportedOperationException` without contacting the proxy, and `HttpClient.webTransport` refuses the URL unless
 `http3 { webTransport { proxyPolicy } }` lets it bypass the proxy. To use HTTP/3 to a host, exempt it from the proxy
 (`no_proxy`, the OS bypass list), or connect directly everywhere with `proxies { resolver = ProxyResolvers.None }`.
-
-```kotlin
-@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
-// guide:ktor:proxy
-val password = System.getenv("PROXY_PASSWORD") ?: ""
-// one proxy for everything, with credentials for it
-val viaProxy = HttpClient(Kuicksilver) {
-    engine {
-        proxy = ProxyBuilder.http("http://proxy.corp.test:3128")
-        proxies { credentials = ProxyCredentials("user", password) } // for `proxy` only
-    }
-}
-// a resolver of your own: its proxy carries its own credentials (ProxyResolvers.Environment takes them from https_proxy)
-val perHost = HttpClient(Kuicksilver) {
-    engine {
-        proxies {
-            resolver = ProxyResolver { url ->
-                if (url.host.endsWith(".internal.test")) null // direct
-                else ResolvedProxy.http("proxy.corp.test", 3128, ProxyCredentials("user", password))
-            }
-        }
-    }
-}
-// an https:// proxy: TLS to the proxy itself, the CONNECT and the credentials inside it
-val overTls = HttpClient(Kuicksilver) {
-    engine {
-        proxies {
-            resolver = ProxyResolver { ResolvedProxy.https("proxy.corp.test", 443, ProxyCredentials("user", password)) }
-            tls { trust = TrustConfig.Platform } // the proxy's own trust (default: the origin's, without pins)
-        }
-    }
-}
-```
 
 ### HTTP/3 through a CONNECT-UDP proxy (experimental)
 
@@ -3224,6 +3218,82 @@ client.prepareGet("$origin/video.mp4") { priority(urgency = 5, incremental = tru
 }
 ```
 
+### Behaviour reference
+
+How the client engine handles WebSocket handshakes, frames and closes, for when the sections above are not enough.
+
+#### The client's WebSocket checks
+
+With `WebSocketExtensionsCapability` Ktor's `WebSockets` plugin offers the extensions installed with
+`extensions { install(...) }` in `Sec-WebSocket-Extensions` and negotiates them, over HTTP/1.1, HTTP/2 (RFC 8441) and HTTP/3 (RFC 9220).
+permessage-deflate on every target is `PerMessageDeflate` ([WebSocket compression](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/realtime.md#websocket-compression-experimental));
+Ktor's own `WebSocketDeflateExtension` exists on the JVM and Android only. Both engines check the
+handshake and the frames (RFC 6455 sections 4.1, 5, 8.1 and 9.1). The client checks the server's answer before a
+session opens and fails the call with `WebSocketException` ("Handshake exception: …") unless, over HTTP/1.1, it has
+`Upgrade: websocket`, a `Connection` with `Upgrade` and exactly one `Sec-WebSocket-Accept` that answers the request's
+key, and, over every protocol, at most one `Sec-WebSocket-Extensions` with only offered extensions and at most
+one `Sec-WebSocket-Protocol` naming a subprotocol the request offered (Ktor's plugin checks only the status). The key
+is the engine's, from OpenSSL's CSPRNG and new for every connection, and every frame the client sends is masked with a
+new key from the same source. A frame with an RSV bit that no negotiated extension defines (RSV1 for
+permessage-deflate, on the first frame of a message only, RFC 7692 section 6.1), a reserved opcode, a mask bit in the
+wrong direction (RFC 6455 section 5.1: a server's frames are never masked, a client's always are), a malformed
+control frame, fragment, length or Close frame fails the connection with code 1002; a text message or a Close reason
+that is not UTF-8 with 1007, after permessage-deflate, which the engine decompresses itself whichever extension
+negotiated it; an uncompressed frame or message over the engine's `webSockets { maxMessageSize }` (16 MiB by default)
+with 1009, from the frame's header, before its payload is read, and a compressed one as it inflates
+past the limit. The engine hands the session a Close
+frame with that code in place of the bad frame, Ktor's session answers it, so the code goes on the wire and is the
+session's `closeReason`, and `incoming` ends without the bad frame (a raw `webSocketRaw` session sees the Close in
+`incoming` and answers it itself). An extension the engine does not know (the application's own) may use every RSV
+bit; one implemented by an installed Ktor extension the bits its factory declares. A text message the application
+builds from bytes (`Frame.Text(fin, ByteArray)`) that is not UTF-8 is not sent (also when Ktor's
+`WebSocketDeflateExtension` compresses it): the session fails with `ProtocolViolationException`. An extension the
+application brings with its own specification defines its payload: with one agreed, text is not checked.
+
+#### Which protocol a client WebSocket takes, and how it closes
+
+WebSockets use HTTP/1.1 `Upgrade` unless an HTTP/3 connection to the origin already allows Extended CONNECT and has
+not received GOAWAY (or the mode is `H3Only`), or an HTTP/2 one does ([HTTP/2 on the client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client.md#http2-on-the-client)); over HTTP/3 the handshake is RFC
+9220, over HTTP/2 RFC 8441, and the plugin sees the usual 101. Over HTTP/1.1 at most one
+WebSocket is connecting to an address and port at a time (RFC 6455 section 4.1): another one to the same address, under
+any name, opens its connection once the first handshake was answered or failed; through a proxy that resolves names,
+the name counts as the host. The connect timeout applies twice to such a WebSocket, in two phases: resolving the name,
+waiting for a pool slot and connecting (TCP and TLS) share one, as for any request; the answer to the handshake must then
+arrive within the same timeout again, counted from the moment the connection is in hand. The wait for another WebSocket
+to the address is in neither: only the call (its request timeout or cancellation) bounds it.
+
+A session's own Close goes out even when its call ends with a failure or a cancellation once that Close was queued,
+over every protocol: Ktor's `webSocketSession()` ends its call that way each time the session closes (it takes the
+session's cancelled outgoing channel for a failure), and the Close, and the frames queued before it, would otherwise be
+lost with the call (RFC 6455 section 7.1.2: the endpoint "MUST send a Close control frame"). The session runs on until
+it ends, within 5 s counted from its own Close for writing it and for the server's Close; past that the HTTP/1.1
+connection is closed at once, the HTTP/2 stream reset with CANCEL and the HTTP/3 stream reset with H3_REQUEST_CANCELLED.
+
+The transport is then closed the server's side first (RFC 6455 section 7.1.1: the client "SHOULD wait for a TCP Close
+from the server"): the engine reads and drops what the server still sends, waits for its FIN (close_notify, then the FIN,
+over TLS), its END_STREAM (HTTP/2) or its FIN (HTTP/3), and closes its own side after it, cleanly: close_notify and a FIN,
+END_STREAM, a FIN. A server that has not closed its side 5 s after both Closes (the close wait, counted again from
+there) gets the client's clean close then; over HTTP/2 and HTTP/3 the stream is reset (RST_STREAM CANCEL,
+STOP_SENDING H3_REQUEST_CANCELLED) only if the server's end has not come another 5 s later. Ktor's own WebSocket writer
+closes its channel right after its Close, which used to half-close the connection (or end the stream) at once; the
+engine no longer lets that through. The server engine closes first: its FIN right after its close_notify over TLS (the
+client's close_notify is not waited for), END_STREAM or FIN right after the session.
+
+How long `client.close()` can wait for a WebSocket whose server stays silent: it waits for the session's end, and that is
+bounded by three close waits (15 s) after the session's own Close at most: 5 s for the server's Close (then the session
+is cancelled and the connection or stream ended at once: an HTTP/1.1 connection is closed cleanly when everything the
+session wrote was whole and taken by the socket, and reset when something was still queued, cut inside a frame or failed,
+so nothing leaves after the wait (on macOS a server that stopped reading, its receive window at 0, ignores that reset
+until it sends something itself); an HTTP/2 or HTTP/3 stream is reset), 5 s for the server's close of the transport (then the client
+closes its side cleanly), and over HTTP/2 and HTTP/3 5 s more for the server's END_STREAM or FIN after the client's own
+(then the stream is reset). The session's end handlers are cut off two close waits after the session ended, whatever
+they still wait for. The pools close after that, as for any request (at most about 3 s more). The connection, its pool slot and the engine's
+`close()` wait for the session, not for the call: `client.close()` right after `close(reason)` still sends the Close
+before the pools close. A call that fails or is cancelled before the session queued its Close still closes it with the
+closing handshake (RFC 6455 sections 7.1.7 and 7.3): one Close, 1001 Going Away (or the application's own code when it sends
+one, as from a `finally`), bounded by the same close wait; only a call that ends during the handshake ends it at once. A coroutine of
+the session that fails is reported to the event listener (`webSocketFailed`).
+
 ## Observability and diagnostics
 
 **What this page is for.** Logging, event listeners, metrics and qlog of both engines, and per call: why a
@@ -3243,22 +3313,7 @@ is the one described in [QUIC: Observability](https://github.com/kuicksilver/kui
 the protocol of each response and why, the QUIC connection (handshake time, RTT, ALPN, 0-RTT), the `Alt-Svc` learned
 and a qlog trace per connection, built for macOS, Linux and Windows.
 
-**Server.** In the engine's `observability { }` block, `logger` receives the engine's diagnostics, its listeners and
-connections on every protocol and its HTTP/3 endpoints (`ServerObservability.ApplicationLog`, the default, is the
-application's log, `environment.log`; a warning about one call's answer goes there either way; on Android a logger of
-your own needs `org.slf4j:slf4j-api` 2.x on the class path, since the engine hands it to Ktor as an SLF4J `Logger` built on
-SLF4J 2's `LegacyAbstractLogger`: Ktor's server brings 2.x, but an app whose dependencies force SLF4J 1.7, as some older
-Android libraries do, fails at the engine's start with a `NoClassDefFoundError`),
-`connectionListener` (*experimental*) hears every QUIC connection, `qlog` adds a trace per HTTP/3 connection, and
-`eventListener` (*experimental*) takes a
-`KuicksilverServerEventListener`: `connectionOpened` and `connectionClosed` with the protocol (`HTTP/1.1` or `HTTP/2.0`
-after the TLS handshake, `HTTP/3.0` once accepted) and the peer's address, `tlsHandshakeFailed`, `connectionRefused` (a
-TCP client closed at accept, before TLS, with the reason: `per-IP limit` or `HTTP/2 repeat offender`; see [Connection
-limits](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md#connection-limits)), and `requestStarted` / `requestEnded`
-around the application's pipeline with the `ApplicationCall` (its response status) and the pipeline's failure, if any.
-On the running engine, `engine.http3Stats` (0.3.0) gives the QUIC endpoint counters (`EndpointStats`) of every HTTP/3
-listener, one per connector serving HTTP/3: datagrams, drops, refusals by the admission policy, the connection limits
-and the accept queue, handshakes ([Deploying: Observability](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/deployment.md#observability)).
+**Server.** A logger, a qlog sink and an event listener on the server engine:
 
 ```kotlin
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
@@ -3279,6 +3334,23 @@ embeddedServer(Kuicksilver, configure = {
     }
 }, module = Application::module)
 ```
+
+In the engine's `observability { }` block, `logger` receives the engine's diagnostics, its listeners and
+connections on every protocol and its HTTP/3 endpoints (`ServerObservability.ApplicationLog`, the default, is the
+application's log, `environment.log`; a warning about one call's answer goes there either way; on Android a logger of
+your own needs `org.slf4j:slf4j-api` 2.x on the class path, since the engine hands it to Ktor as an SLF4J `Logger` built on
+SLF4J 2's `LegacyAbstractLogger`: Ktor's server brings 2.x, but an app whose dependencies force SLF4J 1.7, as some older
+Android libraries do, fails at the engine's start with a `NoClassDefFoundError`),
+`connectionListener` (*experimental*) hears every QUIC connection, `qlog` adds a trace per HTTP/3 connection, and
+`eventListener` (*experimental*) takes a
+`KuicksilverServerEventListener`: `connectionOpened` and `connectionClosed` with the protocol (`HTTP/1.1` or `HTTP/2.0`
+after the TLS handshake, `HTTP/3.0` once accepted) and the peer's address, `tlsHandshakeFailed`, `connectionRefused` (a
+TCP client closed at accept, before TLS, with the reason: `per-IP limit` or `HTTP/2 repeat offender`; see [Connection
+limits](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md#connection-limits)), and `requestStarted` / `requestEnded`
+around the application's pipeline with the `ApplicationCall` (its response status) and the pipeline's failure, if any.
+On the running engine, `engine.http3Stats` (0.3.0) gives the QUIC endpoint counters (`EndpointStats`) of every HTTP/3
+listener, one per connector serving HTTP/3: datagrams, drops, refusals by the admission policy, the connection limits
+and the accept queue, handshakes ([Deploying: Observability](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/deployment.md#observability)).
 
 **Client.** `engine { observability { eventListener = ... } }` takes a `KuicksilverEventListener`, an abstract class with an empty method
 per event in the manner of OkHttp's `EventListener`: `callStart`, `callEnd` (protocol and status) or `callFailed`;
@@ -3321,16 +3393,7 @@ On Android, `observability { qlog = AsyncQlogSink(qlogDirectory(context)) }` wri
 cache directory, created owner-only (API 26 and up; [QUIC: qlog](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#qlog)). It is the counterpart of
 `keylogFile(context)`.
 
-<a id="closing-the-client"></a>
-**Closing the client.** `client.close()` returns at once: the calls in flight finish, then the engine closes its pools,
-its UDP endpoints (every QUIC connection on them, with its CONNECTION_CLOSE) and its selector in the background. An app
-that exits right after, and wants its qlog traces complete, waits for that with the usual Ktor engine idiom,
-`client.engine.coroutineContext.job.join()` (0.3.0). The join first waits for every call in flight: a response body
-until it is read or cancelled, a WebSocket or SSE session until it is closed. Only then are the endpoints closed, and the
-join returns once every one of them finished closing, which includes `close()` on the qlog trace of every connection.
-An `AsyncQlogSink` writes on its own coroutine, so `flush()` it after the join to have the files written. The join has no
-bound of its own: a body nobody reads or a session nobody closes holds it for as long as it stays open, so wrap the join
-in `withTimeout` where the exit must not wait for them.
+Closing the client and waiting for its qlog traces to be complete: [Closing the client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client.md#closing-the-client).
 
 Callbacks of both listeners run on the engines' coroutines and must return quickly; an exception out of one is logged and
 never fails a call.
@@ -3527,6 +3590,7 @@ diagnostics on that instance. A call that fails with it in the engine throws its
 carrying its diagnostics, and `callFailed` gets that copy; a call that meets it later, reading its response body, gets the instance itself, which carries
 none (the body's failure comes after the call's end), as does the `ConnectionLost` that `onClosed` hears.
 
+<a id="who-ended-the-connection"></a>
 <a id="who-ended-the-connection"></a>
 **Who ended the connection** (experimental, 0.3.0). When the TCP connection under an HTTP/1.1 or HTTP/2 call ended, a
 `ConnectionEndedException` (package `io.kuicksilver.io`) among the exception's causes says who ended it, so a test
@@ -8217,7 +8281,7 @@ dropped and counted in `dropped`, so a stalled disk loses trace lines, never thr
 connection in n; `flush()` waits for what is queued and `close()` stops the writer after it. A trace is closed when its
 connection's resources are released, at the latest by `QuicEndpoint.closeAndJoin()`; the Ktor client engine's
 `client.engine.coroutineContext.job.join()` waits for that after `client.close()` ([Ktor: Closing the
-client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/observability.md#closing-the-client)).
+client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client.md#closing-the-client)).
 
 ```kotlin
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)

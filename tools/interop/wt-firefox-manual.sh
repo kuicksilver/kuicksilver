@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
-# One-command by-hand WebTransport check in Firefox against the Ktor server (docs/guide/ktor.md, "WebTransport").
+# One-command by-hand WebTransport check in Firefox against the Ktor server (docs/guide/realtime.md, "WebTransport over HTTP/3").
 # Usage: tools/interop/wt-firefox-manual.sh
 # It makes a temporary directory with a P-256 certificate valid for 13 days (CN and SAN localhost, SAN IP 127.0.0.1;
 # serverCertificateHashes takes only such a short-lived, non-RSA certificate) and its base64 SHA-256 hash, starts

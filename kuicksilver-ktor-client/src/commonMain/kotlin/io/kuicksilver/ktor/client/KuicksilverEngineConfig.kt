@@ -458,7 +458,7 @@ public class Http3ClientConfig {
 }
 
 /**
- * HTTP/2 on the TCP path (RFC 9113; docs/guide/ktor.md, "HTTP/2"): every `https://` connection over TCP offers `h2` and
+ * HTTP/2 on the TCP path (RFC 9113; docs/guide/client.md, "HTTP/2 on the client"): every `https://` connection over TCP offers `h2` and
  * `http/1.1` in ALPN, and a server that picks `h2` gets one multiplexed connection per route instead of up to
  * `pool { maxConnectionsPerRoute }` HTTP/1.1 connections. An `http://` request uses HTTP/1.1, unless its origin is listed in
  * [priorKnowledge] (h2c). A `wss://` WebSocket goes over HTTP/2 (RFC 8441, Extended CONNECT) on a connection to its origin
@@ -487,7 +487,7 @@ public class Http2ClientConfig {
      * their requests go over h2c with prior knowledge (RFC 9113 section 3.3), the client connection preface right after
      * the TCP connect, without TLS, without ALPN and without `Upgrade: h2c` (deprecated by section 3.1, never sent). Empty
      * by default. h2c is cleartext (CWE-319), so name only servers on a trusted network or behind a sidecar that protects
-     * the hop (docs/guide/ktor.md, "h2c"). No fallback: a listed server that does not speak h2c fails the call with the
+     * the hop (docs/guide/client.md, "h2c on the client"). No fallback: a listed server that does not speak h2c fails the call with the
      * connection error; only a server that ends the connection with HTTP_1_1_REQUIRED gets HTTP/1.1 from then on. An
      * `https://` URL never uses this. A `ws://` WebSocket to a listed origin goes as an Extended CONNECT (RFC 8441,
      * `:scheme http`) on the origin's h2c connection. On Android the app's cleartext policy applies as to any `http://`
@@ -575,7 +575,7 @@ public class PoolConfig {
      * `TrustConfig.ExpectedName`, and over HTTP/3 only where the request has an HTTP/3 endpoint of its own at the
      * connection's address. False (the default): every origin gets connections of its own; the one certificate then speaks
      * for the origins it covers, so turn it on only where the servers behind such a certificate answer 421 to the hosts they
-     * do not serve (docs/guide/ktor.md, "Connection coalescing"). Turned on, every HTTP/2 connection that may carry other
+     * do not serve (docs/guide/client.md, "Connection coalescing"). Turned on, every HTTP/2 connection that may carry other
      * origins sends `cookie` as a literal HPACK never indexes (RFC 7541 section 7.1).
      */
     @ExperimentalKuicksilverApi
@@ -590,7 +590,7 @@ public class ClientNetworkConfig {
      * Resolves host names to the addresses the engine connects to, over TCP and QUIC, with Happy Eyeballs (RFC 8305) on what
      * it answers: [Dns.System] (the default) or your own, after OkHttp's `Dns`. Its lookup is part of connecting
      * (`connectTimeout` bounds it), it never gets address literals, it is asked for an HTTP proxy's name but never for the
-     * origin's behind it, and its answers never stand in for the host name in TLS. See [Dns] and docs/guide/ktor.md,
+     * origin's behind it, and its answers never stand in for the host name in TLS. See [Dns] and docs/guide/client.md,
      * "Name resolution".
      */
     @ExperimentalKuicksilverApi
@@ -598,7 +598,7 @@ public class ClientNetworkConfig {
     public var dns: Dns = Dns.System
 
     /**
-     * Where [Http3Discovery.Auto] looks up HTTPS resource records (RFC 9460; docs/guide/ktor.md, "HTTPS records"):
+     * Where [Http3Discovery.Auto] looks up HTTPS resource records (RFC 9460; docs/guide/client-http3.md, "HTTPS records"):
      * [HttpsRecordSource.Off] (the default), the system resolver ([HttpsRecordSource.System]) or your DNS-over-HTTPS exchange
      * ([HttpsRecordSource.Exchange]). An `https://` request to a host name asks for the origin's records, follows AliasMode
      * records, and connects to their endpoints in priority order over the transports each allows, then to the origin as
@@ -682,7 +682,7 @@ public class ProxiesConfig {
      * A CONNECT-UDP proxy (RFC 9298, MASQUE) for HTTP/3, or null (the default) for none. An `https` request it applies to
      * goes over HTTP/3 inside a UDP tunnel through it, whatever `proxy` or [resolver] say: never over TCP and never directly.
      * Such a request fails, with the reason, when the origin has no HTTP/3, when the proxy refuses the tunnel, with
-     * `http3 { enabled = false }` or while `http3 { allowed }` says no. docs/guide/ktor.md, "HTTP/3 through a CONNECT-UDP proxy".
+     * `http3 { enabled = false }` or while `http3 { allowed }` says no. docs/guide/client-proxies.md, "HTTP/3 through a CONNECT-UDP proxy".
      */
     @SecuritySensitive
     public var connectUdp: ConnectUdpProxy? = null

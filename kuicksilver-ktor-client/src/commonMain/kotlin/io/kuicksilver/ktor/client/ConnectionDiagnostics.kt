@@ -22,7 +22,7 @@ public enum class Transport {
 }
 
 /**
- * The connection behind a call as the engine saw it ([ProtocolDiagnostics.connection], docs/guide/ktor.md, "Which
+ * The connection behind a call as the engine saw it ([ProtocolDiagnostics.connection], docs/guide/observability.md, "Which
  * connection served this call?"): a [QuicConnectionSnapshot] for HTTP/3, a [TcpConnectionSnapshot] for HTTP/1.1 and
  * HTTP/2. An instance never changes; the engine replaces it with a newer one (an HTTP/3 call's when its response ended).
  */
@@ -204,7 +204,7 @@ public class ConnectFailure internal constructor(
 internal const val MAX_CONNECT_FAILURES = 16
 
 /**
- * The [ProtocolDiagnostics] of the call that failed with this exception, or one of its causes (docs/guide/ktor.md, "Why
+ * The [ProtocolDiagnostics] of the call that failed with this exception, or one of its causes (docs/guide/observability.md, "Why
  * did this call fail?"): [ProtocolDiagnostics.transport] says whether the failure came over QUIC or TCP,
  * [ProtocolDiagnostics.h3Failure] what HTTP/3's failure was when TCP came after it, [ProtocolDiagnostics.connectFailures]
  * which setups failed and where. Null for an exception no Kuicksilver engine call threw and for a cancellation.

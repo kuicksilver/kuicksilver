@@ -29,60 +29,8 @@ connection migration between networks.
 | `Preferred` | HTTP/3 by prior knowledge, falling back to TCP (like `curl --http3`); `http3 { hints }` gives the same treatment to listed origins in `Auto` mode |
 | `H3Only` | HTTP/3 only (like `curl --http3-only`): failures are reported, never retried over TCP; an `http://` or `ws://` request (HTTP/3 needs `https`, RFC 9114 section 3.1), and with a proxy configured every request, fails with `UnsupportedOperationException` |
 
-HTTP/3 responses report `HttpProtocolVersion.HTTP_3_0`. One QUIC connection per origin carries all its requests; a
-request the server did not process (GOAWAY above its stream, `H3_REQUEST_REJECTED`) is repeated on a new connection
-without the application noticing. When HTTP/3 fails before the response headers, the request is repeated over TCP
-— always if it cannot have reached the server, otherwise only for idempotent methods whose body can be sent again
-(bytes, a `WriteChannelContent` writer, or no body). A streamed `ReadChannelContent` body that HTTP/3 already consumed
-is never replayed, neither on the fallback nor after a 421 or a `RequestNotProcessed`: the call fails with
-`H3BodyConsumed` and the application decides. The fallback uses the same `tls { }`: trust, pins and TLS 1.3 settings. When a call ends before its body was read, the rest of the stream is abandoned
-with `STOP_SENDING`. A response body the connection cut short (a reset, a lost connection) never looks complete:
-`bodyAsText`, `bodyAsBytes`, `readRemaining` and the other whole-body reads throw the cause, and the engine's own channel
-(`rawContent`, the server's request body) throws it from `readAvailable` instead of answering -1. `bodyAsChannel()`
-hands out Ktor's copy of the body, which keeps ktor-io's contract: its `readAvailable` answers -1 with the cause in
-`closedCause`, so a loop over that channel checks `closedCause` after -1 (or reads the rest with `readRemaining`).
-
-WebSockets use HTTP/1.1 `Upgrade` unless an HTTP/3 connection to the origin already allows Extended CONNECT and has
-not received GOAWAY (or the mode is `H3Only`), or an HTTP/2 one does ([HTTP/2 on the client](client.md#http2-on-the-client)); over HTTP/3 the handshake is RFC
-9220, over HTTP/2 RFC 8441, and the plugin sees the usual 101. Over HTTP/1.1 at most one
-WebSocket is connecting to an address and port at a time (RFC 6455 section 4.1): another one to the same address, under
-any name, opens its connection once the first handshake was answered or failed; through a proxy that resolves names,
-the name counts as the host. The connect timeout applies twice to such a WebSocket, in two phases: resolving the name,
-waiting for a pool slot and connecting (TCP and TLS) share one, as for any request; the answer to the handshake must then
-arrive within the same timeout again, counted from the moment the connection is in hand. The wait for another WebSocket
-to the address is in neither: only the call (its request timeout or cancellation) bounds it.
-
-A session's own Close goes out even when its call ends with a failure or a cancellation once that Close was queued,
-over every protocol: Ktor's `webSocketSession()` ends its call that way each time the session closes (it takes the
-session's cancelled outgoing channel for a failure), and the Close, and the frames queued before it, would otherwise be
-lost with the call (RFC 6455 section 7.1.2: the endpoint "MUST send a Close control frame"). The session runs on until
-it ends, within 5 s counted from its own Close for writing it and for the server's Close; past that the HTTP/1.1
-connection is closed at once, the HTTP/2 stream reset with CANCEL and the HTTP/3 stream reset with H3_REQUEST_CANCELLED.
-
-The transport is then closed the server's side first (RFC 6455 section 7.1.1: the client "SHOULD wait for a TCP Close
-from the server"): the engine reads and drops what the server still sends, waits for its FIN (close_notify, then the FIN,
-over TLS), its END_STREAM (HTTP/2) or its FIN (HTTP/3), and closes its own side after it, cleanly: close_notify and a FIN,
-END_STREAM, a FIN. A server that has not closed its side 5 s after both Closes (the close wait, counted again from
-there) gets the client's clean close then; over HTTP/2 and HTTP/3 the stream is reset (RST_STREAM CANCEL,
-STOP_SENDING H3_REQUEST_CANCELLED) only if the server's end has not come another 5 s later. Ktor's own WebSocket writer
-closes its channel right after its Close, which used to half-close the connection (or end the stream) at once; the
-engine no longer lets that through. The server engine closes first: its FIN right after its close_notify over TLS (the
-client's close_notify is not waited for), END_STREAM or FIN right after the session.
-
-How long `client.close()` can wait for a WebSocket whose server stays silent: it waits for the session's end, and that is
-bounded by three close waits (15 s) after the session's own Close at most: 5 s for the server's Close (then the session
-is cancelled and the connection or stream ended at once: an HTTP/1.1 connection is closed cleanly when everything the
-session wrote was whole and taken by the socket, and reset when something was still queued, cut inside a frame or failed,
-so nothing leaves after the wait (on macOS a server that stopped reading, its receive window at 0, ignores that reset
-until it sends something itself); an HTTP/2 or HTTP/3 stream is reset), 5 s for the server's close of the transport (then the client
-closes its side cleanly), and over HTTP/2 and HTTP/3 5 s more for the server's END_STREAM or FIN after the client's own
-(then the stream is reset). The session's end handlers are cut off two close waits after the session ended, whatever
-they still wait for. The pools close after that, as for any request (at most about 3 s more). The connection, its pool slot and the engine's
-`close()` wait for the session, not for the call: `client.close()` right after `close(reason)` still sends the Close
-before the pools close. A call that fails or is cancelled before the session queued its Close still closes it with the
-closing handshake (RFC 6455 sections 7.1.7 and 7.3): one Close, 1001 Going Away (or the application's own code when it sends
-one, as from a `finally`), bounded by the same close wait; only a call that ends during the handshake ends it at once. A coroutine of
-the session that fails is reported to the event listener (`webSocketFailed`).
+HTTP/3 responses report `HttpProtocolVersion.HTTP_3_0`; what happens to a request when HTTP/3 fails under it is in
+[Behaviour reference](#behaviour-reference), WebSockets over HTTP/3 in [WebSockets](realtime.md#websockets-over-http3).
 
 ## Discovery and Alt-Svc
 
@@ -454,3 +402,18 @@ The Compose Multiplatform demo, [samples/compose-demo](../../samples/compose-dem
 published), shows both sides: a download over HTTP/3 with `followDefaultNetwork` and the same download over OkHttp
 (Android) or CIO and Darwin (iOS), while Wi-Fi is turned off, with the `connectionMigrated` events, an optional resume of
 the TCP download with `Range`, and the limits of such a comparison on an emulator.
+
+## Behaviour reference
+
+HTTP/3 responses report `HttpProtocolVersion.HTTP_3_0`. One QUIC connection per origin carries all its requests; a
+request the server did not process (GOAWAY above its stream, `H3_REQUEST_REJECTED`) is repeated on a new connection
+without the application noticing. When HTTP/3 fails before the response headers, the request is repeated over TCP
+— always if it cannot have reached the server, otherwise only for idempotent methods whose body can be sent again
+(bytes, a `WriteChannelContent` writer, or no body). A streamed `ReadChannelContent` body that HTTP/3 already consumed
+is never replayed, neither on the fallback nor after a 421 or a `RequestNotProcessed`: the call fails with
+`H3BodyConsumed` and the application decides. The fallback uses the same `tls { }`: trust, pins and TLS 1.3 settings. When a call ends before its body was read, the rest of the stream is abandoned
+with `STOP_SENDING`. A response body the connection cut short (a reset, a lost connection) never looks complete:
+`bodyAsText`, `bodyAsBytes`, `readRemaining` and the other whole-body reads throw the cause, and the engine's own channel
+(`rawContent`, the server's request body) throws it from `readAvailable` instead of answering -1. `bodyAsChannel()`
+hands out Ktor's copy of the body, which keeps ktor-io's contract: its `readAvailable` answers -1 with the cause in
+`closedCause`, so a loop over that channel checks `closedCause` after -1 (or reads the rest with `readRemaining`).

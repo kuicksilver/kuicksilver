@@ -26,7 +26,7 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * `QuicConnection.version` and `ConnectionInfo.version` (docs/guide/quic.md, "Versions"): the version the handshake settled,
+ * `QuicConnection.version` and `ConnectionInfo.version` (docs/guide/quic.md, "Configuration"): the version the handshake settled,
  * which compatible version negotiation (RFC 9368) can make differ from the one the client's first flight offered.
  */
 @OptIn(ExperimentalKuicksilverApi::class, ExperimentalAtomicApi::class)

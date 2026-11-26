@@ -58,7 +58,7 @@ tasks.register("ksAndroidRuntimeJars") {
     doLast { androidRuntimeJars.forEach { println(it.absolutePath) } }
 }
 
-// ---- Simulator host-interop harness (docs/guide/quic.md, "iOS"): `iosHostInteropTest` starts a host peer (HostPeerMain, jvmTest)
+// ---- Simulator host-interop harness (docs/guide/ios.md): `iosHostInteropTest` starts a host peer (HostPeerMain, jvmTest)
 // before the simulator tests and stops it after; its control port reaches the simulator process as KSL_PEER_PORT, since simctl
 // hands every SIMCTL_CHILD_* variable to the app without the prefix. A plain iosSimulatorArm64Test runs HostInteropTest without
 // the variable, and those tests pass without doing anything.

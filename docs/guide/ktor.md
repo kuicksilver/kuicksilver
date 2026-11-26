@@ -216,7 +216,8 @@ val client = HttpClient(KuicksilverClient)
 Kuicksilver plugs into Ktor 3.6 as a server engine (`io.kuicksilver:kuicksilver-ktor-server`) and a client engine
 (`io.kuicksilver:kuicksilver-ktor-client`). Both speak HTTP/1.1 over TLS 1.3 (`kuicksilver-ktor-network`) and HTTP/3
 (`kuicksilver-http3`); both also speak HTTP/2 over TLS (`kuicksilver-http2`, ADR-0017), on by default on both since
-0.3.0 ([HTTP/2 on the server](server.md#http2-on-the-server)): one port serves HTTP/1.1, HTTP/2 and HTTP/3. The code blocks of the engine pages compile and run as `GuideSamplesTest`
+0.3.0 ([HTTP/2 on the server](server.md#http2-on-the-server)): one port serves HTTP/1.1, HTTP/2 and HTTP/3. Every Kotlin block of the engine pages is compiled, and most also run, in the
+test classes named `GuideSamplesTest`
 (`kuicksilver-ktor-server/src/jvmTest` and `kuicksilver-ktor-client/src/jvmTest`), and the first screens compile in a
 source set that opts in to nothing and fails on a warning (`src/jvmFirstScreenTest`), so they stay free of experimental
 API; the engines' other tests run on every
@@ -289,6 +290,8 @@ This page used to hold every section below; links to them land here and lead on.
 | <a id="certificate-pinning"></a>Certificate pinning | [TLS in the Ktor engines](engine-tls.md#certificate-pinning) |
 | <a id="priorities-experimental"></a>Priorities (experimental) | [WebSockets, WebTransport and priorities](realtime.md#priorities-experimental) |
 | <a id="websocket-compression-experimental"></a>WebSocket compression (experimental) | [WebSockets, WebTransport and priorities](realtime.md#websocket-compression-experimental) |
+| <a id="closing-the-client"></a>Closing the client | [Ktor client engine](client.md#closing-the-client) |
+| <a id="who-ended-the-connection"></a>Who ended the connection | [Observability and diagnostics](observability.md#who-ended-the-connection) |
 | <a id="observability"></a><a id="observability-experimental"></a>Observability | [Observability and diagnostics](observability.md) |
 | <a id="why-did-this-request-not-use-http3"></a>Why did this request not use HTTP/3? | [Observability and diagnostics](observability.md#why-did-this-request-not-use-http3) |
 | <a id="which-connection-served-this-call"></a>Which connection served this call? | [Observability and diagnostics](observability.md#which-connection-served-this-call) |

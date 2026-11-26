@@ -12,7 +12,7 @@ import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
 /**
- * Encrypted Client Hello of the client engine (RFC 9849; docs/guide/ktor.md, "Encrypted Client Hello"); change it with
+ * Encrypted Client Hello of the client engine (RFC 9849; docs/guide/engine-tls.md, "Encrypted Client Hello"); change it with
  * `tls { ech { } }` ([ClientTlsConfig.ech]). The configuration a connection offers comes from, in this order: the `ech` parameter of
  * the HTTPS record whose endpoint it goes to ([fromHttpsRecords], RFC 9848), the [configLists] entry of the request's host,
  * else none, and then GREASE ECH ([grease]). Over TCP and QUIC alike; TLS 1.3 only.

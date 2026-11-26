@@ -22,22 +22,7 @@ is the one described in [QUIC: Observability](quic.md#observability): counters, 
 the protocol of each response and why, the QUIC connection (handshake time, RTT, ALPN, 0-RTT), the `Alt-Svc` learned
 and a qlog trace per connection, built for macOS, Linux and Windows.
 
-**Server.** In the engine's `observability { }` block, `logger` receives the engine's diagnostics, its listeners and
-connections on every protocol and its HTTP/3 endpoints (`ServerObservability.ApplicationLog`, the default, is the
-application's log, `environment.log`; a warning about one call's answer goes there either way; on Android a logger of
-your own needs `org.slf4j:slf4j-api` 2.x on the class path, since the engine hands it to Ktor as an SLF4J `Logger` built on
-SLF4J 2's `LegacyAbstractLogger`: Ktor's server brings 2.x, but an app whose dependencies force SLF4J 1.7, as some older
-Android libraries do, fails at the engine's start with a `NoClassDefFoundError`),
-`connectionListener` (*experimental*) hears every QUIC connection, `qlog` adds a trace per HTTP/3 connection, and
-`eventListener` (*experimental*) takes a
-`KuicksilverServerEventListener`: `connectionOpened` and `connectionClosed` with the protocol (`HTTP/1.1` or `HTTP/2.0`
-after the TLS handshake, `HTTP/3.0` once accepted) and the peer's address, `tlsHandshakeFailed`, `connectionRefused` (a
-TCP client closed at accept, before TLS, with the reason: `per-IP limit` or `HTTP/2 repeat offender`; see [Connection
-limits](server.md#connection-limits)), and `requestStarted` / `requestEnded`
-around the application's pipeline with the `ApplicationCall` (its response status) and the pipeline's failure, if any.
-On the running engine, `engine.http3Stats` (0.3.0) gives the QUIC endpoint counters (`EndpointStats`) of every HTTP/3
-listener, one per connector serving HTTP/3: datagrams, drops, refusals by the admission policy, the connection limits
-and the accept queue, handshakes ([Deploying: Observability](deployment.md#observability)).
+**Server.** A logger, a qlog sink and an event listener on the server engine:
 
 ```kotlin
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
@@ -58,6 +43,23 @@ embeddedServer(Kuicksilver, configure = {
     }
 }, module = Application::module)
 ```
+
+In the engine's `observability { }` block, `logger` receives the engine's diagnostics, its listeners and
+connections on every protocol and its HTTP/3 endpoints (`ServerObservability.ApplicationLog`, the default, is the
+application's log, `environment.log`; a warning about one call's answer goes there either way; on Android a logger of
+your own needs `org.slf4j:slf4j-api` 2.x on the class path, since the engine hands it to Ktor as an SLF4J `Logger` built on
+SLF4J 2's `LegacyAbstractLogger`: Ktor's server brings 2.x, but an app whose dependencies force SLF4J 1.7, as some older
+Android libraries do, fails at the engine's start with a `NoClassDefFoundError`),
+`connectionListener` (*experimental*) hears every QUIC connection, `qlog` adds a trace per HTTP/3 connection, and
+`eventListener` (*experimental*) takes a
+`KuicksilverServerEventListener`: `connectionOpened` and `connectionClosed` with the protocol (`HTTP/1.1` or `HTTP/2.0`
+after the TLS handshake, `HTTP/3.0` once accepted) and the peer's address, `tlsHandshakeFailed`, `connectionRefused` (a
+TCP client closed at accept, before TLS, with the reason: `per-IP limit` or `HTTP/2 repeat offender`; see [Connection
+limits](server.md#connection-limits)), and `requestStarted` / `requestEnded`
+around the application's pipeline with the `ApplicationCall` (its response status) and the pipeline's failure, if any.
+On the running engine, `engine.http3Stats` (0.3.0) gives the QUIC endpoint counters (`EndpointStats`) of every HTTP/3
+listener, one per connector serving HTTP/3: datagrams, drops, refusals by the admission policy, the connection limits
+and the accept queue, handshakes ([Deploying: Observability](deployment.md#observability)).
 
 **Client.** `engine { observability { eventListener = ... } }` takes a `KuicksilverEventListener`, an abstract class with an empty method
 per event in the manner of OkHttp's `EventListener`: `callStart`, `callEnd` (protocol and status) or `callFailed`;
@@ -100,16 +102,7 @@ On Android, `observability { qlog = AsyncQlogSink(qlogDirectory(context)) }` wri
 cache directory, created owner-only (API 26 and up; [QUIC: qlog](quic.md#qlog)). It is the counterpart of
 `keylogFile(context)`.
 
-<a id="closing-the-client"></a>
-**Closing the client.** `client.close()` returns at once: the calls in flight finish, then the engine closes its pools,
-its UDP endpoints (every QUIC connection on them, with its CONNECTION_CLOSE) and its selector in the background. An app
-that exits right after, and wants its qlog traces complete, waits for that with the usual Ktor engine idiom,
-`client.engine.coroutineContext.job.join()` (0.3.0). The join first waits for every call in flight: a response body
-until it is read or cancelled, a WebSocket or SSE session until it is closed. Only then are the endpoints closed, and the
-join returns once every one of them finished closing, which includes `close()` on the qlog trace of every connection.
-An `AsyncQlogSink` writes on its own coroutine, so `flush()` it after the join to have the files written. The join has no
-bound of its own: a body nobody reads or a session nobody closes holds it for as long as it stays open, so wrap the join
-in `withTimeout` where the exit must not wait for them.
+Closing the client and waiting for its qlog traces to be complete: [Closing the client](client.md#closing-the-client).
 
 Callbacks of both listeners run on the engines' coroutines and must return quickly; an exception out of one is logged and
 never fails a call.
@@ -306,6 +299,7 @@ diagnostics on that instance. A call that fails with it in the engine throws its
 carrying its diagnostics, and `callFailed` gets that copy; a call that meets it later, reading its response body, gets the instance itself, which carries
 none (the body's failure comes after the call's end), as does the `ConnectionLost` that `onClosed` hears.
 
+<a id="who-ended-the-connection"></a>
 <a id="who-ended-the-connection"></a>
 **Who ended the connection** (experimental, 0.3.0). When the TCP connection under an HTTP/1.1 or HTTP/2 call ended, a
 `ConnectionEndedException` (package `io.kuicksilver.io`) among the exception's causes says who ended it, so a test

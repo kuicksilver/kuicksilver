@@ -17,7 +17,10 @@
 #   symbol          a project-owned name that no tracked source declares: negative_* tests, ksl_*/KSL_* C names, Type.member
 #                   of a project Kotlin type (CHANGELOG.md is skipped: history names removed symbols on purpose);
 #   gradle-task     `:module:task` that no build script registers and that is not a standard KMP/AGP task;
-#   script-flag     a --flag on a line naming a tools/ script, when no tools/ script or build file handles it.
+#   script-flag     a --flag on a line naming a tools/ script, when no tools/ script or build file handles it;
+#   section         a guide section a source file cites by name, `docs/guide/<page>.md, "<heading>"` (also with `("...")`
+#                   and a heading that wraps onto the next comment line), when <page> has no heading that starts so: a
+#                   section that moved to another page, or was renamed, leaves the comment pointing at nothing.
 # The tracked JSON files (context7.json, the interop notes) are checked for private markers too.
 #   private-comment the comments and KDoc of tracked *.kt, *.kts, *.c, *.h and *.sh files are checked for a narrower set
 #                   of private markers: local machine paths, private working directories, an agent ledger, milestone
@@ -322,6 +325,28 @@ for md in mds:
     for n, line, code in lines(content(md) or ""):
         symbols(md, n, line, code)
 _cat.stdin.close(); _cat.wait()
+
+# Sections cited by name from source files: the heading must exist on the cited page (a prefix, for a wrapped quote).
+CITE = re.compile(r'docs/guide/([a-z0-9-]+\.md)(?:, | \()\\?"([^"\\\n]*)(\\?"|$)', re.M)
+heads_by_page = {}
+def page_heads(page):
+    if page not in heads_by_page:
+        t = content(f"docs/guide/{page}") or ""
+        heads_by_page[page] = ([re.sub(r"\s+", " ", re.sub(r"`", "", m.group(1))).strip()
+                                for m in re.finditer(r"^#{1,6}\s+(.*?)\s*$", t, re.M)],
+                               set(re.findall(r"""^[^|\n]*<a\s+(?:name|id)=["']([^"']+)["']""", t, re.M)))   # not a redirect row of a table
+    return heads_by_page[page]
+for f, t in blob.items():
+    if f in SELF: continue
+    for m in CITE.finditer(t):
+        page, quoted, closed = m.group(1), re.sub(r"\s+", " ", m.group(2).replace("`", "")).strip(), bool(m.group(3))
+        if not quoted or content(f"docs/guide/{page}") is None: continue
+        hs, ids = page_heads(page)
+        ok = (any(h.startswith(quoted) for h in hs) or slug(quoted) in ids   # a bold label with an <a id>, as "Minimal example"
+              or (not closed and any(i.startswith(slug(quoted)) for i in ids)))
+        if not ok:
+            n = t.count("\n", 0, m.start()) + 1
+            report(f, n, "section", f'docs/guide/{page} has no heading "{quoted}"')
 
 # Allowlist: `<file glob> | <kind> | <text the detail contains>` per line, then `# reason`; blank lines and comments skipped.
 rules = []

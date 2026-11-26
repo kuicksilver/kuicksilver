@@ -4,7 +4,7 @@ package io.kuicksilver.ktor.server
 
 /**
  * Whether a running server advertises HTTP/3 and accepts new HTTP/3 connections: the value of
- * [KuicksilverApplicationEngine.http3Advertising], changed at runtime without a restart (docs/guide/ktor.md, "Turning
+ * [KuicksilverApplicationEngine.http3Advertising], changed at runtime without a restart (docs/guide/server.md, "Turning
  * HTTP/3 off on the server"). It decides the engine's own `Alt-Svc` only while
  * [altSvc][Http3ServerConfig.altSvc] is on, and only on ports that serve HTTP/3; an `Alt-Svc` the
  * application sets, and a 421 response, are left as they are in every mode. New values may be added (docs/stability.md).

@@ -68,7 +68,7 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * Which connection served a call and which transport a failure came from (docs/guide/ktor.md, "Which connection served
+ * Which connection served a call and which transport a failure came from (docs/guide/observability.md, "Which connection served
  * this call?" and "Why did this call fail?"): `ProtocolDiagnostics.connection`, `transport`, `connectFailures`,
  * `Throwable.kuicksilverDiagnostics` and the `connectFailed` event.
  */
