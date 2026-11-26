@@ -71,9 +71,12 @@ internal fun ConnectionCore.buildLocalTp(): TransportParameters {
     return tp
 }
 
+/** [buildLocalTp] as handed to TLS, kept in [ConnectionCore.localTp] only while a qlog trace waits to log it with the peer's. */
+internal fun ConnectionCore.localTpForTls(): TransportParameters = buildLocalTp().also { if (qlog != null) localTp = it }
+
 /** Re-encodes the local transport parameters (test hooks set after construction, before the first drive). */
 internal fun ConnectionCore.refreshLocalTp() {
-    handshake.session.setTransportParameters(TransportParametersCodec.encode(buildLocalTp().also { localTp = it }, role, 27))
+    handshake.session.setTransportParameters(TransportParametersCodec.encode(localTpForTls(), role, 27))
 }
 
 internal fun ConnectionCore.installInitialKeys(profile: VersionProfile) {
@@ -344,7 +347,7 @@ internal fun ConnectionCore.onVersionNegotiation(offered: IntArray) {
     flightVersion = next
     clientVersionFixed = false
     handshake = HandshakeDriver(crypto.newSession(tlsConfig, earlyMode != EarlyDataState.Disabled), ConnectionHandshakeSink(this))
-    handshake.session.setTransportParameters(TransportParametersCodec.encode(buildLocalTp().also { localTp = it }, role, 27))
+    handshake.session.setTransportParameters(TransportParametersCodec.encode(localTpForTls(), role, 27))
     handshake.session.setQuicVersion(next.version)
     loss = LossDetection(rtt, config, role, ConnectionLossListener(this))
     path.cc = config.congestionController()
@@ -552,6 +555,7 @@ internal class ConnectionHandshakeSink(
             core.localTp?.let { q.parametersSet(local = true, tp = it, now = core.now) }
             q.parametersSet(local = false, tp = tp, now = core.now)
         }
+        core.localTp = null
         tp.statelessResetToken?.let { core.cids.setPeerResetToken(0, it) }
         tp.preferredAddressCid?.let { core.cids.adoptPreferredAddressCid(it, tp.preferredAddressToken!!) }
         // RFC 9000 section 7.4.1: while 0-RTT is in use only the remembered limits (and reset_stream_at) apply; settleZeroRtt

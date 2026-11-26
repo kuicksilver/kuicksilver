@@ -138,8 +138,21 @@ class QlogLifecycleTest {
                 assertTrue(fromServer["original_destination_connection_id"] is String, "$role: the server names the ODCID")
                 assertTrue(fromServer["stateless_reset_token"] is String, "$role: the server's token")
             }
+            // logged, the local parameters are let go: a connection keeps no copy of them for its life
+            assertEquals(null, p.client.localTp, "the client's local parameters, logged")
+            assertEquals(null, p.server!!.localTp, "the server's local parameters, logged")
         } finally {
             p.close()
+        }
+        // an untraced connection never keeps them (the idle footprint, P.5)
+        val untraced = CorePair()
+        try {
+            assertEquals(null, untraced.client.localTp, "an untraced client keeps none before the handshake")
+            assertTrue(untraced.handshake())
+            assertEquals(null, untraced.client.localTp, "an untraced client")
+            assertEquals(null, untraced.server!!.localTp, "an untraced server")
+        } finally {
+            untraced.close()
         }
     }
 
