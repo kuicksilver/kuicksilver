@@ -41,6 +41,7 @@ Search this page for the exact text or code you see; the table sends you to the 
 | `"Idle timeout after 30s"`, `StatelessReset`, `ApplicationClosed` | [connections that end](#connections-that-end) |
 | `ConnectionLost.ZeroRttRejected`, `StreamError.EarlyDataRejected`, `fallback = ZeroRttRejected` | [0-RTT is rejected](#0-rtt-is-rejected) |
 | `Http11RequiredException`, `fallback = H2Refused`, `Http2Exception` | [HTTP/2 failures](#calls-over-http2-fail-or-a-server-misbehaves-with-http2) |
+| a Ktor client SSE session (`client.sse {}`, `serverSentEventsSession()`) that gets no events and ends without an error over HTTP/3 | [SSE sessions without events](#an-sse-session-gets-no-events-over-http3) |
 | responses come over HTTP/2 or HTTP/1.1, never HTTP/3 | [another engine](#httpclient-uses-another-engine), then [the client never uses HTTP/3](#the-ktor-client-never-uses-http3-or-stops-using-it) |
 | `response.kuicksilverDiagnostics` is `null` | [another engine](#httpclient-uses-another-engine) |
 | `kuicksilverDiagnostics.fallback`, `ProtocolReason`, `FallbackReason` (every value) | [the client never uses HTTP/3](#the-ktor-client-never-uses-http3-or-stops-using-it) |
@@ -941,6 +942,16 @@ offers only `http/1.1` again, as in 0.2; report the server's behaviour (with the
   (64 KiB); raise it only for a server you trust.
 - `Http2Exception.ConnectionClosed` mentioning PING: `pingInterval` is set and the server did not answer a PING within
   it; raise the interval or leave it at `null` (no PINGs, the default).
+
+### An SSE session gets no events over HTTP/3
+
+A Ktor client before 0.3.0: its SSE sessions over HTTP/3 got no events (at most those that arrived with the response) and
+ended without an error, while the same session over HTTP/1.1, or the same stream read as a plain body, worked. The engine
+released the response's stream as soon as Ktor completed the call, which the `SSE` plugin does before the session reads.
+Fixed in 0.3.0: a session holds its stream until it ends, over HTTP/3 and HTTP/2 alike ([Server-sent
+events](realtime.md#server-sent-events)). On 0.2, `engine { http3 { discovery = Http3DiscoveryMode.H1Only } }` keeps a
+client on HTTP/1.1; it applies to every request of that client, so give SSE a client of its own with it and keep HTTP/3
+for the rest.
 
 ### The server serves HTTP/1.1 or HTTP/2 but no HTTP/3
 

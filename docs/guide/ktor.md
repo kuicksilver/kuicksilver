@@ -236,7 +236,7 @@ reference](configuration.md); common failures are in [troubleshooting](troublesh
 | A load balancer or proxy in front: the PROXY protocol, misdirected requests | [Behind a proxy or load balancer](server-proxies.md) |
 | `application.conf` and `EngineMain` | [Configuration file (EngineMain)](server-config-file.md) |
 | Certificate pinning, client certificates, certificate reload, SNI, TLS 1.2, ECH | [TLS in the Ktor engines](engine-tls.md) |
-| WebSockets, WebTransport, priorities | [WebSockets, WebTransport and priorities](realtime.md) |
+| WebSockets, server-sent events, WebTransport, priorities | [WebSockets, server-sent events, WebTransport and priorities](realtime.md) |
 | Logs, metrics, qlog; why a request did not use HTTP/3; why a call failed | [Observability and diagnostics](observability.md) |
 | 0-RTT | [0-RTT](zero-rtt.md) |
 | Ports, firewalls, Docker, Kubernetes, load balancers | [Deploying the HTTP/3 server](deployment.md) |
@@ -258,10 +258,10 @@ This page used to hold every section below; links to them land here and lead on.
 | <a id="http2-on-the-server"></a>HTTP/2 on the server | [Ktor server engine](server.md#http2-on-the-server) |
 | <a id="h2c-on-the-server"></a>h2c on the server | [Ktor server engine](server.md#h2c-on-the-server) |
 | <a id="turning-http3-off-on-the-server"></a>Turning HTTP/3 off on the server | [Ktor server engine](server.md#turning-http3-off-on-the-server) |
-| <a id="websockets-on-the-server"></a>WebSockets on the server | [WebSockets, WebTransport and priorities](realtime.md#websockets-on-the-server) |
-| <a id="websockets-over-http3"></a>WebSockets over HTTP/3 | [WebSockets, WebTransport and priorities](realtime.md#websockets-over-http3) |
-| <a id="websockets-over-http2"></a>WebSockets over HTTP/2 | [WebSockets, WebTransport and priorities](realtime.md#websockets-over-http2) |
-| <a id="webtransport-over-http3-experimental"></a>WebTransport over HTTP/3 (experimental) | [WebSockets, WebTransport and priorities](realtime.md#webtransport-over-http3-experimental) |
+| <a id="websockets-on-the-server"></a>WebSockets on the server | [WebSockets, server-sent events, WebTransport and priorities](realtime.md#websockets-on-the-server) |
+| <a id="websockets-over-http3"></a>WebSockets over HTTP/3 | [WebSockets, server-sent events, WebTransport and priorities](realtime.md#websockets-over-http3) |
+| <a id="websockets-over-http2"></a>WebSockets over HTTP/2 | [WebSockets, server-sent events, WebTransport and priorities](realtime.md#websockets-over-http2) |
+| <a id="webtransport-over-http3-experimental"></a>WebTransport over HTTP/3 (experimental) | [WebSockets, server-sent events, WebTransport and priorities](realtime.md#webtransport-over-http3-experimental) |
 | <a id="connect-udp-over-http3-experimental"></a>CONNECT-UDP over HTTP/3 (experimental) | [Ktor server engine](server.md#connect-udp-over-http3-experimental) |
 | <a id="misdirected-requests"></a>Misdirected requests | [Behind a proxy or load balancer](server-proxies.md#misdirected-requests) |
 | <a id="proxy-protocol"></a>PROXY protocol | [Behind a proxy or load balancer](server-proxies.md#proxy-protocol) |
@@ -285,11 +285,11 @@ This page used to hold every section below; links to them land here and lead on.
 | <a id="connection-migration"></a>Connection migration | [HTTP/3 in the Ktor client](client-http3.md#connection-migration) |
 | <a id="proxies"></a>Proxies | [Proxies in the Ktor client](client-proxies.md#proxies) |
 | <a id="http3-through-a-connect-udp-proxy-experimental"></a>HTTP/3 through a CONNECT-UDP proxy (experimental) | [Proxies in the Ktor client](client-proxies.md#http3-through-a-connect-udp-proxy-experimental) |
-| <a id="webtransport-on-the-client-experimental"></a>WebTransport on the client (experimental) | [WebSockets, WebTransport and priorities](realtime.md#webtransport-on-the-client-experimental) |
+| <a id="webtransport-on-the-client-experimental"></a>WebTransport on the client (experimental) | [WebSockets, server-sent events, WebTransport and priorities](realtime.md#webtransport-on-the-client-experimental) |
 | <a id="mutual-tls-client-certificates"></a>Mutual TLS (client certificates) | [TLS in the Ktor engines](engine-tls.md#mutual-tls-client-certificates) |
 | <a id="certificate-pinning"></a>Certificate pinning | [TLS in the Ktor engines](engine-tls.md#certificate-pinning) |
-| <a id="priorities-experimental"></a>Priorities (experimental) | [WebSockets, WebTransport and priorities](realtime.md#priorities-experimental) |
-| <a id="websocket-compression-experimental"></a>WebSocket compression (experimental) | [WebSockets, WebTransport and priorities](realtime.md#websocket-compression-experimental) |
+| <a id="priorities-experimental"></a>Priorities (experimental) | [WebSockets, server-sent events, WebTransport and priorities](realtime.md#priorities-experimental) |
+| <a id="websocket-compression-experimental"></a>WebSocket compression (experimental) | [WebSockets, server-sent events, WebTransport and priorities](realtime.md#websocket-compression-experimental) |
 | <a id="closing-the-client"></a>Closing the client | [Ktor client engine](client.md#closing-the-client) |
 | <a id="who-ended-the-connection"></a>Who ended the connection | [Observability and diagnostics](observability.md#who-ended-the-connection) |
 | <a id="observability"></a><a id="observability-experimental"></a>Observability | [Observability and diagnostics](observability.md) |

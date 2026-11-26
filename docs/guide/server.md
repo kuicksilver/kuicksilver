@@ -17,7 +17,7 @@ limits, HTTP/3 and HTTP/2 on the server, h2c, turning HTTP/3 off, the CONNECT-UD
 - Related pages: certificates, client certificates and reload in [TLS in the Ktor engines](engine-tls.md); a load balancer
   or proxy in front in [Behind a proxy or load balancer](server-proxies.md); `application.conf` in [Configuration file
   (EngineMain)](server-config-file.md); ports, firewalls, Docker and Kubernetes in [Deploying the HTTP/3
-  server](deployment.md); WebSockets and WebTransport in [WebSockets, WebTransport and priorities](realtime.md).
+  server](deployment.md); WebSockets and WebTransport in [WebSockets, server-sent events, WebTransport and priorities](realtime.md).
 
 The server's first screen is the [Minimal example](ktor.md#minimal-example): `tls { pemFiles(…) }` and one
 `tlsConnector { port = 443 }`. The recipes for common deployments, all stable: pick the lines that fit yours, not all
