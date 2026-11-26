@@ -292,6 +292,30 @@ class ClientConfigMappingTest {
         assertEquals(2L, KuicksilverEngineConfig().apply { http3 { quic { maxBidiStreams = 2 } } }.resolveQuic().maxBidiStreams)
     }
 
+    /**
+     * RFC 9114 section 6.2: "at least 1,024 bytes of flow-control credit" SHOULD go to each unidirectional stream, on both
+     * sides: 1023 is refused naming the option and the RFC, 1024 is kept. Section 6.1's 100 request streams are the server's
+     * to permit: the client's `maxBidiStreams` has no floor (above, 2 is kept).
+     */
+    @Test fun negative_streamCreditBelow1024IsRefused() {
+        val e =
+            assertFailsWith<IllegalArgumentException> {
+                KuicksilverEngineConfig().apply { http3 { quic { flowControl { initialStreamWindow = 1023 } } } }.resolveQuic()
+            }
+        assertEquals(
+            "http3 { quic { flowControl { initialStreamWindow } } } must be at least 1024 (RFC 9114 section 6.2: at least 1,024 " +
+                "bytes of flow-control credit SHOULD go to each unidirectional stream), not 1023",
+            e.message,
+        )
+        assertEquals(
+            1024L,
+            KuicksilverEngineConfig()
+                .apply { http3 { quic { flowControl { initialStreamWindow = 1024 } } } }
+                .resolveQuic()
+                .initialStreamWindow,
+        )
+    }
+
     /** Self-attack: a combination that cannot work fails when the engine is created, never at the first request. */
     @Test fun negative_contradictoryCombinationsFailAtCreation() {
         val noHttp3 =

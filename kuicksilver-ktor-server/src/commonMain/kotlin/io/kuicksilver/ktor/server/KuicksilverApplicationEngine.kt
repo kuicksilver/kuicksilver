@@ -260,6 +260,7 @@ public class KuicksilverApplicationEngine(
             val wt = http3.webTransport
             val sessions = if (wt.enabled) wt.maxSessionsPerConnection.toLong() else 0L
             val built = q.build()
+            requireUniStreamCredit(built)
             val (bidi, uni) =
                 quicStreamLimits(
                     built,
@@ -346,6 +347,18 @@ public class KuicksilverApplicationEngine(
         }
 
         internal companion object {
+            /**
+             * RFC 9114 section 6.2: "These transport parameters SHOULD also provide at least 1,024 bytes of flow-control
+             * credit to each unidirectional stream" (`initial_max_stream_data_uni`, the QuicConfig's initial stream window).
+             */
+            @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+            fun requireUniStreamCredit(q: QuicConfig) {
+                require(q.initialStreamWindow >= 1024) {
+                    "http3 { quic { flowControl { initialStreamWindow } } } must be at least 1024 (RFC 9114 section 6.2: at least " +
+                        "1,024 bytes of flow-control credit SHOULD go to each unidirectional stream), not ${q.initialStreamWindow}"
+                }
+            }
+
             /** The QUIC options the server engine derives, and why (the refusal names both). */
             val QUIC_DERIVED: Map<String, String> =
                 mapOf(
@@ -366,7 +379,8 @@ public class KuicksilverApplicationEngine(
 
             /**
              * The stream limits of the HTTP/3 connections, bidirectional and unidirectional. An explicit value is kept (the
-             * unidirectional one at least 3, RFC 9114 section 6.2: the peer opens its control and QPACK streams); one left
+             * bidirectional one at least 100, RFC 9114 section 6.1: "at least 100 request streams SHOULD be permitted at a
+             * time"; the unidirectional one at least 3, section 6.2: the peer opens its control and QPACK streams); one left
              * alone is the default raised so that [sessions] WebTransport sessions at their initial limits fit
              * (draft-ietf-webtrans-http3-17 section 5.1): `max(100, sessions x (bidi + 1))` bidirectional streams (each
              * session's streams and its CONNECT stream) and `max(100, 3 + sessions x uni)` unidirectional ones. With
@@ -402,6 +416,11 @@ public class KuicksilverApplicationEngine(
                 val bidi =
                     if ("maxBidiStreams" in assigned) {
                         val n = built.maxBidiStreams
+                        @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+                        require(n >= 100 || Http3Endpoint.allowFewerBidiStreamsForTest) {
+                            "http3 { quic { maxBidiStreams } } must be at least 100 (RFC 9114 section 6.1: at least 100 request " +
+                                "streams SHOULD be permitted at a time), not $n"
+                        }
                         require(n >= needBidi) {
                             "http3 { quic { maxBidiStreams } } ($n) is below $sessionsOption x (initialMaxStreamsBidi " +
                                 "($bidiPerSession) + its CONNECT stream): raise it, or leave it to the engine"

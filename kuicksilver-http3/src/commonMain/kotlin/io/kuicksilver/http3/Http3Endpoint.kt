@@ -221,6 +221,7 @@ public class Http3Endpoint private constructor(
             config.server?.let {
                 require(H3 in it.tls.alpn) { "the server TLS configuration must offer ALPN \"h3\"" }
                 requireCriticalStreams(it.quic)
+                requireRequestStreams(it.quic)
             }
             val server = config.server?.let { settings.withTransport(it.quic) } ?: settings
             return Http3Endpoint(QuicEndpoint.bind(local, config.forHttp3Server(server)), server)
@@ -283,13 +284,50 @@ public class Http3Endpoint private constructor(
         internal var allowFewerUniStreamsForTest = false
 
         /**
+         * Test hook: binds a server that grants fewer than the 100 request streams of section 6.1, so a test can exhaust a
+         * client's stream credit with a few requests. The Ktor server engine reads it too, and the Ktor client's tests set
+         * it for their server, hence public.
+         */
+        @InternalKuicksilverApi
+        @kotlin.concurrent.Volatile
+        public var allowFewerBidiStreamsForTest: Boolean = false
+
+        /** Test hook: an endpoint that gives a stream less than the 1024 bytes of section 6.2, to test a peer's side of it. */
+        @kotlin.concurrent.Volatile
+        internal var allowSmallerStreamWindowForTest = false
+
+        /** RFC 9114 section 6.1: the fewest request streams a server permits at a time. */
+        internal const val MIN_REQUEST_STREAMS: Long = 100
+
+        /** RFC 9114 section 6.2: the least flow-control credit we give each unidirectional stream. */
+        internal const val MIN_UNI_STREAM_CREDIT: Long = 1024
+
+        /**
          * RFC 9114 section 6.2: our transport parameters "MUST allow the peer to create at least three unidirectional
-         * streams" (its control and QPACK streams). A configuration that grants fewer is refused, never raised quietly.
+         * streams" (its control and QPACK streams), and "SHOULD also provide at least 1,024 bytes of flow-control credit to
+         * each unidirectional stream" (`initial_max_stream_data_uni`, the QuicConfig `flowControl { initialStreamWindow }`).
+         * A configuration that grants less is refused, never raised quietly.
          */
         private fun requireCriticalStreams(q: QuicConfig) {
             require(q.maxUniStreams >= 3 || allowFewerUniStreamsForTest) {
                 "HTTP/3 needs QuicConfig expert { maxUniStreams } >= 3 (RFC 9114 section 6.2: the peer opens its control and QPACK " +
                     "streams), not ${q.maxUniStreams}"
+            }
+            require(q.initialStreamWindow >= MIN_UNI_STREAM_CREDIT || allowSmallerStreamWindowForTest) {
+                "HTTP/3 needs QuicConfig flowControl { initialStreamWindow } >= 1024 (RFC 9114 section 6.2: at least 1,024 bytes " +
+                    "of flow-control credit SHOULD go to each unidirectional stream), not ${q.initialStreamWindow}"
+            }
+        }
+
+        /**
+         * RFC 9114 section 6.1: "So as to not unnecessarily limit parallelism, at least 100 request streams SHOULD be
+         * permitted at a time." A server configuration that permits fewer is refused; a client's limit is left alone (the
+         * server opens no bidirectional streams).
+         */
+        private fun requireRequestStreams(q: QuicConfig) {
+            require(q.maxBidiStreams >= MIN_REQUEST_STREAMS || allowFewerBidiStreamsForTest) {
+                "an HTTP/3 server needs QuicConfig maxBidiStreams >= 100 (RFC 9114 section 6.1: at least 100 request streams " +
+                    "SHOULD be permitted at a time), not ${q.maxBidiStreams}"
             }
         }
 

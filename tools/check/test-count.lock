@@ -384,6 +384,8 @@ kuicksilver-http2/src/jvmTest	io.kuicksilver.http2.runtime.H2SendStallRaceTest.n
 kuicksilver-http2/src/jvmTest	io.kuicksilver.http2.runtime.PriorityConcurrencyTest.updatesNeverOverrideTheResponsesChoice
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.Http3EndpointAcceptTest.negative_acceptIsNotHeldByAClientWithoutUniStreamCredit
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.Http3EndpointAcceptTest.negative_fewerThanThreeUniStreamsIsRefused
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.Http3EndpointAcceptTest.negative_serverWithFewerThan100RequestStreamsIsRefused
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.Http3EndpointAcceptTest.negative_streamCreditBelow1024IsRefused
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.Http3EndpointAlpnTest.negative_clientRefusesServerThatChoseAnotherProtocol
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.Http3ServerQuicConfigTest.aClientOnlyEndpointIsUnchanged
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.Http3ServerQuicConfigTest.aCodeSetExplicitlyIsKept
@@ -1623,6 +1625,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConfigMa
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConfigMappingTest.negative_contradictoryCombinationsFailAtCreation
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConfigMappingTest.negative_derivedOptionsAreRefusedByName
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConfigMappingTest.negative_explicitUniStreamsBelowThreeAreRefused
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConfigMappingTest.negative_streamCreditBelow1024IsRefused
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConfigMappingTest.nullIsOff
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConfigMappingTest.poolBlockReachesThePool
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConfigMappingTest.proxyTlsBlock
@@ -3357,6 +3360,7 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMa
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.negative_h2cOnAPortTheIdentityTurnsIntoTlsFailsTheStart
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.negative_oneIdentityOneSource
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.negative_outOfRangeValuesNameTheirPath
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.negative_quicBelowTheRfc9114FloorsIsRefused
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.negative_reloadIntervalWithoutPemFilesIsRefused
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.streamLimitsFitWebTransportOrAreKept
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.tcpAndWebSocketOptionsReachTheConfiguration

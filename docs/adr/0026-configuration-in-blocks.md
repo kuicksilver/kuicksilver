@@ -204,8 +204,8 @@ The design left these cases open or met them only in the code; each was decided 
   1))` and `max(100, 3 + sessions x initialMaxStreamsUni)`, saturating at 2^60. The server, whose WebTransport has a
   switch, refuses at its start an explicit value its sessions do not fit; the client, which has none, leaves that refusal
   to the HTTP/3 layer at its first WebTransport connection, so an application that never opens a session may grant fewer.
-  RFC 9114 section 6.1 ("at least 100 request streams SHOULD be permitted") is met by the default; a smaller explicit
-  `maxBidiStreams` is the application's choice and is not refused. `EngineMain` gains `kuicksilver.http3.quic.expert.maxUniStreams`:
+  RFC 9114 section 6.1 ("at least 100 request streams SHOULD be permitted") holds for every server: a smaller explicit
+  `maxBidiStreams` is refused (see the bullet on the section 6 SHOULDs below). `EngineMain` gains `kuicksilver.http3.quic.expert.maxUniStreams`:
   expert options get keys under their DSL path, and the snapshot's `kuicksilver.quic.maxUniStreams` is a renamed key now;
   `DERIVED_KEYS` is gone with its only entry.
 - **HTTP/2 over TLS 1.2 only where the mandatory suite can run.** With HTTP/2 on by default, `versions = Tls12And13`
@@ -256,3 +256,14 @@ The design left these cases open or met them only in the code; each was decided 
   and `maxControlFramesQueued` at most 100 000 (10 times Go's 10 000, not 100: a queued frame holds tens of bytes, and a
   peer that never reads would hold tens of MiB per connection at 1 000 000), public as `MAX_CONTINUATION_FRAMES` and
   `MAX_CONTROL_FRAMES_QUEUED`.
+- **RFC 9114's section 6 SHOULDs are refused, not left to the application.** Section 6.1 says "at least 100 request
+  streams SHOULD be permitted at a time", section 6.2 that the transport parameters "SHOULD also provide at least 1,024
+  bytes of flow-control credit to each unidirectional stream". Both were met by the defaults only. An HTTP/3 server
+  (`Http3Endpoint.bind`, the Ktor server's `http3 { quic { maxBidiStreams } }`) now refuses fewer than 100 request
+  streams, checked before the WebTransport fit so the floor is what a too-small value hears; a client keeps any limit,
+  as the server opens no request streams. Both roles (`Http3Endpoint.bind`, `connect`, `connectEarly` and both engines'
+  `http3 { quic { flowControl { initialStreamWindow } } }`) refuse an initial stream window below 1024, which is the
+  window of every unidirectional stream; the bidirectional ones share it, and 1024 bytes are no real limit for them
+  either. Tests that need a server with fewer streams set `Http3Endpoint.allowFewerBidiStreamsForTest`, an
+  `@InternalKuicksilverApi` seam that the Ktor server engine reads too, public because the Ktor client's tests start
+  such a server.

@@ -130,7 +130,7 @@ class ServerConfigMappingTest {
                     quic {
                         maxIdleTimeout = 7.seconds
                         handshakeTimeout = 4.seconds
-                        maxBidiStreams = 50
+                        maxBidiStreams = 150
                     }
                     settings {
                         maxFieldSectionSize = 4096
@@ -162,7 +162,7 @@ class ServerConfigMappingTest {
         val quic = c.resolveQuic()
         assertEquals(7.seconds, quic.maxIdleTimeout)
         assertEquals(4.seconds, quic.handshakeTimeout, "the server keeps its own handshake deadline")
-        assertEquals(50L, quic.maxBidiStreams)
+        assertEquals(150L, quic.maxBidiStreams)
         assertTrue(quic.resetStreamAt, "derived from http3 { webTransport { enabled } }")
         val h3 = c.resolveHttp3Settings()
         assertEquals(4096L, h3.maxFieldSectionSize)
@@ -584,7 +584,7 @@ class ServerConfigMappingTest {
         // explicit values are kept, above and below the default
         assertEquals(30L, config { http3 { quic { expert { maxUniStreams = 30 } } } }.resolveQuic().maxUniStreams)
         assertEquals(3L, config { http3 { quic { expert { maxUniStreams = 3 } } } }.resolveQuic().maxUniStreams)
-        assertEquals(2L, config { http3 { quic { maxBidiStreams = 2 } } }.resolveQuic().maxBidiStreams)
+        assertEquals(100L, config { http3 { quic { maxBidiStreams = 100 } } }.resolveQuic().maxBidiStreams)
         assertEquals(
             1000L,
             config {
@@ -647,16 +647,55 @@ class ServerConfigMappingTest {
             assertFailsWith<IllegalArgumentException> {
                 config {
                     http3 {
+                        webTransport {
+                            enabled = true
+                            maxSessionsPerConnection = 5
+                        }
+                        quic { maxBidiStreams = 124 }
+                    }
+                }.resolveQuic()
+            }
+        assertEquals(
+            "http3 { quic { maxBidiStreams } } (124) is below http3 { webTransport { maxSessionsPerConnection } } (5) x " +
+                "(initialMaxStreamsBidi (24) + its CONNECT stream): raise it, or leave it to the engine",
+            bidi.message,
+        )
+    }
+
+    /**
+     * RFC 9114 section 6.1: "at least 100 request streams SHOULD be permitted at a time", and section 6.2: "at least 1,024
+     * bytes of flow-control credit" SHOULD go to each unidirectional stream. The server refuses an explicit
+     * `maxBidiStreams` of 99, WebTransport on or off, and an `initialStreamWindow` of 1023, each naming its option and the RFC;
+     * the floors themselves are accepted. The floor is checked before the WebTransport fit, so it is what a too-small value hears.
+     */
+    @Test fun negative_quicBelowTheRfc9114FloorsIsRefused() {
+        val bidi =
+            "http3 { quic { maxBidiStreams } } must be at least 100 (RFC 9114 section 6.1: at least 100 request streams " +
+                "SHOULD be permitted at a time), not 99"
+        assertEquals(
+            bidi,
+            assertFailsWith<IllegalArgumentException> { config { http3 { quic { maxBidiStreams = 99 } } }.resolveQuic() }.message,
+        )
+        val withWt =
+            assertFailsWith<IllegalArgumentException> {
+                config {
+                    http3 {
                         webTransport { enabled = true }
                         quic { maxBidiStreams = 99 }
                     }
                 }.resolveQuic()
             }
+        assertEquals(bidi, withWt.message)
+        val window =
+            assertFailsWith<IllegalArgumentException> {
+                config { http3 { quic { flowControl { initialStreamWindow = 1023 } } } }.resolveQuic()
+            }
         assertEquals(
-            "http3 { quic { maxBidiStreams } } (99) is below http3 { webTransport { maxSessionsPerConnection } } (4) x " +
-                "(initialMaxStreamsBidi (24) + its CONNECT stream): raise it, or leave it to the engine",
-            bidi.message,
+            "http3 { quic { flowControl { initialStreamWindow } } } must be at least 1024 (RFC 9114 section 6.2: at least 1,024 " +
+                "bytes of flow-control credit SHOULD go to each unidirectional stream), not 1023",
+            window.message,
         )
+        assertEquals(1024L, config { http3 { quic { flowControl { initialStreamWindow = 1024 } } } }.resolveQuic().initialStreamWindow)
     }
 
     /** Self-attack: a WebTransport server with 8 sessions a connection now starts (its HTTP/3 endpoint binds). */

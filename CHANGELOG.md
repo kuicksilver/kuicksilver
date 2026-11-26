@@ -1271,6 +1271,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   HTTP/3 did not serve stays at `observability { protocolChoiceLogLevel }` (Info), which the default logger leaves out.
 - HTTP/3: `Http3Settings.maxInformationalResponses`, ignored since 0.2.1, is removed (breaking). Interim responses are
   bounded by `maxFieldSectionSize` (RFC 9110 section 15.2).
+- HTTP/3: RFC 9114 section 6's SHOULDs are refused (breaking strictness): an HTTP/3 server (`Http3Endpoint.bind`, the
+  Ktor server's `http3 { quic { maxBidiStreams } }`) needs at least 100 request streams (section 6.1), and both roles
+  (`Http3Endpoint.bind`, `connect`, `connectEarly`, both engines' `http3 { quic { flowControl { initialStreamWindow } } }`)
+  need an initial stream window of at least 1024 bytes (section 6.2). The defaults (100, 512 KiB) are unchanged; a
+  smaller value now fails with IllegalArgumentException naming the option and the RFC.
 - HTTP/2: the flood budgets have a ceiling (breaking strictness): `http2Settings { floodLimits { resets } }` takes at most
   `RateLimit(3300, 100000)` and `glitches` at most `RateLimit(33000, 1000000)`, 100 times their defaults
   (`FloodLimits.MAX_RESETS`, `MAX_GLITCHES`), so the Rapid Reset defence (CVE-2023-44487) cannot be configured away;

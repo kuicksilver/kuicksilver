@@ -862,6 +862,7 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
         // the handshake's deadline is the connect timeout (as each request's own connect timeout bounds it too)
         val handshake = quicHandshakeTimeoutForTest ?: connectTimeout
         val built = http3.quicBuilder.build()
+        requireUniStreamCredit(built)
         // a WebTransport-capable connection carries up to maxSessionsPerConnection sessions at the limits of settings { }
         val wt = http3.settingsBuilder.webTransport
         val (bidi, uni) =
@@ -893,6 +894,19 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
     internal fun resolveHttp2Settings(): Http2Settings = http2.settingsBuilder.build()
 
     internal companion object {
+        /**
+         * RFC 9114 section 6.2: "These transport parameters SHOULD also provide at least 1,024 bytes of flow-control credit
+         * to each unidirectional stream" (`initial_max_stream_data_uni`, the QuicConfig's initial stream window). The
+         * client's `maxBidiStreams` has no floor: section 6.1's 100 request streams are the server's to permit.
+         */
+        @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+        fun requireUniStreamCredit(q: QuicConfig) {
+            require(q.initialStreamWindow >= 1024) {
+                "http3 { quic { flowControl { initialStreamWindow } } } must be at least 1024 (RFC 9114 section 6.2: at least " +
+                    "1,024 bytes of flow-control credit SHOULD go to each unidirectional stream), not ${q.initialStreamWindow}"
+            }
+        }
+
         /** The QUIC options the engine derives, and why (the refusal names both). */
         val QUIC_DERIVED: Map<String, String> =
             mapOf(

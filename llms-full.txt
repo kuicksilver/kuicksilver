@@ -6937,7 +6937,8 @@ over TCP and QUIC alike, TLS 1.3 only.
 
 `Http3ClientConfig` (guide: [HTTP/3 on the client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#http3-on-the-client)). Its `quic { }` block is a
 [`quicConfig { }`](#low-level) for the HTTP/3 connections: the engine derives and refuses `handshakeTimeout`
-(`connectTimeout`), `expert { resetStreamAt }` and `expert { cancelErrorCode }`; `maxBidiStreams` and
+(`connectTimeout`), `expert { resetStreamAt }` and `expert { cancelErrorCode }`; `flowControl { initialStreamWindow }`
+must be at least 1024 (RFC 9114 section 6.2); `maxBidiStreams` and
 `expert { maxUniStreams }` (at least 3, RFC 9114 section 6.2) stay settable, and left alone default to 100 raised to fit
 `webTransport { maxSessionsPerConnection }` sessions at the limits of `settings { webTransport { } }`
 (`max(100, sessions x (initialMaxStreamsBidi + 1))`, `max(100, 3 + sessions x initialMaxStreamsUni)`). Its
@@ -7189,7 +7190,8 @@ start with a PROXY protocol header (v1 or v2) from one of the trusted sources, b
 
 `Http3ServerConfig` (guide: [HTTP/3 on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#http3-on-the-server)): HTTP/3 on the UDP twin of every TLS
 connector's port. Its `quic { }` block is a [`quicConfig { }`](#low-level): the engine derives and refuses
-`expert { resetStreamAt }` (on with WebTransport) and `expert { cancelErrorCode }`; `maxBidiStreams` and
+`expert { resetStreamAt }` (on with WebTransport) and `expert { cancelErrorCode }`; `flowControl { initialStreamWindow }`
+must be at least 1024 (RFC 9114 section 6.2); `maxBidiStreams` (at least 100, RFC 9114 section 6.1) and
 `expert { maxUniStreams }` (at least 3, RFC 9114 section 6.2) stay settable, and left alone default to 100 raised to fit
 the `webTransport { }` sessions (`max(100, maxSessionsPerConnection x (initialMaxStreamsBidi + 1))`,
 `max(100, 3 + maxSessionsPerConnection x initialMaxStreamsUni)`); an explicit value they do not fit in fails the start. Its
@@ -7349,7 +7351,7 @@ and a key of 0.2.x or of an earlier 0.3.0 snapshot names the key that replaced i
 | `kuicksilver.http3.quic.maxIdleTimeout` | a duration, or `off` (none advertised) | 30 s | 0.3.0 | `http3 { quic { maxIdleTimeout } }` |
 | `kuicksilver.http3.quic.handshakeTimeout` | a positive duration | 10 s | 0.3.0 | `http3 { quic { handshakeTimeout } }` |
 | `kuicksilver.http3.quic.keepAlive` | a duration, at most 3/4 of the idle timeout, or `off` | `off` | 0.3.0 | `http3 { quic { keepAlive } }`: PINGs that keep a quiet connection (and a NAT's mapping) open |
-| `kuicksilver.http3.quic.maxBidiStreams` | 0..2^60 | 100 | 0.3.0 | `http3 { quic { maxBidiStreams } }`: concurrent requests per connection |
+| `kuicksilver.http3.quic.maxBidiStreams` | 100..2^60 | 100 | 0.3.0 | `http3 { quic { maxBidiStreams } }`: concurrent requests per connection, at least 100 (RFC 9114 section 6.1) |
 | `kuicksilver.http3.quic.pathMtu.maxReceive` | bytes, 1200..1500 (the endpoint's datagram slots) | 1452 | 0.3.0 | `http3 { quic { pathMtu { maxReceive } } }` |
 | `kuicksilver.http3.quic.pathMtu.initial` | bytes, 1200..65 527 | 1200 | 0.3.0 | `http3 { quic { pathMtu { initial } } }` |
 | `kuicksilver.http3.quic.pathMtu.maxSend` | bytes, 1200..65 527 | 65 527 | 0.3.0 | `http3 { quic { pathMtu { maxSend } } }` ([Tunnels and NAT paths](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#tunnels-and-nat-paths-wireguard)) |
@@ -7386,7 +7388,7 @@ are the endpoint's ([`quicEndpointConfig { }`](#quicendpointconfig--)). Guide: [
 | `maxIdleTimeout` | `Duration?` | 30 s | 0.2.0 | stable | | our `max_idle_timeout`; the connection closes silently after the smaller of both peers' values (never below 3 x PTO) without traffic, with `ConnectionLost.Timeout(TimeoutKind.Idle)`; `null` advertises none and leaves the timeout to the peer; positive, finite and whole milliseconds otherwise (0.2: `Duration.ZERO` for none) |
 | `handshakeTimeout` | `Duration` | 10 s | 0.2.0 | stable | | a connection whose handshake has not completed by then closes with `TimeoutKind.Handshake`; positive (`Duration.INFINITE` leaves only the idle timeout); the Ktor client derives it from `connectTimeout` |
 | `keepAlive` | `Duration?` | `null` (off) | 0.2.0 | stable | | PING interval while the application is quiet; positive and finite, at most 3/4 of `maxIdleTimeout` (any, when that is `null`); PINGs go out at least every half of the effective idle timeout, so a peer with a shorter timeout does not close the connection |
-| `maxBidiStreams` | `Long` | 100 | 0.2.0 | stable | | bidirectional streams the peer may have open at once (`initial_max_streams_bidi`), 0..2^60, raised by MAX_STREAMS as streams close; a stream counts as closed once the application took it from `acceptStream()` and consumed it. For HTTP/3, the requests a client may have open at once |
+| `maxBidiStreams` | `Long` | 100 | 0.2.0 | stable | | bidirectional streams the peer may have open at once (`initial_max_streams_bidi`), 0..2^60, raised by MAX_STREAMS as streams close; a stream counts as closed once the application took it from `acceptStream()` and consumed it. For HTTP/3, the requests a client may have open at once; an HTTP/3 server (`Http3Endpoint.bind`, the Ktor server) refuses less than 100 (RFC 9114 section 6.1) |
 | `versions` | `List<VersionProfile>` | `listOf(VersionProfile.V1)` | 0.2.0 | stable | | versions in preference order, non-empty, no duplicates; `listOf(V2, V1)` opts into QUIC v2 (RFC 9368/9369) |
 | `congestionController` | `() -> CongestionController` | `{ Cubic() }` | 0.2.0 | stable | | controller of each path, a fresh instance per call: `Cubic` (CUBIC with HyStart++), `NewReno`, `Bbr` (*experimental*) ([Congestion control](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#congestion-control)) |
 
@@ -7396,7 +7398,7 @@ are the endpoint's ([`quicEndpointConfig { }`](#quicendpointconfig--)). Guide: [
 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
-| `initialStreamWindow` | `Long` (bytes) | 524 288 (512 KiB) | 0.3.0 | stable | | receive window of each stream at its start (`initial_max_stream_data_*`), 1..`maxStreamWindow`; doubles while the application reads a whole window in under four RTTs |
+| `initialStreamWindow` | `Long` (bytes) | 524 288 (512 KiB) | 0.3.0 | stable | | receive window of each stream at its start (`initial_max_stream_data_*`), 1..`maxStreamWindow`; doubles while the application reads a whole window in under four RTTs. HTTP/3 (`Http3Endpoint`, both Ktor engines) refuses less than 1024 (RFC 9114 section 6.2) |
 | `initialConnectionWindow` | `Long` (bytes) | 786 432 (768 KiB) | 0.3.0 | stable | | receive window of the connection at its start (`initial_max_data`), 1..`maxConnectionWindow`; kept at least 1.5 x the largest stream window |
 | `maxStreamWindow` | `Long` (bytes) | 6 291 456 (6 MiB) | 0.3.0 | stable | | ceiling of a stream's receive window, at least `initialStreamWindow`: the most unread data one stream holds |
 | `maxConnectionWindow` | `Long` (bytes) | 15 728 640 (15 MiB) | 0.3.0 | stable | | ceiling of the connection's receive window, at least `initialConnectionWindow` |

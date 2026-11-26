@@ -17,6 +17,7 @@ import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.beforeTransportClosedForTest
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.quicConfig
@@ -42,6 +43,23 @@ import kotlin.time.Duration.Companion.seconds
 
 /** Connection limits, queueing and idle cleanup of the engine against a real server. */
 class ClientPoolTest {
+    /**
+     * A server engine that permits [streams] request streams, below the 100 of RFC 9114 section 6.1 that the engine holds
+     * a server to (the test seam lets it start), so a few requests exhaust the client's stream credit.
+     */
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    private suspend fun fewStreamsServer(
+        streams: Long,
+        module: io.ktor.server.application.Application.() -> Unit,
+    ): Pair<TestServer, Int> {
+        Http3Endpoint.allowFewerBidiStreamsForTest = true
+        try {
+            return testServer(configure = { http3 { quic { maxBidiStreams = streams } } }, module = module)
+        } finally {
+            Http3Endpoint.allowFewerBidiStreamsForTest = false
+        }
+    }
+
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
     /** Requests in the server handler at once, and the most seen; [gate] opens once [limit] are inside. */
@@ -210,7 +228,7 @@ class ClientPoolTest {
         h3Test {
             val c = Concurrency(limit = 2)
             val (server, port) =
-                testServer(configure = { http3 { quic { maxBidiStreams = 2 } } }) {
+                fewStreamsServer(2) {
                     routing {
                         get("/") {
                             c.enter(call.request.local.remotePort)
@@ -239,7 +257,7 @@ class ClientPoolTest {
             val release = CompletableDeferred<Unit>()
             val entered = CompletableDeferred<Unit>()
             val (server, port) =
-                testServer(configure = { http3 { quic { maxBidiStreams = 1 } } }) {
+                fewStreamsServer(1) {
                     routing {
                         get("/slow") {
                             entered.complete(Unit)

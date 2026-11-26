@@ -137,4 +137,102 @@ class Http3EndpointAcceptTest {
                 client.close()
             }
         }
+
+    private fun serverConfig(
+        socket: io.kuicksilver.quic.DatagramIo,
+        quic: io.kuicksilver.quic.QuicConfig,
+    ) = QuicEndpointConfig
+        .Builder()
+        .apply {
+            this.server = QuicServerConfig.Builder(H3Fixtures.server()).apply { this.quic = quic }.build()
+            runtime { crypto = NullCryptoProvider }
+            runtime { io = { socket } }
+        }.build()
+
+    /**
+     * RFC 9114 section 6.1: "at least 100 request streams SHOULD be permitted at a time". A server that permits 99 is refused
+     * at bind, naming the option and the RFC; 100 binds. A client's own limit has no floor (the server opens no request
+     * streams): one that permits a single bidirectional stream connects and is served.
+     */
+    @Test fun negative_serverWithFewerThan100RequestStreamsIsRefused(): Unit =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val net = MemoryNet()
+                val refusedIo = net.open(InetSocketAddress("10.0.0.4", 443))
+                val e =
+                    assertFailsWith<IllegalArgumentException> {
+                        Http3Endpoint.bind(refusedIo.localAddress, serverConfig(refusedIo, quicConfig { maxBidiStreams = 99 }))
+                    }
+                assertEquals(
+                    "an HTTP/3 server needs QuicConfig maxBidiStreams >= 100 (RFC 9114 section 6.1: at least 100 request streams " +
+                        "SHOULD be permitted at a time), not 99",
+                    e.message,
+                )
+                val serverIo = net.open(InetSocketAddress("10.0.0.2", 443))
+                val server = Http3Endpoint.bind(serverIo.localAddress, serverConfig(serverIo, quicConfig { maxBidiStreams = 100 }))
+                val clientIo = net.open(InetSocketAddress("10.0.0.1", 1111))
+                val client =
+                    Http3Endpoint.bind(
+                        clientIo.localAddress,
+                        QuicEndpointConfig
+                            .Builder()
+                            .apply {
+                                runtime { crypto = NullCryptoProvider }
+                                runtime { io = { clientIo } }
+                            }.build(),
+                    )
+                try {
+                    coroutineScope {
+                        val accepted = async { server.accept() }
+                        val c = client.connect(server.localAddress, H3Fixtures.client(), quicConfig { maxBidiStreams = 1 })
+                        val conn = withTimeout(10.seconds) { accepted.await() }
+                        val served = launch { conn.acceptRequest().respond(204).finish() }
+                        assertEquals(204, c.request(http3Request("GET", "server.test", "/")).status)
+                        served.join()
+                        c.close()
+                    }
+                } finally {
+                    client.close()
+                    server.close()
+                }
+            }
+        }
+
+    /**
+     * RFC 9114 section 6.2: the transport parameters "SHOULD also provide at least 1,024 bytes of flow-control credit to each
+     * unidirectional stream". 1023 bytes (the QuicConfig initialStreamWindow) is refused on both sides, at bind, connect and
+     * connectEarly, before anything is sent; 1024 binds.
+     */
+    @Test fun negative_streamCreditBelow1024IsRefused(): Unit =
+        runBlocking {
+            val net = MemoryNet()
+            val small = quicConfig { flowControl { initialStreamWindow = 1023 } }
+            val serverIo = net.open(InetSocketAddress("10.0.0.2", 443))
+            val e = assertFailsWith<IllegalArgumentException> { Http3Endpoint.bind(serverIo.localAddress, serverConfig(serverIo, small)) }
+            assertEquals(
+                "HTTP/3 needs QuicConfig flowControl { initialStreamWindow } >= 1024 (RFC 9114 section 6.2: at least 1,024 bytes of " +
+                    "flow-control credit SHOULD go to each unidirectional stream), not 1023",
+                e.message,
+            )
+            val okIo = net.open(InetSocketAddress("10.0.0.3", 443))
+            Http3Endpoint.bind(okIo.localAddress, serverConfig(okIo, quicConfig { flowControl { initialStreamWindow = 1024 } })).close()
+            val clientIo = net.open(InetSocketAddress("10.0.0.1", 1111))
+            val client =
+                Http3Endpoint.bind(
+                    clientIo.localAddress,
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            runtime { crypto = NullCryptoProvider }
+                            runtime { io = { clientIo } }
+                        }.build(),
+                )
+            try {
+                val c = assertFailsWith<IllegalArgumentException> { client.connect(serverIo.localAddress, H3Fixtures.client(), small) }
+                assertEquals(e.message, c.message)
+                assertFailsWith<IllegalArgumentException> { client.connectEarly(serverIo.localAddress, H3Fixtures.client(), small) }
+            } finally {
+                client.close()
+            }
+        }
 }
