@@ -399,8 +399,9 @@ CONNECT-UDP (RFC 9298, "Proxying UDP in HTTP", the UDP part of MASQUE) tunnels U
 sends an Extended CONNECT with `:protocol` `connect-udp` whose path names the target, and from then on UDP payloads
 travel as HTTP datagrams with Context ID 0 (section 5), QUIC DATAGRAM frames when both sides negotiated HTTP/3 datagrams
 and DATAGRAM capsules otherwise. Both sides are here, over HTTP/3 only: HTTP/1.1 (`Upgrade: connect-udp`, section 3.2)
-and HTTP/2 (sections 3.4, 3.5) are not supported, as the Capsule Protocol is not on those versions here (ADR-0024), and the
-Ktor engines do not offer CONNECT-UDP yet.
+and HTTP/2 (sections 3.4, 3.5) are not supported, as the Capsule Protocol is not on those versions here (ADR-0024). The Ktor
+engines offer it too: the server engine's `connectUdp` ([Ktor: CONNECT-UDP over HTTP/3](ktor.md#connect-udp-over-http3-experimental))
+and the client engine's `connectUdpProxy` ([Ktor: HTTP/3 through a CONNECT-UDP proxy](ktor.md#http3-through-a-connect-udp-proxy-experimental)).
 
 A server serves it with a `UdpProxy`; the HTTP/3 settings need `enableConnectProtocol` (and `h3Datagram`, on by
 default). Authenticate the client before `serve`: "HTTP servers that support UDP proxying ought to restrict its use to
