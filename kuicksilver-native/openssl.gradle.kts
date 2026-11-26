@@ -45,7 +45,7 @@ fun prebuiltState(t: String): String? { // null when current, else why not ("mis
     val pinnedSha = Regex("^sha256 = \"(.*)\"", RegexOption.MULTILINE).find(pinText)?.groupValues?.get(1)
     if (provenance["tarball-sha256"] != pinnedSha) return "provenance.txt names tarball ${provenance["tarball-sha256"]}, $pinnedSha is pinned"
     // the patches carried under ADR-0019, when the pin names them (their hashes are in the target line too)
-    for ((key, label) in listOf("patch_sha256" to "patch-sha256") + (2..11).map { "patch_${it}_sha256" to "patch-$it-sha256" }) {
+    for ((key, label) in listOf("patch_sha256" to "patch-sha256") + (2..12).map { "patch_${it}_sha256" to "patch-$it-sha256" }) {
         val pinnedPatch = Regex("^$key = \"(.*)\"", RegexOption.MULTILINE).find(pinText)?.groupValues?.get(1)
         if (provenance[label] != pinnedPatch) return "provenance.txt names $label ${provenance[label] ?: "none"}, ${pinnedPatch ?: "none"} is pinned"
     }

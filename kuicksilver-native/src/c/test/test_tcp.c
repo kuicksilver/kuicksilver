@@ -3054,6 +3054,118 @@ static void test_weak_chain_refused_before_pause(void) {
     }
     END();
 }
+/* A pump that also records every byte each side sent: [0] the client's, [1] the server's; [rewrite] may change the server's
+   first flight before the client reads it (NULL: unchanged). */
+typedef struct {
+    uint8_t *buf;
+    size_t len, cap;
+} capture;
+static void capture_add(capture *k, const uint8_t *b, size_t n) {
+    if (k->len + n > k->cap) {
+        k->cap = (k->len + n) * 2;
+        k->buf = realloc(k->buf, k->cap);
+    }
+    memcpy(k->buf + k->len, b, n);
+    k->len += n;
+}
+static void shuttle_captured(ksl_ssl *a, ksl_ssl *b, capture *k, size_t (*rewrite)(uint8_t *, size_t)) {
+    uint8_t buf[1 << 16];
+    size_t n = 0, got;
+    while (n < sizeof buf && ksl_tcp_drain(a, buf + n, sizeof buf - n, &got) == KSL_OK && got)
+        n += got;
+    if (!n)
+        return;
+    if (rewrite && k->len == 0)
+        n = rewrite(buf, n);
+    capture_add(k, buf, n);
+    size_t off = 0, used;
+    while (off < n && ksl_tcp_feed(b, buf + off, n - off, &used) == KSL_OK && used)
+        off += used;
+}
+static int tcp_pump_captured(ksl_ssl *c, ksl_ssl *s, capture k[2], size_t (*rewrite)(uint8_t *, size_t)) {
+    for (int i = 0; i < 60; i++) {
+        int r = ksl_drive(c);
+        shuttle_captured(c, s, &k[0], NULL);
+        int r2 = ksl_drive(s);
+        shuttle_captured(s, c, &k[1], rewrite);
+        if (r == KSL_ERROR || r2 == KSL_ERROR) {
+            if (r2 == KSL_ERROR)
+                ksl_drive(c);
+            return KSL_ERROR;
+        }
+        if (c->done && s->done) {
+            ksl_drive(c);
+            shuttle_captured(c, s, &k[0], NULL);
+            ksl_drive(s);
+            shuttle_captured(s, c, &k[1], NULL);
+            return KSL_OK;
+        }
+    }
+    return KSL_WANT_READ;
+}
+/* The explicit nonces (the first 8 bytes of each protected TLS 1.2 record, AES-GCM) of the records in k after its
+   change_cipher_spec, at most max of them; returns how many. */
+static int explicit_nonces(const capture *k, uint64_t *out, int max) {
+    size_t p = 0;
+    int after_ccs = 0, n = 0;
+    while (p + 5 <= k->len && n < max) {
+        uint8_t type = k->buf[p];
+        size_t len = ((size_t)k->buf[p + 3] << 8) | k->buf[p + 4];
+        if (p + 5 + len > k->len)
+            break;
+        if (after_ccs && len >= 8) {
+            uint64_t v = 0;
+            for (int i = 0; i < 8; i++)
+                v = (v << 8) | k->buf[p + 5 + i];
+            out[n++] = v;
+        }
+        if (type == 20)
+            after_ccs = 1;
+        p += 5 + len;
+    }
+    return n;
+}
+static void test_tls12_gcm_nonce_is_the_sequence_number(void) {
+    SECTION("tcp_tls12_gcm_nonce_is_the_sequence_number");
+    /* RFC 9325 section 7.2.1 (RECOMMENDED): "TLS 1.2 implementations use the 64-bit sequence number to populate the
+       nonce_explicit part of the GCM nonce". OpenSSL 4.1.0 started the invocation field at random (carried patch 12,
+       openssl-4.1.0-tls12-gcm-nonce-sequence.patch). Records 0 (Finished), 1 and 2 (application data) of each side carry the
+       nonces 0, 1, 2, for both AES-GCM suites; a second connection starts at 0 again (a new key). */
+    const char *suites[] = {"ECDHE-ECDSA-AES128-GCM-SHA256", "ECDHE-ECDSA-AES256-GCM-SHA384"};
+    for (int round = 0; round < 4; round++) {
+        ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server");
+        ksl_ctx_set_option(cc, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
+        ksl_ctx_set_option(cc, KSL_OPT_MAX_VERSION, KSL_TLS1_2);
+        ksl_ctx_set_option(sc, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
+        CHECK(ksl_ctx_set_ciphers(cc, NULL, suites[round % 2]) == KSL_OK, "a TLS 1.2 AES-GCM suite");
+        ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
+        capture k[2] = {{0}, {0}};
+        CHECK(tcp_pump_captured(c, s, k, NULL) == KSL_OK, "TLS 1.2 handshake");
+        for (int i = 0; i < 2; i++) {
+            size_t n;
+            uint8_t b[3] = {1, 2, 3};
+            CHECK(ksl_tcp_write(c, b, sizeof b, &n) == KSL_OK && ksl_tcp_write(s, b, sizeof b, &n) == KSL_OK,
+                  "a record each way");
+            shuttle_captured(c, s, &k[0], NULL);
+            shuttle_captured(s, c, &k[1], NULL);
+        }
+        for (int side = 0; side < 2; side++) {
+            uint64_t v[3] = {9, 9, 9};
+            int got = explicit_nonces(&k[side], v, 3);
+            CHECK(got == 3 && v[0] == 0 && v[1] == 1 && v[2] == 2,
+                  side == 0 ? "the client's records 0, 1, 2 carry the nonces 0, 1, 2"
+                            : "the server's records 0, 1, 2 carry the nonces 0, 1, 2");
+        }
+        free(k[0].buf);
+        free(k[1].buf);
+        ksl_ssl_free(c);
+        ksl_ssl_free(s);
+        ksl_ctx_free(cc);
+        ksl_ctx_free(sc);
+    }
+    END();
+}
+
 void run_tcp(void) {
     test_weak_chain_refused_before_pause();
     test_echo();
@@ -3088,4 +3200,5 @@ void run_tcp(void) {
     test_client_keeps_every_ticket();
     test_default_versions_and_tls12_profile();
     test_tls12_server_suite_choice();
+    test_tls12_gcm_nonce_is_the_sequence_number();
 }

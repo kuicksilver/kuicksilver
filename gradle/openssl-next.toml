@@ -60,3 +60,8 @@ patch_10_sha256 = "544fe772aa31496dda0d459d10982ff859f94c3fd384763dab7978535d5ae
 # openssl/openssl@14a9f9ad6e (expected 4.1.1) as soon as it ships, and this patch is dropped with it.
 patch_11 = "tools/openssl/patches/openssl-4.1.0-crl-dp-dos.patch"
 patch_11_sha256 = "0cf2c55e9d48be1156a44ccddc357e583c6a2aff670c598d7d5f8a6e2c660322"
+# The twelfth carried patch (ADR-0019, not ECH): the TLS 1.2 AES-GCM nonce_explicit is the record sequence number (RFC 9325
+# section 7.2.1, RECOMMENDED), not a random start: the record layer hands the GCM context the whole IV with an invocation field
+# of zero. Kuicksilver's own code; upstream issue drafted, not filed; dropped with the first release that fixes it.
+patch_12 = "tools/openssl/patches/openssl-4.1.0-tls12-gcm-nonce-sequence.patch"
+patch_12_sha256 = "6207f58771f0566f0a9dc32aa413ab883f3561937710417f243c3aa172631c86"

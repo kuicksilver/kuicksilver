@@ -1140,6 +1140,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- TLS 1.2 AES-GCM records carry their 64-bit sequence number as nonce_explicit (RFC 9325 section 7.2.1, RECOMMENDED;
+  OpenSSL 4.1.0 started it at a random value). OpenSSL carries a twelfth patch (`patch_12`,
+  `openssl-4.1.0-tls12-gcm-nonce-sequence.patch`; ADR-0019), so every bundled OpenSSL build changes; ChaCha20-Poly1305
+  was sequence-based already (RFC 7905).
 - Configuration in blocks (breaking; ADR-0026, `docs/guide/configuration.md`). Every builder and both Ktor engines group
   their options in blocks with one name per concept: the client keeps `connectTimeout` at the top and puts the rest in
   `tls { }`, `http3 { }`, `http2 { }`, `http1 { }`, `pool { }`, `network { }`, `proxies { }`, `webSockets { }` and
