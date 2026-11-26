@@ -38,7 +38,7 @@ class ClientH3EndpointCloseTest {
                     assertEquals(setOfNotNull("127.0.0.1", "0.0.0.0", s6?.let { "::1" }), chosen.keys)
                     c.close()
                     withTimeout(10.seconds) { engine.cleanup.join() }
-                    val tls = engine.config.tlsConfigFor("server.test", listOf(Http3Endpoint.H3))
+                    val tls = engine.config.tlsConfigFor("server.test", listOf(Http3Endpoint.H3), quic = true)
                     for ((local, ep) in chosen) {
                         assertFailsWith<QuicException.EndpointClosing>(local) {
                             withTimeout(5.seconds) { ep.connect(InetSocketAddress(if (local == "::1") "::1" else "127.0.0.1", 9), tls) }

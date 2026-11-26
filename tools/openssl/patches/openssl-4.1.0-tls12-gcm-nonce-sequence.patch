@@ -1,0 +1,50 @@
+OpenSSL 4.1.0: the TLS 1.2 AES-GCM nonce_explicit starts at a random value, not the record sequence number
+
+Kuicksilver's own code, the twelfth patch carried under ADR-0019 (docs/adr/0019-openssl-4-and-ech.md), applied after
+openssl-4.1.0-crl-dp-dos.patch; pinned by its SHA-256 in gradle/openssl.toml as patch_12, applied by
+tools/openssl/apply-patch.pl to the verified tarball, and dropped with the first OpenSSL release that fixes it (an
+upstream issue is drafted, not filed).
+
+The gap: RFC 9325 section 7.2.1 (RECOMMENDED): "TLS 1.2 implementations use the 64-bit sequence number to populate the
+nonce_explicit part of the GCM nonce" (RFC 5288 section 3 allows any value that is unique per key). The TLS 1.2 record
+layer (ssl/record/methods/tls1_meth.c, tls1_set_crypto_state) gives the AES-GCM context only the 4-byte fixed IV
+(EVP_CTRL_GCM_SET_IV_FIXED with its length), and the provider fills the 8-byte invocation field with RAND_bytes
+(providers/implementations/ciphers/ciphercommon_gcm.c, gcm_tls_iv_set_fixed), then increments it per record: unique, but
+random-based rather than the sequence number, and visible as such on the wire.
+
+The fix: pass the whole 12-byte IV, the fixed part followed by an invocation field of zero, with the length -1 that
+gcm_tls_iv_set_fixed already takes for "restore the whole IV" (no randomness drawn). The provider increments the counter
+once per record it encrypts (getivgen), from 0 for the first record under the key, which is the record sequence number
+of TLS 1.2 (no renegotiation in ksl, and every key change restarts both). Decryption reads the explicit nonce from each
+record and is unchanged. ChaCha20-Poly1305 needs nothing: its TLS 1.2 nonce is already the fixed IV XORed with the
+sequence number from the AAD (RFC 7905 section 2; cipher_chacha20_poly1305_hw.c, chacha_poly1305_tls_init).
+
+--- a/ssl/record/methods/tls1_meth.c
++++ b/ssl/record/methods/tls1_meth.c
+@@ -100,9 +100,25 @@
+     }
+ 
+     if (EVP_CIPHER_get_mode(ciph) == EVP_CIPH_GCM_MODE) {
++        /*
++         * RFC 9325, section 7.2.1: the nonce_explicit is the 64-bit record
++         * sequence number. The whole 12-byte IV is set (length -1): the
++         * fixed part, then an invocation field of zero, which the cipher
++         * increments once per record, so in TLS it equals the sequence
++         * number of every record under this key (a random start does not);
++         * in DTLS it stays unique per key.
++         */
++        unsigned char gcm_iv[EVP_GCM_TLS_FIXED_IV_LEN
++            + EVP_GCM_TLS_EXPLICIT_IV_LEN] = { 0 };
++
++        if (ivlen != EVP_GCM_TLS_FIXED_IV_LEN) {
++            ERR_raise(ERR_LIB_SSL, ERR_R_INTERNAL_ERROR);
++            return OSSL_RECORD_RETURN_FATAL;
++        }
++        memcpy(gcm_iv, iv, EVP_GCM_TLS_FIXED_IV_LEN);
+         if (!EVP_CipherInit_ex(ciph_ctx, ciph, NULL, key, NULL, enc)
+             || EVP_CIPHER_CTX_ctrl(ciph_ctx, EVP_CTRL_GCM_SET_IV_FIXED,
+-                   (int)ivlen, iv)
++                   -1, gcm_iv)
+                 <= 0) {
+             ERR_raise(ERR_LIB_SSL, ERR_R_INTERNAL_ERROR);
+             return OSSL_RECORD_RETURN_FATAL;

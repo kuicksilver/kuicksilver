@@ -119,8 +119,15 @@ quic-go, Android's platform TLS), and without it the server name of every connec
      scored; `ksl` reports that refusal, `X509_V_ERR_UNSPECIFIED` in OpenSSL (internal_error), as
      `X509_V_ERR_UNABLE_TO_GET_CRL`: unknown_ca, `VerifyReason.UnknownRevocationStatus`). Upstream code: OpenSSL commit openssl/openssl@54e14955ef (pull request #33546), merged to master on
      2026-11-18 and to openssl-4.1 as 14a9f9ad6e, verbatim. Owner decision 2026-11-25: dropped with the first 4.1.x
-     release that contains 14a9f9ad6e (expected 4.1.1), and the pin moves to that release as soon as it ships.
-  The rules for all eleven:
+     release that contains 14a9f9ad6e (expected 4.1.1), and the pin moves to that release as soon as it ships;
+  12. `openssl-4.1.0-tls12-gcm-nonce-sequence.patch` (not ECH; added 2026-11-26 with the Ktor client's TLS 1.2 default,
+     ADR-0026: RFC 9325 section 7.2.1 RECOMMENDS the 64-bit record sequence number as the TLS 1.2 AES-GCM
+     nonce_explicit, and 4.1.0's record layer let the provider start the invocation field with `RAND_bytes`
+     (`gcm_tls_iv_set_fixed`). The record layer now passes the whole IV with an invocation field of zero (length -1, which
+     the provider already takes), so the explicit nonce is 0, 1, 2 ... under each key. ChaCha20-Poly1305 was already
+     sequence-based (RFC 7905 section 2). Kuicksilver's own code, minimal; an upstream issue is drafted for the owner, not
+     filed; dropped with the first release that fixes it; C `tcp_tls12_gcm_nonce_is_the_sequence_number`).
+  The rules for all twelve:
   - bugs B and C are known upstream (B: issue #33231, fixed; C: pull request #33233), and their patches carry
     upstream's code verbatim (source hunks only, the build has no tests). Patch 4's bug is known upstream (issue #32170, pull request #32930 with the same fix); for patch 3, pull request #33405
     covers part of the bug. The rest of patch 3 and patches 5 to 7 are drafted (2026-11-19) as one upstream report, to be
@@ -128,7 +135,7 @@ quic-go, Android's platform TLS), and without it the server name of every connec
     at 4a5704abc6d2 and 3a3f13563825 too (git apply), and their headers name the bug and the fix. Each patch is dropped on its own condition above, or with the first release
     that fixes its issue;
   - the patches live in the repository and are pinned by their SHA-256 next to the tarball's pin (`patch`,
-    `patch_sha256`, then `patch_2`, `patch_2_sha256`, and so on up to `patch_11`); `tools/openssl/build.sh` applies them in
+    `patch_sha256`, then `patch_2`, `patch_2_sha256`, and so on up to `patch_12`); `tools/openssl/build.sh` applies them in
     that order to the verified tarball (`apply-patch.pl`, exactly, all or none) and refuses a patch whose hash differs,
     and a patch without all the ones before it;
   - the patches and their hashes are listed in the build's provenance (`provenance.txt`, the release provenance and the

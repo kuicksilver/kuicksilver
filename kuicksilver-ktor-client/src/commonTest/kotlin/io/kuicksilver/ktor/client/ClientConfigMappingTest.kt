@@ -33,7 +33,8 @@ class ClientConfigMappingTest {
         assertEquals(10.seconds, c.connectTimeout)
         assertSame(TrustConfig.Platform, c.tls.trust)
         assertNull(c.tls.identity)
-        assertEquals(TlsVersions.Tls13, c.tls.versions)
+        // TLS 1.3, or 1.2 with a server without 1.3, as OkHttp and the browsers (0.3.0; RFC 9325 profile); Tls13 is the opt-in
+        assertEquals(TlsVersions.Tls12And13, c.tls.versions)
         assertSame(CipherSuites.Default, c.tls.cipherSuites)
         assertEquals(true, c.tls.certificateCompression)
         assertNull(c.tls.keylog)
@@ -93,16 +94,16 @@ class ClientConfigMappingTest {
             KuicksilverEngineConfig().apply {
                 tls {
                     trust = ca
-                    versions = TlsVersions.Tls12And13
+                    versions = TlsVersions.Tls13
                     keyExchangeGroups = io.kuicksilver.tls.KeyExchangeGroups(listOf(io.kuicksilver.tls.KeyExchangeGroups.X25519))
                     revocation = io.kuicksilver.tls.RevocationPolicy.Off
                     certificateCompression = false
                     ech { grease = false }
                 }
             }
-        val t = c.tlsConfigFor("origin.test", listOf("h2", "http/1.1"))
+        val t = c.tlsConfigFor("origin.test", listOf("h2", "http/1.1"), quic = false)
         assertSame(ca, t.trust)
-        assertEquals(TlsVersions.Tls12And13, t.versions)
+        assertEquals(TlsVersions.Tls13, t.versions)
         assertEquals(listOf(io.kuicksilver.tls.KeyExchangeGroups.X25519), t.keyExchangeGroups.groups)
         assertEquals(io.kuicksilver.tls.RevocationPolicy.Off, t.revocation)
         assertEquals(false, t.certificateCompression)
@@ -144,9 +145,11 @@ class ClientConfigMappingTest {
         val pinned = TrustConfig.ExpectedName("other.test", ClientFixtures.trust)
         val c = KuicksilverEngineConfig().apply { tls { trust = pinned } }
         assertSame(ClientFixtures.trust, c.proxyTlsConfigFor("proxy.test").trust, "the origin's name is not the proxy's")
-        c.proxies { tls { versions = TlsVersions.Tls12And13 } }
+        // the proxy hop shares the origin's default versions: TLS 1.3, or 1.2 with a proxy without 1.3
+        assertEquals(TlsVersions.Tls12And13, c.proxyTlsConfigFor("proxy.test").versions)
+        c.proxies { tls { versions = TlsVersions.Tls13 } }
         val t = c.proxyTlsConfigFor("proxy.test")
-        assertEquals(TlsVersions.Tls12And13, t.versions)
+        assertEquals(TlsVersions.Tls13, t.versions)
         assertSame(ClientFixtures.trust, t.trust)
         assertNull(t.identity)
         assertEquals("proxy.test", t.serverName)

@@ -824,7 +824,7 @@ static int server_hello_has_ems(const uint8_t *m, size_t len) {
     }
     return 0;
 }
-/* Whether the NewSessionTicket message m[0, len) (handshake header included) carries early_data. Layout (RFC 9846 section 4.6.1):
+/* Whether the NewSessionTicket message m[0, len) (handshake header included) carries early_data. Layout (RFC 9846 section 4.7.1):
    lifetime(4) age_add(4) nonce<0..255> ticket<1..2^16-1> extensions<0..2^16-2>, each extension type(2) length(2) data. Every read
    stays inside len and inside the body length the header declares; an extension counts only when it lies whole inside the
    extensions block. A malformed message answers 0 (no early data) and is left to OpenSSL, which refuses it. */
@@ -924,7 +924,7 @@ void ksl_msg_cb(int write_p, int version, int content_type, const void *buf, siz
         m[0] == (s->owner->role == KSL_CLIENT ? SSL3_MT_HELLO_REQUEST : SSL3_MT_CLIENT_HELLO) &&
         s->renegotiations < UINT32_MAX)
         s->renegotiations++;
-    /* RFC 9846 section 4.6.1: max_early_data_size is "the maximum amount of 0-RTT data that the client is allowed to send when using
+    /* RFC 9846 section 4.7.1: max_early_data_size is "the maximum amount of 0-RTT data that the client is allowed to send when using
        this ticket", so a ticket without early_data allows none. OpenSSL's client copies the session of the resumed ticket for each
        NewSessionTicket and sets max_early_data only from an extension present, so a ticket renewed without it kept the old
        ticket's value, and a QUIC client offered 0-RTT the server had withdrawn (RFC 9001 section 4.6.1: "To indicate that the

@@ -166,11 +166,19 @@ public class ClientTlsConfig {
     public var identity: TlsIdentity? = null
 
     /**
-     * The TLS versions offered over TCP; default [TlsVersions.Tls13]. [TlsVersions.Tls12And13] keeps HTTP/2 on (see
-     * [Http2ClientConfig]); QUIC is TLS 1.3 only.
+     * The TLS versions offered over TCP (HTTP/1.1, HTTP/2, the hop to an `https://` proxy); default [TlsVersions.Tls12And13],
+     * as in OkHttp and the browsers: TLS 1.3, or TLS 1.2 with a server that lacks 1.3, under the fixed profile of
+     * [TlsVersions.Tls12And13] (ECDHE with AEAD suites only, Extended Master Secret required, no compression or
+     * renegotiation; RFC 9325). A server that has TLS 1.3 cannot be pushed down to 1.2: its ServerHello then carries the
+     * downgrade sentinel of RFC 9846 section 4.2.3 (RFC 8446 section 4.1.3), which ends the handshake.
+     * [TlsVersions.Tls13] refuses a server without TLS 1.3 (a `protocol_version` alert). HTTP/2 runs over both (RFC 9113
+     * section 9.2). QUIC is TLS 1.3 whatever this says (RFC 9001 section 4.2), and so is every connection that offers an
+     * ECH configuration (RFC 9849; [ech]). [TcpConnectionSnapshot.tlsVersion] tells which version a call's connection
+     * negotiated. Under TLS 1.2 the server's certificate chain and a client certificate ([identity]) travel in the clear (TLS
+     * 1.3 encrypts both): set `Tls13` when [identity] identifies a user or device to anyone on the path.
      */
     @SecuritySensitive
-    public var versions: TlsVersions = TlsVersions.Tls13
+    public var versions: TlsVersions = TlsVersions.Tls12And13
 
     /** The TLS 1.3 cipher suites in preference order; default [CipherSuites.Default]. */
     @SecuritySensitive
@@ -207,12 +215,20 @@ public class ClientTlsConfig {
         ech.block()
     }
 
-    /** Applies these settings (not ECH, which the connection decides) to [b]. */
+    /**
+     * Applies these settings (not ECH, which the connection decides) to [b]. [versions] is for TCP; [tls13Only] makes it
+     * `Tls13`: for a QUIC connection (RFC 9001 section 4.2), and for every connection of an ECH route (one that offers a
+     * configuration, and its retry after a rejection, ECH disabled included): ECH is TLS 1.3 (RFC 9849 section 6.1), and a
+     * server that answers with TLS 1.2 fails the handshake instead of seeing the name in the clear (no silent fallback).
+     */
     @OptIn(DelicateKuicksilverApi::class)
-    internal fun applyTo(b: TlsConfig.Builder) {
+    internal fun applyTo(
+        b: TlsConfig.Builder,
+        tls13Only: Boolean = false,
+    ) {
         b.trust = trust
         b.identity = identity
-        b.versions = versions
+        b.versions = if (tls13Only) TlsVersions.Tls13 else versions
         b.cipherSuites = cipherSuites
         b.keyExchangeGroups = keyExchangeGroups
         b.revocation = revocation
@@ -463,10 +479,12 @@ public class Http3ClientConfig {
  * `pool { maxConnectionsPerRoute }` HTTP/1.1 connections. An `http://` request uses HTTP/1.1, unless its origin is listed in
  * [priorKnowledge] (h2c). A `wss://` WebSocket goes over HTTP/2 (RFC 8441, Extended CONNECT) on a connection to its origin
  * that is there already and whose server allows it; otherwise it opens a connection of its own that offers `http/1.1` only
- * (docs/guide/ktor.md, "WebSockets over HTTP/2"). HTTP/3 is unaffected, and so is its kill switch. A `tls` block that allows
- * TLS 1.2 offers `h2` as well (RFC 9113 section 9.2): over TLS 1.2 renegotiation stays refused, and a server that asks for
- * one ends the connection with a connection error of type PROTOCOL_ERROR (section 9.2.1); the TLS 1.2 suites are ECDHE with
- * an AEAD only, none of them prohibited by section 9.2.2.
+ * (docs/guide/ktor.md, "WebSockets over HTTP/2"). HTTP/3 is unaffected, and so is its kill switch. `h2` is offered over
+ * TLS 1.2 too, which the default `tls { versions = Tls12And13 }` allows with a server without TLS 1.3 (RFC 9113 section
+ * 9.2): over TLS 1.2 renegotiation stays refused, and a server that asks for one ends the connection with a connection
+ * error of type PROTOCOL_ERROR (section 9.2.1); the TLS 1.2 suites are ECDHE with an AEAD only, none of them prohibited by
+ * section 9.2.2, and `tls { keyExchangeGroups }` must keep `secp256r1` then (the engine's creation fails otherwise: section
+ * 9.2.2 makes TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 with P-256 mandatory).
  */
 @KuicksilverDsl
 public class Http2ClientConfig {
@@ -671,7 +689,10 @@ public class ProxiesConfig {
      * `ExpectedName` gives way to its base, a `Pinned` to its base) and no client certificate. The block starts from that
      * same trust and no identity and may set anything. The server name (SNI and the name verified) is the proxy's host and
      * ALPN offers `http/1.1` only (`h3` to a CONNECT-UDP proxy). An ECH configuration set here is offered to the proxy as
-     * given. docs/guide/ktor.md, "Proxies".
+     * given. The block is checked when the engine is created as an `https://` proxy's TCP connection takes it (its
+     * `versions` included, so key-exchange groups TLS 1.2 cannot use fail under the default `Tls12And13`), even when it
+     * serves only a [connectUdp] proxy, whose QUIC connections are TLS 1.3 whatever it says: set `versions = Tls13` there.
+     * docs/guide/ktor.md, "Proxies".
      */
     @SecuritySensitive
     public fun tls(block: ClientTlsConfig.() -> Unit) {

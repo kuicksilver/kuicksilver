@@ -270,17 +270,113 @@ class ClientEchTest {
             }
         }
 
-    /** RFC 9849 section 6.1, rule 1: ECH is TLS 1.3 only; a host configuration with TLS 1.2 allowed is refused up front. */
-    @Test fun negative_hostConfigurationNeedsTls13Only() {
-        assertFailsWith<IllegalArgumentException> {
-            client(more = {
-                tls {
-                    versions = TlsVersions.Tls12And13
-                    ech { configLists = mapOf("server.test" to listA) }
+    /**
+     * RFC 9849 section 6.1, rule 1: ECH is TLS 1.3 only. Under the default `versions = Tls12And13` (and when it is set
+     * explicitly) a host configuration is taken, and the connections that offer it are TLS 1.3 only, to the origin and to a
+     * proxy alike; the others keep TLS 1.2 (until 0.3.0 such a configuration was refused with TLS 1.2 allowed).
+     */
+    @Test fun negative_hostConfigurationMakesItsConnectionsTls13Only() {
+        for (explicit in kotlin.collections.listOf(false, true)) {
+            val config =
+                KuicksilverEngineConfig().apply {
+                    tls {
+                        if (explicit) versions = TlsVersions.Tls12And13
+                        ech { configLists = mapOf("server.test" to listA) }
+                    }
+                    proxies { tls { ech { configLists = mapOf("proxy.test" to listA) } } }
                 }
-            }).close()
+            assertEquals(TlsVersions.Tls12And13, config.tls.versions)
+            val offered =
+                config.tlsConfigFor(
+                    "server.test",
+                    kotlin.collections.listOf("h2", "http/1.1"),
+                    quic = false,
+                    ech = EchRoute(listA).offer,
+                )
+            assertEquals(listA, offered.echConfigList)
+            assertEquals(TlsVersions.Tls13, offered.versions, "an ECH offer never allows TLS 1.2")
+            // securely disabled (no offer left), and another host: TLS 1.2 allowed again
+            val plain =
+                config.tlsConfigFor(
+                    "other.test",
+                    kotlin.collections.listOf("h2", "http/1.1"),
+                    quic = false,
+                    ech = EchRoute(null).offer,
+                )
+            assertNull(plain.echConfigList)
+            assertEquals(TlsVersions.Tls12And13, plain.versions)
+            // the retry of a rejection is part of the ECH route: TLS 1.3 only, with the retry configurations and without any
+            // (securely disabled) alike
+            val route = EchRoute(listA)
+            val disabled = assertNotNull(route.rejected(route.offer, TlsException.EchRejected(null)))
+            assertNull(disabled.list)
+            val retry = config.tlsConfigFor("server.test", kotlin.collections.listOf("h2", "http/1.1"), quic = false, ech = disabled)
+            assertNull(retry.echConfigList)
+            assertEquals(TlsVersions.Tls13, retry.versions, "the secure-disable retry stays TLS 1.3 only")
+            val proxy = config.proxyTlsConfigFor("proxy.test")
+            assertEquals(listA, proxy.echConfigList)
+            assertEquals(TlsVersions.Tls13, proxy.versions, "the proxy's own ECH offer never allows TLS 1.2")
+            assertEquals(TlsVersions.Tls12And13, config.proxyTlsConfigFor("other-proxy.test").versions)
         }
+        client(more = { tls { ech { configLists = mapOf("server.test" to listA) } } }).close()
     }
+
+    /**
+     * Self-attack, RFC 9849 section 6.1: a server of an ECH host that speaks TLS 1.2 at most (here one that answers every
+     * ClientHello with `protocol_version`, as such a server answers a TLS 1.3-only one). The request fails with that alert,
+     * and every ClientHello that went out carried ECH (the real name never in the clear) and offered TLS 1.3 alone: no fallback
+     * to TLS 1.2 or to a connection without ECH. The default client's own ClientHello offers TLS 1.3 and 1.2, nothing older.
+     */
+    @Test fun negative_echHostWithATls12OnlyServerFailsWithoutFallback() =
+        clientTest {
+            val selector = SelectorManager(Dispatchers.IO)
+            val listener = bindTcp(selector, "127.0.0.1", 0)
+            val hellos = Channel<ByteArray>(Channel.UNLIMITED)
+            try {
+                coroutineScope {
+                    val stub =
+                        launch {
+                            while (true) {
+                                val s = listener.accept()
+                                launch {
+                                    s.use {
+                                        runCatching {
+                                            hellos.send(readRecord(s.openReadChannel()))
+                                            val out = s.openWriteChannel(autoFlush = true)
+                                            out.writeByteArray(byteArrayOf(0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46))
+                                            out.flush()
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    val port = (listener.localAddress as InetSocketAddress).port
+                    client(more = { tls { ech { configLists = mapOf("server.test" to listA) } } }).use { c ->
+                        val e = assertFailsWith<Throwable> { c.get("https://server.test:$port/") }
+                        val alert = generateSequence(e) { it.cause }.filterIsInstance<TlsException.AlertReceived>().firstOrNull()
+                        assertEquals(70, alert?.code, "protocol_version in $e")
+                    }
+                    var count = 0
+                    while (true) {
+                        val hello = hellos.tryReceive().getOrNull() ?: break
+                        count++
+                        val view = ClientHelloView.parse(hello)
+                        assertEquals(EchTestKeys.PUBLIC_NAME, view.serverName, "the real name never in the clear")
+                        assertTrue(ECH_EXTENSION in view.extensions)
+                        assertEquals(kotlin.collections.listOf(0x0304), view.supportedVersions, "TLS 1.3 alone with ECH")
+                    }
+                    assertTrue(count >= 1)
+                    client().use { c -> assertFailsWith<Throwable> { c.get("https://server.test:$port/") } }
+                    val plain = ClientHelloView.parse(withTimeout(10.seconds) { hellos.receive() })
+                    assertEquals("server.test", plain.serverName)
+                    assertEquals(kotlin.collections.listOf(0x0304, 0x0303), plain.supportedVersions, "the default: 1.3, then 1.2")
+                    stub.cancel()
+                }
+            } finally {
+                listener.close()
+                selector.close()
+            }
+        }
 
     /**
      * A host configuration without a usable ECHConfig is refused when the engine is created: it would otherwise send the
@@ -584,6 +680,8 @@ class ClientEchTest {
     private class ClientHelloView(
         val serverName: String?,
         val extensions: List<Int>,
+        /** The versions of `supported_versions` (RFC 9846 section 4.3.1) in order, GREASE values left out; empty without it. */
+        val supportedVersions: List<Int>,
     ) {
         companion object {
             fun parse(record: ByteArray): ClientHelloView {
@@ -602,6 +700,7 @@ class ClientEchTest {
                 val extensions = u16()
                 val end = p + extensions
                 val types = ArrayList<Int>()
+                val versions = ArrayList<Int>()
                 var sni: String? = null
                 while (p + 4 <= end) {
                     val type = u16()
@@ -611,10 +710,16 @@ class ClientEchTest {
                         val n = ((record[p + 3].toInt() and 0xff) shl 8) or (record[p + 4].toInt() and 0xff)
                         sni = record.copyOfRange(p + 5, p + 5 + n).decodeToString()
                     }
+                    if (type == 0x2b) {
+                        for (i in 0 until (record[p].toInt() and 0xff) / 2) {
+                            val v = ((record[p + 1 + 2 * i].toInt() and 0xff) shl 8) or (record[p + 2 + 2 * i].toInt() and 0xff)
+                            if (v and 0x0f0f != 0x0a0a) versions += v
+                        }
+                    }
                     types += type
                     p += len
                 }
-                return ClientHelloView(sni, types)
+                return ClientHelloView(sni, types, versions)
             }
         }
     }

@@ -159,7 +159,7 @@ class ServerTls12JdkClientTest {
         }
 
     /**
-     * RFC 9846 section 4.1.3: "If negotiating TLS 1.2, TLS 1.3 servers MUST set the last 8 bytes of their Random value to the
+     * RFC 9846 section 4.2.3: "If negotiating TLS 1.2, TLS 1.3 servers MUST set the last 8 bytes of their Random value to the
      * bytes: 44 4F 57 4E 47 52 44 01", so a client with TLS 1.3 detects an attacker who removed it from its offer.
      */
 

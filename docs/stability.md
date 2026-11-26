@@ -184,7 +184,10 @@ operating system.
   refused with `KslException.Version` (`KSL_INIT_VERSION`), and the C test `negative_system4_0RefusedByDefault` keeps it
   so. OpenSSL 4.x is prepared but **not supported in 0.3.0**: building with `-DKSL_SYSTEM_OPENSSL_MAX_MAJOR=4` is the
   single switch that would open the range, and `tools/ci/system-openssl.sh` follows it (`KSL_SYSTEM_OPENSSL_MAX_MAJOR=4`
-  selects the `libssl4` runtime package and soname `libssl.so.4`). Published artifacts never use a system OpenSSL.
+  selects the `libssl4` runtime package and soname `libssl.so.4`). Published artifacts never use a system OpenSSL. A
+  system OpenSSL carries none of the patches of the bundled one (ADR-0019), so what they bring is absent: ECH, and RFC 9325
+  section 7.2.1's sequence-number nonce for TLS 1.2 AES-GCM, which is met only with the bundled OpenSSL (the distribution's
+  libssl starts the nonce at random, unique per key as RFC 5288 asks; [RFC 9325 §7.2.1](spec/rfc/9325.md#s7-2-1-gcm-nonce)).
 - **Updates** follow the commitments in [SECURITY.md, OpenSSL](../SECURITY.md#openssl): a Kuicksilver release with the
   fixed OpenSSL within 72 hours of an OpenSSL advisory for a Critical or High issue reachable through Kuicksilver,
   within 7 days for a reachable Moderate or Low one, and in the next minor release for issues that are not reachable

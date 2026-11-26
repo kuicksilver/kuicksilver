@@ -47,6 +47,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -1066,39 +1067,48 @@ class ClientCoalescingTest {
     /**
      * The 421's decision races the old attempt's sender: the application writes its whole body exactly while the 421 is
      * handled. The sender either took a byte first (the body is consumed: H3BodyConsumed) or the channel was kept before it
-     * could (the repeat sends all of it): never a repeat that lost the start of the body. Twenty rounds.
+     * could (the repeat sends all of it): never a repeat that lost the start of the body. Each order is forced in turn,
+     * five rounds each, instead of hoping that free-running rounds reach both (under load the sender always won the race:
+     * the write resumes it, and it ran during the hook's yield before the decision): the sender's side by waiting, in the
+     * hook, until it took a byte; the decision's side by holding the sender at its gate before it takes one.
      */
     @Test fun negative_h3ABodyWrittenAsThe421IsHandledIsRepeatedWholeOrNotAtAll() =
         h3Test {
             val (server, port) = h3EchoServer()
             val payload = (0 until 48 * 1024).map { 'a' + it % 26 }.joinToString("")
-            var whole = 0
-            var consumed = 0
             try {
-                repeat(20) {
-                    client(discovery = Http3Discovery.H3Only).use { c ->
-                        c.h3("https://a.wild.test:$port/")
-                        val body =
-                            io.ktor.utils.io
-                                .ByteChannel()
-                        engine(c).h3.misdirectedForTest = {
-                            body.writeStringUtf8(payload)
-                            body.flushAndClose()
-                            kotlinx.coroutines.yield()
-                        }
-                        try {
-                            val r = c.post("https://b.wild.test:$port/echo") { setBody(body) }
-                            assertEquals(HttpStatusCode.OK, r.status)
-                            assertEquals("b.wild.test|$payload", r.bodyAsText(), "the repeat sent the whole body")
-                            whole++
-                        } catch (_: H3BodyConsumed) {
-                            consumed++
+                for (senderFirst in listOf(true, false)) {
+                    repeat(5) { round ->
+                        client(discovery = Http3Discovery.H3Only).use { c ->
+                            c.h3("https://a.wild.test:$port/")
+                            val body =
+                                io.ktor.utils.io
+                                    .ByteChannel()
+                            val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+                            val pool = engine(c).h3
+                            // the decision first: the sender waits at its gate, which never opens before the decision
+                            if (!senderFirst) pool.beforeTakeForTest = { gate.await() }
+                            pool.misdirectedForTest = { mark ->
+                                // the repeat's attempt is not held
+                                pool.beforeTakeForTest = null
+                                body.writeStringUtf8(payload)
+                                body.flushAndClose()
+                                // the sender first: the decision waits until it took a byte
+                                if (senderFirst) withTimeout(10.seconds) { assertNotNull(assertNotNull(mark).touchedForTest).await() }
+                            }
+                            try {
+                                val r = c.post("https://b.wild.test:$port/echo") { setBody(body) }
+                                assertFalse(senderFirst, "round $round: a body the sender took from was repeated")
+                                assertEquals(HttpStatusCode.OK, r.status)
+                                assertEquals("b.wild.test|$payload", r.bodyAsText(), "the repeat sent the whole body")
+                            } catch (e: H3BodyConsumed) {
+                                assertTrue(senderFirst, "round $round: a body kept before the sender took a byte failed: $e")
+                            } finally {
+                                gate.complete(Unit)
+                            }
                         }
                     }
                 }
-                assertEquals(20, whole + consumed)
-                // the window is reached both ways: a test that stopped reaching it would prove nothing
-                assertTrue(whole > 0 && consumed > 0, "whole=$whole consumed=$consumed")
             } finally {
                 server.stop(100, 500)
             }
@@ -1507,5 +1517,68 @@ class ClientCoalescingTest {
             val before = verified.load()
             assertEquals(Coalesce.No, config.checkCoalescing(p, "d.wild.test", 443, dns, alpn))
             assertEquals(before, verified.load())
+        }
+
+    /**
+     * RFC 9113 section 9.1.1: a coalesced request "MUST satisfy any checks that the client would perform when forming a new
+     * TLS connection for the host in the URI", the version included. A host with an ECH configuration gets TLS 1.3-only
+     * connections (RFC 9849 section 6.1), so a connection that negotiated TLS 1.2 never carries it, whatever its certificate
+     * says; a TLS 1.3 one does, and the TLS 1.2 one still carries a host without ECH.
+     */
+    @Test fun negative_aTls12ConnectionNeverCarriesAnEchHost() =
+        runBlocking {
+            val body =
+                EchTestKeys.A
+                    .substringAfter("-----BEGIN ECHCONFIG-----")
+                    .substringBefore("-----END ECHCONFIG-----")
+            val list =
+                io.kuicksilver.tls.EchConfigList
+                    .parseBase64(body.lines().joinToString(""))
+            val config =
+                KuicksilverEngineConfig().apply {
+                    tls {
+                        trust = TrustConfig.Custom { chain, _, _ -> VerifyResult.Accepted(chain) }
+                        ech { configLists = mapOf("b.wild.test" to list) }
+                    }
+                    network { dns = MapDns() }
+                }
+            val here = Destination(byteArrayOf(127, 0, 0, 1), 443, 0)
+            val chain = listOf(Certificate(TestCerts.server))
+            val alpn = listOf("h2", "http/1.1")
+
+            fun peer(v: io.kuicksilver.tls.TlsVersion) = CoalescingPeer("a.wild.test", here, chain, 0L, false, CoalescedHosts(), v)
+            val tls12 = peer(io.kuicksilver.tls.TlsVersion.Tls12)
+            assertEquals(Coalesce.No, config.checkCoalescing(tls12, "b.wild.test", 443, config.newRequestDns(), alpn))
+            assertEquals(Coalesce.Yes, config.checkCoalescing(tls12, "c.wild.test", 443, config.newRequestDns(), alpn), "no ECH")
+            val tls13 = peer(io.kuicksilver.tls.TlsVersion.Tls13)
+            assertEquals(Coalesce.Yes, config.checkCoalescing(tls13, "b.wild.test", 443, config.newRequestDns(), alpn))
+            // a TLS 1.2 connection that accepted the host before it got ECH: the version is checked every time
+            tls12.hosts.record("d.wild.test", accepted = true)
+            val later =
+                KuicksilverEngineConfig().apply {
+                    tls {
+                        trust = TrustConfig.Custom { c, _, _ -> VerifyResult.Accepted(c) }
+                        ech { configLists = mapOf("d.wild.test" to list) }
+                    }
+                    network { dns = MapDns() }
+                }
+            assertEquals(Coalesce.No, later.checkCoalescing(tls12, "d.wild.test", 443, later.newRequestDns(), alpn))
+            // an HTTPS record's endpoint with `ech` (RFC 9848; no configured list): the request reaches it through the endpoint's
+            // view of its resolution (connectTo), whose route is the endpoint's, so its connections are TLS 1.3 only too
+            val plain =
+                KuicksilverEngineConfig().apply {
+                    tls { trust = TrustConfig.Custom { c, _, _ -> VerifyResult.Accepted(c) } }
+                    network { dns = MapDns() }
+                }
+            val endpoint = plain.newRequestDns().connectTo("e.wild.test", 443, EchRoute(list))
+            assertEquals(Coalesce.No, plain.checkCoalescing(tls12, "e.wild.test", 443, endpoint, alpn), "the record's ECH")
+            val noEch = plain.newRequestDns().connectTo("e.wild.test", 443, null)
+            assertEquals(Coalesce.Yes, plain.checkCoalescing(tls12, "e.wild.test", 443, noEch, alpn), "an endpoint without ech")
+            assertEquals(Coalesce.Yes, plain.checkCoalescing(tls13, "e.wild.test", 443, endpoint, alpn), "a TLS 1.3 connection")
+            // the secure-disable retry of an ECH route (no configuration left) stays TLS 1.3 only too
+            val route = EchRoute(list)
+            assertNotNull(route.rejected(route.offer, TlsException.EchRejected(null)))
+            val disabled = plain.newRequestDns().connectTo("f.wild.test", 443, route)
+            assertEquals(Coalesce.No, plain.checkCoalescing(tls12, "f.wild.test", 443, disabled, alpn), "the ECH retry")
         }
 }

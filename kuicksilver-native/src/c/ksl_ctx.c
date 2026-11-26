@@ -732,7 +732,10 @@ ksl_ctx *ksl_ctx_new(int role) {
         return NULL;
     }
     SSL_CTX_set_min_proto_version(c->ctx, TLS1_3_VERSION);
-    SSL_CTX_set_max_proto_version(c->ctx, TLS1_3_VERSION);
+    /* RFC 9852 section 4: "clients SHOULD specify just the minimum version they want" (OpenSSL offers the highest it has): a
+       client context leaves the top open (0); a server keeps TLS 1.3 as its top. QUIC raises the floor to 1.3 per session. */
+    if (role == KSL_SERVER)
+        SSL_CTX_set_max_proto_version(c->ctx, TLS1_3_VERSION);
     SSL_CTX_set_options(c->ctx, SSL_OP_NO_RENEGOTIATION | SSL_OP_NO_COMPRESSION);
     /* an OpenSSL without any algorithm (a system one built without zlib and brotli) starts with it off; asking for it then is
        KSL_E_NOT_SUPPORTED (ksl_ctx_set_option) */

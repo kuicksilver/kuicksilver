@@ -195,7 +195,7 @@ public class TlsConnection private constructor(
     /**
      * Whether this TLS 1.3 connection failed because the peer sent a handshake message TLS 1.3 does not allow after the
      * handshake here and OpenSSL refused it with unexpected_message: a server's CertificateRequest, since ksl never offers
-     * post_handshake_auth (RFC 9846 section 4.6.2), and any other. RFC 9113 section 9.2.3: "HTTP/2 clients MUST treat a TLS
+     * post_handshake_auth (RFC 9846 section 4.7.2), and any other. RFC 9113 section 9.2.3: "HTTP/2 clients MUST treat a TLS
      * post-handshake CertificateRequest message as a connection error (Section 5.4.1) of type PROTOCOL_ERROR"; OpenSSL fails
      * on the message before anyone sees its type, so the HTTP/2 layer takes every such refusal on `h2` for one. True from
      * before [input] fails with it.
