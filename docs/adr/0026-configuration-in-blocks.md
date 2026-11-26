@@ -340,7 +340,14 @@ The design left these cases open or met them only in the code; each was decided 
   the engine's block is checked as TLS 1.3 only, since no TLS goes over TCP): key-exchange groups without an elliptic curve
   under the default (TLS 1.2 has no hybrid), with a message naming `Tls13`, and groups without `secp256r1` while HTTP/2 is
   on (RFC 9113 section 9.2.2, the client's side of the server's start check above). A `ksl` client context gives only its
-  minimum version (RFC 9852 section 4, SHOULD); its top is open. TLS 1.2 brought one more recommendation into play: RFC 9325
+  minimum version (RFC 9852 section 4, SHOULD); its top is open. That makes one outside setting count: OpenSSL applies the
+  `system_default` section of a loaded `openssl.cnf` (`MinProtocol`, `MaxProtocol`) to every new SSL_CTX, and a bound the
+  context sets after that wins, which the old client top of TLS 1.3 did. `ksl` never loads the file itself
+  (`OPENSSL_init_ssl` with `OPENSSL_INIT_NO_LOAD_CONFIG`) and the bundled OpenSSL is not shared, so this matters only for a
+  system-OpenSSL build (Linux, never published) in a process where something else loaded the configuration: a
+  `MaxProtocol` below TLS 1.3 there now caps the client at it (TLS 1.2 then; QUIC sessions, whose floor is TLS 1.3, fail),
+  where before the client's own top overrode it. The floor stays the client's: it is set after the file's and wins, as
+  before. TLS 1.2 brought one more recommendation into play: RFC 9325
   section 7.2.1's sequence-number nonce for AES-GCM, which OpenSSL 4.1.0 does not follow; the twelfth carried patch fixes
   it (ADR-0019). Under TLS 1.2 the certificates travel in the clear; the option's KDoc says to keep `Tls13` with a client
   identity. The proxy hop shares the
