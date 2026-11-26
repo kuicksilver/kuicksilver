@@ -190,6 +190,47 @@ class EngineMainKeysTest {
         assertEquals(3L, configuration("kuicksilver.http3.quic.expert.maxUniStreams=3").resolveQuic().maxUniStreams)
     }
 
+    /**
+     * Only a list-valued key takes a list (Ktor's map configuration spells one `<key>.0` and `<key>.size`): any other key given
+     * a list fails naming the key, not with Ktor's "Property ... not found".
+     */
+    @Test fun negative_aListWhereOneValueBelongsNamesTheKey() {
+        for ((given, key) in listOf(
+            "kuicksilver.tcp.maxConnections.size=3" to "kuicksilver.tcp.maxConnections",
+            "kuicksilver.http2.enabled.0=true" to "kuicksilver.http2.enabled",
+        )) {
+            assertEquals("$key: a list, but the key takes one value", refused(given))
+        }
+        // a list key's own items and size are that key's list
+        val c = configuration("kuicksilver.tls.keyExchangeGroups.0=x25519", "kuicksilver.tls.keyExchangeGroups.size=1", *tlsFiles)
+        assertEquals(KeyExchangeGroups(listOf(KeyExchangeGroups.X25519)), c.tls.keyExchangeGroups)
+    }
+
+    /** A configuration whose key list spells list items out: only a list key's suffixes fold into it. */
+    @Test fun negative_listSuffixesFoldOnlyIntoListKeys() {
+        fun stub(vararg keys: String) =
+            object : io.ktor.server.config.ApplicationConfig {
+                override fun property(path: String) = error("not read: $path")
+
+                override fun propertyOrNull(path: String): io.ktor.server.config.ApplicationConfigValue? = null
+
+                override fun config(path: String) = error("not read: $path")
+
+                override fun configList(path: String) = error("not read: $path")
+
+                override fun keys(): Set<String> = keys.toSet()
+
+                override fun toMap(): Map<String, Any?> = emptyMap()
+            }
+        EngineMain.checkKeys(
+            stub("kuicksilver.tls.echKeys.0", "kuicksilver.tls.echKeys.size", "kuicksilver.connector.proxyProtocol.trustedSources.1"),
+        )
+        for (bad in listOf("kuicksilver.tcp.maxConnections.size", "kuicksilver.tcp.maxConnections.0")) {
+            val e = assertFailsWith<IllegalArgumentException> { EngineMain.checkKeys(stub(bad)) }
+            assertTrue(e.message!!.startsWith("$bad is not a Kuicksilver key"), e.message)
+        }
+    }
+
     @Test fun negative_aTypoNamesTheClosestKey() {
         assertEquals(
             "kuicksilver.http3.endpoint.maxConections is not a Kuicksilver key; did you mean kuicksilver.http3.endpoint.maxConnections?",

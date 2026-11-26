@@ -3977,8 +3977,10 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h3.H3Authority
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.CurlHttp3Test.curlDownloadsOverHttp3Only
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainKeysTest.everyKnownKeyReachesItsOption
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainKeysTest.ktorsIdleTimeoutKeyIsTheHttp1One
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainKeysTest.negative_aListWhereOneValueBelongsNamesTheKey
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainKeysTest.negative_aTypoNamesTheClosestKey
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainKeysTest.negative_everyRenamedKeyNamesItsReplacement
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainKeysTest.negative_listSuffixesFoldOnlyIntoListKeys
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainKeysTest.negative_maxUniStreamsKeyBelowThreeIsRefused
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainKeysTest.negative_the02xAltSvcKeyNamesItsReplacement
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainKeysTest.negative_the02xHttp3SwitchNamesTheBlock

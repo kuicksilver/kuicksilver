@@ -181,13 +181,19 @@ public object EngineMain {
         }
     }
 
-    /** A list's key as Ktor's map configuration spells it (`kuicksilver.tls.echKeys.0`, `.size`) is the list's key. */
+    /** The keys whose value may be a list: Ktor's map configuration spells their items `<key>.0`, `<key>.1`, ... and `<key>.size`. */
+    private val LIST_KEYS: Set<String> =
+        setOf("kuicksilver.tls.echKeys", "kuicksilver.tls.keyExchangeGroups", "kuicksilver.connector.proxyProtocol.trustedSources")
+
+    /**
+     * A list's item or size as Ktor's map configuration spells it (`kuicksilver.tls.echKeys.0`, `.size`) is the list's key;
+     * any other key is itself, so `kuicksilver.tcp.maxConnections.size` is refused as the unknown key it is.
+     */
     private fun leafKey(key: String): String {
-        var k = key
-        while (true) {
-            val last = k.substringAfterLast('.')
-            if (last == "size" || (last.isNotEmpty() && last.all { it in '0'..'9' })) k = k.substringBeforeLast('.') else return k
-        }
+        val last = key.substringAfterLast('.')
+        val list = key.substringBeforeLast('.')
+        val item = last == "size" || (last.isNotEmpty() && last.all { it in '0'..'9' })
+        return if (item && list in LIST_KEYS) list else key
     }
 
     /**
@@ -345,7 +351,17 @@ public object EngineMain {
     private class Keys(
         private val config: ApplicationConfig,
     ) {
-        fun value(key: String): String? = config.propertyOrNull(key)?.getString()?.trim()
+        /** [key]'s value, trimmed; a list where the key takes one value fails naming the key, not with Ktor's own error. */
+        fun value(key: String): String? {
+            val v = config.propertyOrNull(key) ?: return null
+            val text =
+                try {
+                    v.getString()
+                } catch (e: Exception) {
+                    throw IllegalArgumentException("$key: a list, but the key takes one value", e)
+                }
+            return text.trim()
+        }
 
         /** [key] read with [parse] ([what] names what it must be) and given to [apply]; the option's refusal names the key. */
         fun <T> read(
