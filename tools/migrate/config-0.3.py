@@ -268,7 +268,7 @@ def _filter(body, table, report, where, what, allowed=None):
 
     def comment(stmt, kind, why):
         label = "derived by the engine" if kind == "derived" else "no 0.3.0 replacement"
-        return f"/* 0.3.0, {label} ({why}): {stmt.replace('/*', '/ *').replace('*/', '* /')} */"
+        return f"/* {label} ({why}): {stmt.replace('/*', '/ *').replace('*/', '* /')} */"
 
     def foreign(stmts, prefix):
         """Every statement of a group the 0.3.0 block lacks, reported with its own reason."""
@@ -327,8 +327,13 @@ CLIENT_QUIC_DERIVED = {
     "expert.resetStreamAt": ("derived", "on for WebTransport"),
     "expert.cancelErrorCode": ("derived", "HTTP/3 resets with its own codes, RFC 9114 section 8.1"),
     "expert.maxUniStreams": ("report", "now in expert { }, at least 3 (RFC 9114 section 6.2)"),
+    # 0.2.x quicConfig { connectionIdLength }: the endpoint's in 0.3.0, which the engine builds
+    "connectionIdLength": ("move", ("http3", "expert"), "connectionIdLength", "now http3 { expert { connectionIdLength } }"),
 }
 SERVER_QUIC_DERIVED = {k: v for k, v in CLIENT_QUIC_DERIVED.items() if k != "handshakeTimeout"}
+SERVER_QUIC_DERIVED["connectionIdLength"] = (
+    "move", ("http3", "endpoint", "expert"), "connectionIdLength", "now http3 { endpoint { expert { connectionIdLength } } }",
+)
 
 # The client's http3 { settings { } } (KuicksilverEngineConfig.H3_DERIVED); its webTransport { initialMax... } stays.
 CLIENT_H3_DERIVED = {
@@ -385,8 +390,8 @@ def _c_quic(value, report, where):
             return "replace", ""
         report.append(f"{where}: quic = {value}: the engine takes a block now, http3 {{ quic {{ ... }} }}: move the options in")
         return "replace", f"http3 {{ quic {{ /* was quic = {value.replace('*/', '* /')} */ }} }}"
-    body, _ = _filter(_raw_builder_body(value, "quicConfig"), CLIENT_QUIC_DERIVED, report, where, "http3 { quic { ")
-    return "replace", _block(("http3", "quic"), body)
+    body, moved = _filter(_raw_builder_body(value, "quicConfig"), CLIENT_QUIC_DERIVED, report, where, "http3 { quic { ")
+    return "replace", _with_moved(_block(("http3", "quic"), body) if body.strip() else "", moved)
 
 
 def _c_tls(value, report, where):
@@ -592,8 +597,8 @@ def _s_quic(value, report, where):
             return "replace", ""
         report.append(f"{where}: quic = {value}: the engine takes a block now, http3 {{ quic {{ ... }} }}: move the options in")
         return "replace", f"http3 {{ quic {{ /* was quic = {value.replace('*/', '* /')} */ }} }}"
-    body, _ = _filter(_raw_builder_body(value, "quicConfig"), SERVER_QUIC_DERIVED, report, where, "http3 { quic { ")
-    return "replace", _block(("http3", "quic"), body)
+    body, moved = _filter(_raw_builder_body(value, "quicConfig"), SERVER_QUIC_DERIVED, report, where, "http3 { quic { ")
+    return "replace", _with_moved(_block(("http3", "quic"), body) if body.strip() else "", moved)
 
 
 def _s_quic_idle(value, report, where):
@@ -650,7 +655,7 @@ SERVER_MOVES = {
     "webTransport": (("http3", "webTransport"), "enabled"),
     "connectUdp": (("http3",), "connectUdp"),
     "quicEarlyData": (("http3", "earlyData"), "enabled"),
-    "logger": (("observability",), "logger"),
+    "logger": _c_logger,  # null (0.2.x: the application's log) is the 0.3.0 default, and the option is not nullable
     "qlog": (("observability",), "qlog"),
     "connectionListener": (("observability",), "connectionListener"),
     "eventListener": (("observability",), "eventListener"),

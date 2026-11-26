@@ -50,6 +50,7 @@ fun client(
         }
         quic = quicConfig {
             handshakeTimeout = 5.seconds
+            connectionIdLength = 12
             maxUniStreams = 10
             maxIdleTimeout = Duration.ZERO
             defaultStreamErrorCode = 7
@@ -86,10 +87,10 @@ fun client(
         tls {
             trust = ca
             identity = me
-            /* 0.3.0, no 0.3.0 replacement (the 0.3.0 block has no expert group): expert { genericAlerts = true } */
-            /* 0.3.0, no 0.3.0 replacement (a server's ticket keys; the client resumes on its own): sessionTickets = tickets */
-            /* 0.3.0, derived by the engine (the engine's connectTimeout: set connectTimeout): handshakeTimeout = 2.seconds */
-            ech { /* 0.3.0, no 0.3.0 replacement (the client takes tls { ech { configLists = mapOf(host to list) } } or the HTTPS record's): configList = list */ }
+            /* no 0.3.0 replacement (the 0.3.0 block has no expert group): expert { genericAlerts = true } */
+            /* no 0.3.0 replacement (a server's ticket keys; the client resumes on its own): sessionTickets = tickets */
+            /* derived by the engine (the engine's connectTimeout: set connectTimeout): handshakeTimeout = 2.seconds */
+            ech { /* no 0.3.0 replacement (the client takes tls { ech { configLists = mapOf(host to list) } } or the HTTPS record's): configList = list */ }
             keylog = sink
         }
         pool {
@@ -99,16 +100,17 @@ fun client(
         network { happyEyeballsDelay = null }
         http3 {
             quic {
-                /* 0.3.0, derived by the engine (the engine's connectTimeout: set connectTimeout): handshakeTimeout = 5.seconds */
+                /* derived by the engine (the engine's connectTimeout: set connectTimeout): handshakeTimeout = 5.seconds */
                 expert {
                     maxUniStreams = 10
-                    /* 0.3.0, derived by the engine (HTTP/3 resets with its own codes, RFC 9114 section 8.1): cancelErrorCode = 7 */
+                    /* derived by the engine (HTTP/3 resets with its own codes, RFC 9114 section 8.1): cancelErrorCode = 7 */
                 }
                 maxIdleTimeout = null
             }
+            expert { connectionIdLength = 12 }
             settings {
-                /* 0.3.0, derived by the engine (on for WebSockets and WebTransport, RFC 9220): enableConnectProtocol = true */
-                /* 0.3.0, derived by the engine (follows the QUIC datagrams, RFC 9297): h3Datagram = true */
+                /* derived by the engine (on for WebSockets and WebTransport, RFC 9220): enableConnectProtocol = true */
+                /* derived by the engine (follows the QUIC datagrams, RFC 9297): h3Datagram = true */
                 webTransport { initialMaxData = 1000 }
             }
             webTransport { maxSessionsPerConnection = 8 }
@@ -141,6 +143,7 @@ fun server(
     }
     quic = quicConfig {
         maxUniStreams = 100
+        connectionIdLength = 16
         resetStreamAt = true
     }
     altSvc = true
@@ -156,6 +159,7 @@ fun server(
 fun unset() =
     embeddedServer(Kuicksilver, configure = {
         quicMaxIdleTimeout = null
+        logger = null
         udpSocketCount = 2
     }) {}
 FIXTURE
@@ -177,16 +181,17 @@ fun server(
             maxIdleTimeout = null
             expert {
                 maxUniStreams = 100
-                /* 0.3.0, derived by the engine (on for WebTransport): resetStreamAt = true */
+                /* derived by the engine (on for WebTransport): resetStreamAt = true */
             }
         }
-        settings { /* 0.3.0, derived by the engine (from webSockets { overHttp3 }, http3 { webTransport { enabled } } and http3 { connectUdp }): enableConnectProtocol = true */ }
+        settings { /* derived by the engine (from webSockets { overHttp3 }, http3 { webTransport { enabled } } and http3 { connectUdp }): enableConnectProtocol = true */ }
         webTransport {
             enabled = true
             maxSessionsPerConnection = 4
             initialMaxStreamsBidi = 10
         }
         earlyData { this.policy = policy }
+        endpoint { expert { connectionIdLength = 16 } }
         altSvc = true
         enabled = true
     }
@@ -322,10 +327,11 @@ FIXTURE
 
 # ---- the report (standard error), file by file
 cat > "$tmp/want/report.txt" <<'REPORT'
-CHECK client.kt:37: http3 { settings { enableConnectProtocol = true } }: derived by the engine (on for WebSockets and WebTransport, RFC 9220): commented out
-CHECK client.kt:37: http3 { settings { h3Datagram = true } }: derived by the engine (follows the QUIC datagrams, RFC 9297): commented out
-CHECK client.kt:37: http3 { settings { webTransport { maxSessions = 8 } } }: now http3 { webTransport { maxSessionsPerConnection } }
+CHECK client.kt:38: http3 { settings { enableConnectProtocol = true } }: derived by the engine (on for WebSockets and WebTransport, RFC 9220): commented out
+CHECK client.kt:38: http3 { settings { h3Datagram = true } }: derived by the engine (follows the QUIC datagrams, RFC 9297): commented out
+CHECK client.kt:38: http3 { settings { webTransport { maxSessions = 8 } } }: now http3 { webTransport { maxSessionsPerConnection } }
 CHECK client.kt:30: http3 { quic { handshakeTimeout = 5.seconds } }: derived by the engine (the engine's connectTimeout: set connectTimeout): commented out
+CHECK client.kt:30: http3 { quic { connectionIdLength = 12 } }: now http3 { expert { connectionIdLength } }
 CHECK client.kt:30: http3 { quic { expert { maxUniStreams = 10 } } }: now in expert { }, at least 3 (RFC 9114 section 6.2)
 CHECK client.kt:30: http3 { quic { expert { cancelErrorCode = 7 } } }: derived by the engine (HTTP/3 resets with its own codes, RFC 9114 section 8.1): commented out
 CHECK client.kt:23: tls { expert { genericAlerts = true } }: no 0.3.0 replacement (the client sends the specific alert; tlsConfig(role) { expert { } } for the raw API): commented out
@@ -334,6 +340,7 @@ CHECK client.kt:23: tls { handshakeTimeout = 2.seconds }: derived by the engine 
 CHECK client.kt:23: tls { ech { configList = list } }: no 0.3.0 replacement (the client takes tls { ech { configLists = mapOf(host to list) } } or the HTTPS record's): commented out
 CHECK merge.kt:35: discovery = if (h3) Http3DiscoveryMode.H3Only else Http3DiscoveryMode.H1Only: H1Only is http3 { enabled = false } now: rewrite the condition by hand
 CHECK server.kt:21: http3 { quic { expert { maxUniStreams = 100 } } }: now in expert { }, at least 3 (RFC 9114 section 6.2)
+CHECK server.kt:21: http3 { quic { connectionIdLength = 16 } }: now http3 { endpoint { expert { connectionIdLength } } }
 CHECK server.kt:21: http3 { quic { expert { resetStreamAt = true } } }: derived by the engine (on for WebTransport): commented out
 CHECK server.kt:14: http3 { settings { enableConnectProtocol = true } }: derived by the engine (from webSockets { overHttp3 }, http3 { webTransport { enabled } } and http3 { connectUdp }): commented out
 CHECK server.kt:14: http3 { settings { webTransport { enabled = true } } }: now http3 { webTransport { enabled } }
