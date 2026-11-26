@@ -7,9 +7,9 @@
 #   server  the fuzzing client (wstest -m fuzzingclient) against the server engine
 #   client  the client engine against the fuzzing server (wstest -m fuzzingserver)
 # Every case must pass: Autobahn's verdict OK or INFORMATIONAL for the case and for its closing handshake. Any other
-# verdict (NON-STRICT, UNIMPLEMENTED, FAILED, WRONG CODE, UNCLEAN) fails the run, except the cases recorded below as wrong in
-# the suite itself, which must get exactly the recorded verdict (a recorded case that passes, or gets another verdict, fails
-# the run too). The number of cases must be the one recorded here: a new image that adds or drops cases is noticed.
+# verdict (NON-STRICT, UNIMPLEMENTED, FAILED, WRONG CODE, UNCLEAN) fails the run, except for the cases recorded below with
+# the RFC text that allows their verdict, which may get that verdict or pass (any other verdict fails the run). The
+# number of cases must be the one recorded here: a new image that adds or drops cases is noticed.
 #   jvm        the JVM server or client on this host, the suite in its container (reaching a server on this host as
 #              host.docker.internal on Docker Desktop, 127.0.0.1 with the host network on Linux)
 #   macos      the macosArm64 executable on this host (a Mac), the suite in its container
@@ -36,19 +36,11 @@ recorded=(
   # it. The engine hands Ktor's session a Close 1002 in place of the bad frame, and Ktor's DefaultWebSocketSession answers
   # it from its reading coroutine at once, while the application's echo goes through its writing one: on the server
   # which is written first depends on thread scheduling (both seen on the JVM and on linuxX64); on the client the session
-  # also cancels the application's block once both Close frames have passed, before it has read the message, so these
-  # cases are NON-STRICT there in every run. Section 7.1.7: the endpoint "SHOULD send a Close frame with an appropriate
+  # also cancels the application's block once both Close frames have passed, often before it has read the message, so
+  # most of these cases are NON-STRICT there in most runs. Section 7.1.7: the endpoint "SHOULD send a Close frame with an appropriate
   # status code (Section 7.4) before proceeding to _Close the WebSocket Connection_" (1002, in every run); no section asks
   # for an answer to data that came before the violation. NON-STRICT is the suite's own "allowed, not the strictest".
   "server,client 3.2,3.3,3.4,4.1.3,4.1.4,4.1.5,4.2.3,4.2.4,4.2.5,5.15 NON-STRICT/OK"
-  # A Ping between the fragments of a message (5.6 to 5.8, 5.19, 5.20): the suite wants each Pong before the echo of a
-  # message whose last fragment came after that Ping. Section 5.5.2: "Upon receipt of a Ping frame, an endpoint MUST send a
-  # Pong frame in response ... It SHOULD respond with Pong frame as soon as is practical"; section 5.4: control frames "MAY
-  # be injected in the middle of a fragmented message". Nothing orders a Pong against the data frames the application
-  # sends. Ktor's session queues the Pong as soon as it reads the Ping (its pong coroutine) and the application echoes the
-  # message as soon as it has it; the Pong was written right after the echo in some runs (FAILED), before it in others,
-  # never late or missing.
-  "server,client 5.6,5.7,5.8,5.19,5.20 FAILED/OK"
   # The fuzzing server accepts permessage-deflate in 13.3 to 13.6 only by answering client_max_window_bits (9 or 15),
   # which an offer without that parameter does not allow (RFC 7692 section 7.1.2.2: "If a received extension negotiation
   # offer doesn't have the "client_max_window_bits" extension parameter, the corresponding extension negotiation response
