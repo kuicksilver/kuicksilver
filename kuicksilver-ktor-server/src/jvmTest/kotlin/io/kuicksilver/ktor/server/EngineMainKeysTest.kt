@@ -117,6 +117,9 @@ class EngineMainKeysTest {
             Row("kuicksilver.http3.quic.pathMtu.discovery", "false") { assertEquals(false, it.resolveQuic().pmtud) },
             Row("kuicksilver.http3.quic.migration.allow", "false") { assertEquals(false, it.resolveQuic().allowMigration) },
             Row("kuicksilver.http3.quic.expert.maxUniStreams", "16") { assertEquals(16L, it.resolveQuic().maxUniStreams) },
+            Row("kuicksilver.http3.endpoint.expert.connectionIdLength", "16") {
+                assertEquals(16, it.endpointBase().build().connectionIdLength)
+            },
             Row("kuicksilver.webSockets.overHttp2", "false") { assertEquals(false, it.webSockets.overHttp2) },
             Row("kuicksilver.webSockets.overHttp3", "false") { assertEquals(false, it.webSockets.overHttp3) },
             Row("kuicksilver.webSockets.maxMessageSize", "1024") { assertEquals(1024L, it.webSockets.maxMessageSize) },

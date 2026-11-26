@@ -103,7 +103,7 @@ The DSL path of an option and its configuration-file key are the same (`http3 { 
 | Object | Kotlin API | Ktor client | Ktor server | `EngineMain` keys |
 |---|---|---|---|---|
 | [`QuicConfig`](#low-level) | `quicConfig { }` | `engine { http3 { quic { } } }` | `http3 { quic { } }` | `kuicksilver.http3.quic.*` (some options) |
-| [`QuicEndpointConfig`](#low-level) | `quicEndpointConfig { }` | `http3 { expert { connectionIdLength; dispatcher } }`, `observability { }` | `http3 { endpoint { } }` (its `expert { }` is the endpoint's), `observability { }` | `kuicksilver.http3.endpoint.*` |
+| [`QuicEndpointConfig`](#low-level) | `quicEndpointConfig { }` | `http3 { expert { connectionIdLength; dispatcher } }`, `observability { }` | `http3 { endpoint { } }` (with `expert { connectionIdLength; … }`), `observability { }` | `kuicksilver.http3.endpoint.*` |
 | [`TlsConfig`](#low-level) | `tlsConfig(role) { }` | `engine { tls { } }`, `proxies { tls { } }` | `tls { }`, `tlsConnector { tls { } }` | `kuicksilver.tls.*` |
 | [`Http3Settings`](#low-level) | `http3Settings { }` | `engine { http3 { settings { } } }` | `http3 { settings { } }` | |
 | [`Http2Settings`](#low-level) | `http2Settings { }` | `engine { http2 { settings { } } }` | `http2 { settings { } }` | |
@@ -448,8 +448,7 @@ RESET_STREAM_AT and needs QUIC datagrams.
 ### `configure { http3 { endpoint { } } }`
 
 `ServerEndpointConfig`: the QUIC endpoint of each HTTP/3 listener (one per TLS connector). Its `expert { }` block
-(*experimental*) is the endpoint's [`quicEndpointConfig { expert { } }`](#low-level). The connection ID length is derived:
-from `loadBalancer` when set, else 8 bytes.
+(*experimental*, below) holds the connection ID length and the endpoint's admission internals.
 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
@@ -460,6 +459,19 @@ from `loadBalancer` when set, else 8 bytes.
 | `admission` | `ConnectionAdmission` | `ConnectionAdmission.default()` | 0.3.0 | stable | 🔒 | admission of new QUIC connections: the default asks for a Retry above 256 handshakes in flight or 8 MiB of their buffers; `ConnectionAdmission.AlwaysRetry` validates every address first |
 | `maxConnectionLifetime` | `Duration?` | `null` (no limit) | 0.3.0 | stable | | a server connection older than this closes with NO_ERROR, whatever its activity |
 | `loadBalancer` | `QuicLbConfig?` | `null` | 0.3.0 | experimental | | QUIC-LB connection IDs of every listener (draft-ietf-quic-load-balancers-21); `engine.updateLoadBalancer(next)` changes it on the running engine ([Behind a load balancer](quic.md#behind-a-load-balancer)) |
+
+### `configure { http3 { endpoint { expert { } } } }`
+
+`ServerEndpointExpert`, *experimental*: the connection ID length of the listeners, and the admission internals of
+[`quicEndpointConfig { expert { } }`](#low-level), which these options set.
+
+| Option | Type | Default | Since | Status | 🔒 | Description |
+|---|---|---|---|---|---|---|
+| `connectionIdLength` | `Int` (bytes) | 8 | 0.3.0 | experimental | | length (4..20) of the connection IDs the listeners issue; with `loadBalancer` the QUIC-LB configuration's, and setting it fails the start (`... is derived by the engine`) |
+| `initialAdmissionQueue` | `Int` | 1024 | 0.3.0 | experimental | | new Initials queued for admission per receive batch, at least 1; more are dropped |
+| `rejectInitialFromReflectivePorts` | `Boolean` | `true` | 0.3.0 | experimental, delicate | 🔒 | drop Initials from source ports 53, 123, 1900, 5353 and 11211 (reflection attacks) |
+| `statelessPerAddressPerSecond` | `Int` | 8 | 0.3.0 | experimental | 🔒 | stateless answers (Retry, Version Negotiation, Stateless Reset, refusals) per client address per second, at least 1 |
+| `statelessTotalPerSecond` | `Int` | 1000 | 0.3.0 | experimental | 🔒 | stateless answers per second over all addresses, at least 1 |
 
 ### `configure { webSockets { } }`
 
@@ -547,6 +559,7 @@ and a key of 0.2.x or of an earlier 0.3.0 snapshot names the key that replaced i
 | `kuicksilver.http3.endpoint.maxConnections` | at least 1 | 10 000 | 0.3.0 | `http3 { endpoint { maxConnections } }` |
 | `kuicksilver.http3.endpoint.maxConnectionsPerIp` | at least 1, or `off` | 256 | 0.3.0 | `http3 { endpoint { maxConnectionsPerIp } }` |
 | `kuicksilver.http3.endpoint.acceptQueue` | at least 1 | 128 | 0.3.0 | `http3 { endpoint { acceptQueue } }` |
+| `kuicksilver.http3.endpoint.expert.connectionIdLength` | bytes, 4..20 | 8 | 0.3.0 | `http3 { endpoint { expert { connectionIdLength } } }` |
 | `kuicksilver.http3.quic.maxIdleTimeout` | a duration, or `off` (none advertised) | 30 s | 0.3.0 | `http3 { quic { maxIdleTimeout } }` |
 | `kuicksilver.http3.quic.handshakeTimeout` | a positive duration | 10 s | 0.3.0 | `http3 { quic { handshakeTimeout } }` |
 | `kuicksilver.http3.quic.keepAlive` | a duration, at most 3/4 of the idle timeout, or `off` | `off` | 0.3.0 | `http3 { quic { keepAlive } }`: PINGs that keep a quiet connection (and a NAT's mapping) open |
@@ -714,7 +727,7 @@ client-only endpoint), `toBuilder()`. The one place for the connection ID length
 ### `quicEndpointConfig { expert { } }`
 
 `QuicEndpointConfig.Builder.Expert`, *experimental*: admission internals; the server engine's
-`http3 { endpoint { expert { } } }` is this block.
+`http3 { endpoint { expert { } } }` sets them, next to its connection ID length.
 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
@@ -1054,6 +1067,7 @@ above under the new name only. Behaviour that changed with the defaults is in th
 | `http3 = false` | `http3 { enabled = false }` | |
 | `altSvc` | `http3 { altSvc }` | |
 | `quic = quicConfig { … }` | `http3 { quic { … } }` | `expert { resetStreamAt; cancelErrorCode }` are derived |
+| `quic = quicConfig { connectionIdLength = n }` | `http3 { endpoint { expert { connectionIdLength = n } } }` | the endpoint is its one place; refused next to `loadBalancer`, which dictates it |
 | `quicMaxIdleTimeout` | `http3 { quic { maxIdleTimeout } }` | the second way to set it is gone |
 | `udpSocketCount` | `http3 { endpoint { loops } }` | |
 | `quicAdmission` (null: the default) | `http3 { endpoint { admission } }` | not nullable; default `ConnectionAdmission.default()` |

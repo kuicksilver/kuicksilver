@@ -675,18 +675,73 @@ public class ServerEndpointConfig internal constructor() {
     /**
      * The QUIC-LB configuration of every HTTP/3 listener's connection IDs (draft-ietf-quic-load-balancers-21;
      * docs/guide/quic.md, "Behind a load balancer"); null (the default) for none. The listeners' connection ID length
-     * follows it (else 8 bytes). Change it on the running engine with [KuicksilverApplicationEngine.updateLoadBalancer].
+     * follows it, and `expert { connectionIdLength }` is refused next to it. Change it on the running engine with
+     * [KuicksilverApplicationEngine.updateLoadBalancer].
      */
     @ExperimentalKuicksilverApi
     public var loadBalancer: QuicLbConfig? = null
 
     internal val endpointBuilder: QuicEndpointConfig.Builder = QuicEndpointConfig.Builder()
 
-    /** Admission internals few servers need (`QuicEndpointConfig.Builder.Expert`: stateless limits, the Initial queue, reflective ports). */
+    /** The connection ID length and the admission internals few servers need; experimental. */
     @ExperimentalKuicksilverApi
-    public fun expert(block: QuicEndpointConfig.Builder.Expert.() -> Unit) {
-        endpointBuilder.expert.block()
+    public val expert: ServerEndpointExpert = ServerEndpointExpert(endpointBuilder.expert)
+
+    /** Sets the [expert] options. */
+    @ExperimentalKuicksilverApi
+    public fun expert(block: ServerEndpointExpert.() -> Unit) {
+        expert.block()
     }
+}
+
+/**
+ * The expert options of the HTTP/3 listeners' QUIC endpoints: the connection ID length, and the admission internals of
+ * `QuicEndpointConfig.Builder.Expert` (stateless limits, the Initial queue, reflective ports); experimental.
+ */
+@ExperimentalKuicksilverApi
+@KuicksilverDsl
+public class ServerEndpointExpert internal constructor(
+    private val endpoint: QuicEndpointConfig.Builder.Expert,
+) {
+    /** Whether [connectionIdLength] was assigned: with `loadBalancer` the engine refuses it, since QUIC-LB dictates the length. */
+    internal var connectionIdLengthAssigned: Boolean = false
+        private set
+
+    /**
+     * Default 8 bytes (4..20): the length of every connection ID the listeners issue (RFC 9000 section 5.1), the length
+     * their short headers are parsed with. With `loadBalancer` the length is the QUIC-LB configuration's, and setting this
+     * fails the start.
+     *
+     * @throws IllegalArgumentException when set outside 4..20.
+     */
+    public var connectionIdLength: Int = 8
+        set(value) {
+            require(value in 4..20) { "http3 { endpoint { expert { connectionIdLength } } } must be 4..20, not $value" }
+            field = value
+            connectionIdLengthAssigned = true
+        }
+
+    /** Default 1024, at least 1: Initials waiting for admission after one receive batch; more are dropped. */
+    public var initialAdmissionQueue: Int by endpoint::initialAdmissionQueue
+
+    /**
+     * Default true: drop Initials whose source port is 53, 123, 1900, 5353 or 11211: a reflection attempt, never a real
+     * client (threat-model 3.1). False only weakens the default.
+     */
+    @DelicateKuicksilverApi
+    @SecuritySensitive
+    public var rejectInitialFromReflectivePorts: Boolean by endpoint::rejectInitialFromReflectivePorts
+
+    /**
+     * Default 8 per second, at least 1: stateless answers (Retry, Version Negotiation, Stateless Reset, INVALID_TOKEN close)
+     * per client address per second (RFC 9000 section 8: amplification).
+     */
+    @SecuritySensitive
+    public var statelessPerAddressPerSecond: Int by endpoint::statelessPerAddressPerSecond
+
+    /** Default 1000 per second, at least 1: stateless answers per second over all addresses. */
+    @SecuritySensitive
+    public var statelessTotalPerSecond: Int by endpoint::statelessTotalPerSecond
 }
 
 /**

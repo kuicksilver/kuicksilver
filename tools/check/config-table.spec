@@ -46,6 +46,7 @@
 `configure { http3 { earlyData { } } }` | kuicksilver-ktor-server/src/commonMain/kotlin/io/kuicksilver/ktor/server/KuicksilverServerConfig.kt | ServerEarlyDataConfig | var | configure.http3.earlyData
 `configure { http3 { webTransport { } } }` | kuicksilver-ktor-server/src/commonMain/kotlin/io/kuicksilver/ktor/server/KuicksilverServerConfig.kt | ServerWebTransportConfig | var | configure.http3.webTransport
 `configure { http3 { endpoint { } } }` | kuicksilver-ktor-server/src/commonMain/kotlin/io/kuicksilver/ktor/server/KuicksilverServerConfig.kt | ServerEndpointConfig | var | configure.http3.endpoint
+`configure { http3 { endpoint { expert { } } } }` | kuicksilver-ktor-server/src/commonMain/kotlin/io/kuicksilver/ktor/server/KuicksilverServerConfig.kt | ServerEndpointExpert | var | configure.http3.endpoint.expert
 `configure { webSockets { } }` | kuicksilver-ktor-server/src/commonMain/kotlin/io/kuicksilver/ktor/server/KuicksilverServerConfig.kt | ServerWebSocketsConfig | var | configure.webSockets
 `configure { tcp { } }` | kuicksilver-ktor-server/src/commonMain/kotlin/io/kuicksilver/ktor/server/KuicksilverServerConfig.kt | TcpLimitsConfig | var | configure.tcp
 `configure { observability { } }` | kuicksilver-ktor-server/src/commonMain/kotlin/io/kuicksilver/ktor/server/KuicksilverServerConfig.kt | ServerObservability | var | configure.observability

@@ -94,6 +94,7 @@ public object EngineMain {
             "kuicksilver.http3.endpoint.maxConnections",
             "kuicksilver.http3.endpoint.maxConnectionsPerIp",
             "kuicksilver.http3.endpoint.acceptQueue",
+            "kuicksilver.http3.endpoint.expert.connectionIdLength",
             "kuicksilver.http3.quic.maxIdleTimeout",
             "kuicksilver.http3.quic.handshakeTimeout",
             "kuicksilver.http3.quic.keepAlive",
@@ -249,6 +250,7 @@ public object EngineMain {
         k.int("kuicksilver.http3.endpoint.maxConnections") { http3.endpoint.maxConnections = it }
         k.intOrOff("kuicksilver.http3.endpoint.maxConnectionsPerIp") { http3.endpoint.maxConnectionsPerIp = it }
         k.int("kuicksilver.http3.endpoint.acceptQueue") { http3.endpoint.acceptQueue = it }
+        k.int("kuicksilver.http3.endpoint.expert.connectionIdLength") { http3.endpoint.expert.connectionIdLength = it }
         val q = http3.quicBuilder
         k.durationOrOff("kuicksilver.http3.quic.maxIdleTimeout") { q.maxIdleTimeout = it }
         k.duration("kuicksilver.http3.quic.handshakeTimeout") { q.handshakeTimeout = it }

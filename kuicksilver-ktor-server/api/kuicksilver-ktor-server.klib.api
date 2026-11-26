@@ -370,6 +370,9 @@ final class io.kuicksilver.ktor.server/ServerEarlyDataConfig { // io.kuicksilver
 }
 
 final class io.kuicksilver.ktor.server/ServerEndpointConfig { // io.kuicksilver.ktor.server/ServerEndpointConfig|null[0]
+    final val expert // io.kuicksilver.ktor.server/ServerEndpointConfig.expert|{}expert[0]
+        final fun <get-expert>(): io.kuicksilver.ktor.server/ServerEndpointExpert // io.kuicksilver.ktor.server/ServerEndpointConfig.expert.<get-expert>|<get-expert>(){}[0]
+
     final var acceptQueue // io.kuicksilver.ktor.server/ServerEndpointConfig.acceptQueue|{}acceptQueue[0]
         final fun <get-acceptQueue>(): kotlin/Int // io.kuicksilver.ktor.server/ServerEndpointConfig.acceptQueue.<get-acceptQueue>|<get-acceptQueue>(){}[0]
         final fun <set-acceptQueue>(kotlin/Int) // io.kuicksilver.ktor.server/ServerEndpointConfig.acceptQueue.<set-acceptQueue>|<set-acceptQueue>(kotlin.Int){}[0]
@@ -392,7 +395,25 @@ final class io.kuicksilver.ktor.server/ServerEndpointConfig { // io.kuicksilver.
         final fun <get-maxConnectionsPerIp>(): kotlin/Int? // io.kuicksilver.ktor.server/ServerEndpointConfig.maxConnectionsPerIp.<get-maxConnectionsPerIp>|<get-maxConnectionsPerIp>(){}[0]
         final fun <set-maxConnectionsPerIp>(kotlin/Int?) // io.kuicksilver.ktor.server/ServerEndpointConfig.maxConnectionsPerIp.<set-maxConnectionsPerIp>|<set-maxConnectionsPerIp>(kotlin.Int?){}[0]
 
-    final fun expert(kotlin/Function1<io.kuicksilver.quic/QuicEndpointConfig.Builder.Expert, kotlin/Unit>) // io.kuicksilver.ktor.server/ServerEndpointConfig.expert|expert(kotlin.Function1<io.kuicksilver.quic.QuicEndpointConfig.Builder.Expert,kotlin.Unit>){}[0]
+    final fun expert(kotlin/Function1<io.kuicksilver.ktor.server/ServerEndpointExpert, kotlin/Unit>) // io.kuicksilver.ktor.server/ServerEndpointConfig.expert|expert(kotlin.Function1<io.kuicksilver.ktor.server.ServerEndpointExpert,kotlin.Unit>){}[0]
+}
+
+final class io.kuicksilver.ktor.server/ServerEndpointExpert { // io.kuicksilver.ktor.server/ServerEndpointExpert|null[0]
+    final var connectionIdLength // io.kuicksilver.ktor.server/ServerEndpointExpert.connectionIdLength|{}connectionIdLength[0]
+        final fun <get-connectionIdLength>(): kotlin/Int // io.kuicksilver.ktor.server/ServerEndpointExpert.connectionIdLength.<get-connectionIdLength>|<get-connectionIdLength>(){}[0]
+        final fun <set-connectionIdLength>(kotlin/Int) // io.kuicksilver.ktor.server/ServerEndpointExpert.connectionIdLength.<set-connectionIdLength>|<set-connectionIdLength>(kotlin.Int){}[0]
+    final var initialAdmissionQueue // io.kuicksilver.ktor.server/ServerEndpointExpert.initialAdmissionQueue|{}initialAdmissionQueue[0]
+        final fun <get-initialAdmissionQueue>(): kotlin/Int // io.kuicksilver.ktor.server/ServerEndpointExpert.initialAdmissionQueue.<get-initialAdmissionQueue>|<get-initialAdmissionQueue>(){}[0]
+        final fun <set-initialAdmissionQueue>(kotlin/Int) // io.kuicksilver.ktor.server/ServerEndpointExpert.initialAdmissionQueue.<set-initialAdmissionQueue>|<set-initialAdmissionQueue>(kotlin.Int){}[0]
+    final var rejectInitialFromReflectivePorts // io.kuicksilver.ktor.server/ServerEndpointExpert.rejectInitialFromReflectivePorts|{}rejectInitialFromReflectivePorts[0]
+        final fun <get-rejectInitialFromReflectivePorts>(): kotlin/Boolean // io.kuicksilver.ktor.server/ServerEndpointExpert.rejectInitialFromReflectivePorts.<get-rejectInitialFromReflectivePorts>|<get-rejectInitialFromReflectivePorts>(){}[0]
+        final fun <set-rejectInitialFromReflectivePorts>(kotlin/Boolean) // io.kuicksilver.ktor.server/ServerEndpointExpert.rejectInitialFromReflectivePorts.<set-rejectInitialFromReflectivePorts>|<set-rejectInitialFromReflectivePorts>(kotlin.Boolean){}[0]
+    final var statelessPerAddressPerSecond // io.kuicksilver.ktor.server/ServerEndpointExpert.statelessPerAddressPerSecond|{}statelessPerAddressPerSecond[0]
+        final fun <get-statelessPerAddressPerSecond>(): kotlin/Int // io.kuicksilver.ktor.server/ServerEndpointExpert.statelessPerAddressPerSecond.<get-statelessPerAddressPerSecond>|<get-statelessPerAddressPerSecond>(){}[0]
+        final fun <set-statelessPerAddressPerSecond>(kotlin/Int) // io.kuicksilver.ktor.server/ServerEndpointExpert.statelessPerAddressPerSecond.<set-statelessPerAddressPerSecond>|<set-statelessPerAddressPerSecond>(kotlin.Int){}[0]
+    final var statelessTotalPerSecond // io.kuicksilver.ktor.server/ServerEndpointExpert.statelessTotalPerSecond|{}statelessTotalPerSecond[0]
+        final fun <get-statelessTotalPerSecond>(): kotlin/Int // io.kuicksilver.ktor.server/ServerEndpointExpert.statelessTotalPerSecond.<get-statelessTotalPerSecond>|<get-statelessTotalPerSecond>(){}[0]
+        final fun <set-statelessTotalPerSecond>(kotlin/Int) // io.kuicksilver.ktor.server/ServerEndpointExpert.statelessTotalPerSecond.<set-statelessTotalPerSecond>|<set-statelessTotalPerSecond>(kotlin.Int){}[0]
 }
 
 final class io.kuicksilver.ktor.server/ServerObservability { // io.kuicksilver.ktor.server/ServerObservability|null[0]

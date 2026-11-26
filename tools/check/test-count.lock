@@ -3333,6 +3333,7 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.RepeatOffender
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.RepeatOffendersTest.strikesOlderThanTheWindowDoNotCount
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerClientCaReloadTest.tcpAndQuicVerifyAgainstTheReloadedBundleKeepOpenConnections
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.aConnectorsTlsOverridesTheEnginesAndInheritsTheRest
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.connectionIdLengthIsSetInTheEndpointExpertBlock
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.connectorAndProxyOptionsReachTheListener
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.defaultConnectors
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.defaults
@@ -3342,6 +3343,8 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMa
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.negative_aDerivedOptionFailsTheStart
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.negative_aTlsConnectorWithoutAnIdentityFailsTheStart
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.negative_clientAuthWithoutTrustIsRefused
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.negative_connectionIdLengthNextToALoadBalancerFailsTheStart
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.negative_connectionIdLengthOutOfRangeOrNextToALoadBalancerIsRefused
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.negative_derivedOptionsAreRefusedByName
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.negative_explicitStreamLimitsTooSmallAreRefused
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.negative_h2cOnAPortTheIdentityTurnsIntoTlsFailsTheStart

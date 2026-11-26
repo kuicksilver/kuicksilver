@@ -303,11 +303,14 @@ public class KuicksilverApplicationEngine(
 
         /**
          * The endpoint settings of every HTTP/3 listener beyond the server and admission the engine adds: the
-         * `http3 { endpoint { } }` block, its connection ID length derived from the load balancer (else 8 bytes).
+         * `http3 { endpoint { } }` block, its connection ID length `expert { connectionIdLength }`, or the load balancer's.
+         * Throws IllegalArgumentException for an explicit length next to a load balancer, which dictates it.
          */
         @OptIn(ExperimentalKuicksilverApi::class)
         internal fun endpointBase(): QuicEndpointConfig.Builder {
+            refuseDerivedEndpoint()
             val e = http3.endpoint
+            val lb = e.loadBalancer
             return e.endpointBuilder.also {
                 it.loops = e.loops
                 it.maxConnections = e.maxConnections
@@ -315,7 +318,18 @@ public class KuicksilverApplicationEngine(
                 it.acceptQueue = e.acceptQueue
                 it.maxConnectionLifetime = e.maxConnectionLifetime
                 it.loadBalancer = e.loadBalancer
-                it.connectionIdLength = e.loadBalancer?.connectionIdLength ?: 8
+                it.connectionIdLength = lb?.connectionIdLength ?: e.expert.connectionIdLength
+            }
+        }
+
+        /** Refuses `http3 { endpoint { expert { connectionIdLength } } }` next to a load balancer, which dictates the length. */
+        @OptIn(ExperimentalKuicksilverApi::class)
+        internal fun refuseDerivedEndpoint() {
+            val e = http3.endpoint
+            val lb = e.loadBalancer ?: return
+            require(!e.expert.connectionIdLengthAssigned) {
+                "http3 { endpoint { expert { connectionIdLength } } } is derived by the engine (the loadBalancer's QUIC-LB " +
+                    "configuration dictates it: ${lb.connectionIdLength} bytes); remove it"
             }
         }
 
@@ -774,6 +788,7 @@ public class KuicksilverApplicationEngine(
                     h3Quic = configuration.resolveQuic()
                     h3Settings = configuration.resolveHttp3Settings()
                     h2Settings = configuration.resolveHttp2Settings()
+                    configuration.refuseDerivedEndpoint()
                     engineTls = configuration.tls.resolve("tls").also { resolvedTls += it }
                     val listeners = configuration.connectors.map { resolve(everyInterfaceOf(it)) }
                     // RFC 9113 section 9.2.2 for HTTP/2 over TLS 1.2, before anything binds

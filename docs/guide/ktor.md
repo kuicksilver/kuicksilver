@@ -422,7 +422,8 @@ idle timeout, streams, windows, path MTU), `settings { }` (`Http3Settings.Builde
 server), `maxConnections`, `maxConnectionsPerIp`, `acceptQueue`, `admission` (Retry policy, Ktor-Netty's
 `quicTokenHandler`), `maxConnectionLifetime`, `loadBalancer` (QUIC-LB connection IDs, experimental;
 `engine.updateLoadBalancer` changes them, [QUIC: Behind a load balancer](quic.md#behind-a-load-balancer); the connection
-ID length follows it) and `expert { }`. The engine derives what follows from other options (`expert { resetStreamAt }`
+ID length follows it) and `expert { }` (`connectionIdLength`, 8 bytes by default and refused next to `loadBalancer`, and
+the admission internals). The engine derives what follows from other options (`expert { resetStreamAt }`
 and `cancelErrorCode` in `quic { }`; `enableConnectProtocol`, `h3Datagram`, `webTransport`, `earlyData` in
 `settings { }`) and refuses them when assigned, naming the option. UDP socket buffer sizes are not configurable yet.
 
@@ -1196,6 +1197,7 @@ connector, which has no DSL block) and Ktor's own `ktor.deployment.connectionIdl
 | `kuicksilver.http3.endpoint.maxConnections` | `http3 { endpoint { maxConnections } }`: QUIC connections each HTTP/3 listener holds (`10000`); see [Connection limits](#connection-limits) |
 | `kuicksilver.http3.endpoint.maxConnectionsPerIp` | `http3 { endpoint { maxConnectionsPerIp } }`: QUIC connections of one client IP (`256`; `off` behind a NAT or kube-proxy) |
 | `kuicksilver.http3.endpoint.acceptQueue` | `http3 { endpoint { acceptQueue } }`: handshaken connections waiting for the accept loop (`128`) |
+| `kuicksilver.http3.endpoint.expert.connectionIdLength` | `http3 { endpoint { expert { connectionIdLength } } }`: the length of the listeners' connection IDs, 4..20 (`8`) |
 | `kuicksilver.http3.quic.maxIdleTimeout`, `.handshakeTimeout`, `.keepAlive`, `.maxBidiStreams` | `http3 { quic { … } }`: the idle timeout (`30s`; `off` advertises none), the handshake deadline (`10s`), the PING interval of a quiet connection (`off`) and the request streams a client may have open (`100`) |
 | `kuicksilver.http3.quic.pathMtu.maxReceive`, `.initial`, `.maxSend`, `.discovery` | `http3 { quic { pathMtu { … } } }`: the advertised `max_udp_payload_size` (1200..1500, the endpoint's datagram slots), the datagram size a connection starts with, the largest datagram sent and DPLPMTUD; see [Tunnels and NAT paths](quic.md#tunnels-and-nat-paths-wireguard) |
 | `kuicksilver.http3.quic.migration.allow` | `http3 { quic { migration { allow } } }`: follow a client to a new address (`true`) |

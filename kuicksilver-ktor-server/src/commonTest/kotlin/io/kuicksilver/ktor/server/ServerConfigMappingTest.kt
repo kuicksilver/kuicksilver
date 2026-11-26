@@ -187,6 +187,92 @@ class ServerConfigMappingTest {
         lb.key?.close()
     }
 
+    /** The connection ID length is the server's to set again (a review of the 0.3.0 layout), unless QUIC-LB dictates it. */
+    @OptIn(io.kuicksilver.annotations.DelicateKuicksilverApi::class)
+    @Test
+    fun connectionIdLengthIsSetInTheEndpointExpertBlock() {
+        assertEquals(16, config { http3 { endpoint { expert { connectionIdLength = 16 } } } }.endpointBase().build().connectionIdLength)
+        assertEquals(4, config { http3 { endpoint { expert { connectionIdLength = 4 } } } }.endpointBase().build().connectionIdLength)
+        // the admission internals still reach the endpoint through the same block
+        val e =
+            config {
+                http3 {
+                    endpoint {
+                        expert {
+                            connectionIdLength = 20
+                            initialAdmissionQueue = 64
+                            rejectInitialFromReflectivePorts = false
+                            statelessPerAddressPerSecond = 3
+                            statelessTotalPerSecond = 50
+                        }
+                    }
+                }
+            }.endpointBase().build()
+        assertEquals(20, e.connectionIdLength)
+        assertEquals(64, e.initialQueueCap)
+        assertEquals(false, e.rejectInitialFromReflectivePorts)
+        assertEquals(3, e.statelessPerAddressPerSecond)
+        assertEquals(50, e.statelessTotalPerSecond)
+    }
+
+    @Test fun negative_connectionIdLengthOutOfRangeOrNextToALoadBalancerIsRefused() {
+        for (bad in listOf(3, 21, 0)) {
+            val e = assertFailsWith<IllegalArgumentException> { config { http3 { endpoint { expert { connectionIdLength = bad } } } } }
+            assertEquals("http3 { endpoint { expert { connectionIdLength } } } must be 4..20, not $bad", e.message)
+        }
+        val lb = QuicLbConfig(1, byteArrayOf(1, 2, 3, 4, 5), 4, KslQuicCrypto.newLoadBalancerKey(KslCrypto.randomBytes(16)))
+        try {
+            // even the length the load balancer has: the QUIC-LB configuration is the one place for it then
+            for (n in listOf(8, lb.connectionIdLength)) {
+                val c =
+                    config {
+                        http3 {
+                            endpoint {
+                                loadBalancer = lb
+                                expert { connectionIdLength = n }
+                            }
+                        }
+                    }
+                val e = assertFailsWith<IllegalArgumentException> { c.refuseDerivedEndpoint() }
+                assertEquals(
+                    "http3 { endpoint { expert { connectionIdLength } } } is derived by the engine (the loadBalancer's QUIC-LB " +
+                        "configuration dictates it: ${lb.connectionIdLength} bytes); remove it",
+                    e.message,
+                )
+                assertFailsWith<IllegalArgumentException> { c.endpointBase() }
+            }
+        } finally {
+            lb.key?.close()
+        }
+    }
+
+    /** The refusal comes at the start, before anything binds. */
+    @Test fun negative_connectionIdLengthNextToALoadBalancerFailsTheStart() =
+        serverTest {
+            val lb = QuicLbConfig(1, byteArrayOf(1, 2, 3, 4, 5), 4, KslQuicCrypto.newLoadBalancerKey(KslCrypto.randomBytes(16)))
+            try {
+                val server =
+                    kuicksilverServer(null, configure = {
+                        tlsConnector {
+                            tls { identity = ServerFixtures.identity() }
+                            host = "127.0.0.1"
+                            port = 0
+                        }
+                        http3 {
+                            endpoint {
+                                loadBalancer = lb
+                                expert { connectionIdLength = 12 }
+                            }
+                        }
+                    }) {}
+                val e = assertFailsWith<IllegalArgumentException> { server.startSuspend(false) }
+                assertTrue("connectionIdLength" in e.message!!, e.message)
+                runCatching { server.stopSuspend(0, 0) }
+            } finally {
+                lb.key?.close()
+            }
+        }
+
     @Test fun extendedConnectFollowsWhatNeedsIt() {
         assertEquals(false, config { webSockets { overHttp3 = false } }.resolveHttp3Settings().enableConnectProtocol)
         assertEquals(

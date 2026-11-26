@@ -1189,6 +1189,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   | server `requestHeaderTimeoutSeconds: Int` | `requestHeaderTimeout: Duration` |
   | server `http3: Boolean`, `altSvc` | `http3 { enabled; altSvc }` |
   | server `quic = …`, `quicMaxIdleTimeout` | `http3 { quic { … } }`, `http3 { quic { maxIdleTimeout } }` |
+  | server `quic = quicConfig { connectionIdLength }` | `http3 { endpoint { expert { connectionIdLength } } }` (`kuicksilver.http3.endpoint.expert.connectionIdLength`; refused next to `loadBalancer`) |
   | server `udpSocketCount` | `http3 { endpoint { loops } }` |
   | server `quicAdmission` (null: the default) | `http3 { endpoint { admission } }` (not nullable) |
   | server `http3Settings = …` | `http3 { settings { … } }` |

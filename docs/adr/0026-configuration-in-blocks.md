@@ -214,3 +214,10 @@ The design left these cases open or met them only in the code; each was decided 
   TLS 1.2 and the MUST holds for every handshake, `sniSelector` identities included (which a start check cannot see),
   while TLS 1.3 clients keep HTTP/2. The start still fails where no TLS 1.2 client could ever get HTTP/2 (`keyExchangeGroups`
   without `secp256r1`), and says at Info when the connector's own certificate keeps TLS 1.2 clients on HTTP/1.1.
+- **The server's connection ID length is `http3 { endpoint { expert { connectionIdLength } } }`.** Moving the length to
+  the endpoint had left the server engine without it (0.2.x set it through `quic = quicConfig { connectionIdLength }`).
+  It is an expert option of the listeners' endpoint, as the client's is `http3 { expert { connectionIdLength } }`; the
+  block is a server class of its own (`ServerEndpointExpert`) that also sets the endpoint's admission internals, since a
+  low-level builder block cannot gain a field the low level does not have. With `loadBalancer` the QUIC-LB configuration
+  dictates the length: an explicit assignment, even of the same value, fails the start as derived. Its `EngineMain` key is
+  `kuicksilver.http3.endpoint.expert.connectionIdLength`.

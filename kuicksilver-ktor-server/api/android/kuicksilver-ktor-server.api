@@ -296,6 +296,7 @@ public final class io/kuicksilver/ktor/server/ServerEndpointConfig {
 	public final fun expert (Lkotlin/jvm/functions/Function1;)V
 	public final fun getAcceptQueue ()I
 	public final fun getAdmission ()Lio/kuicksilver/quic/ConnectionAdmission;
+	public final fun getExpert ()Lio/kuicksilver/ktor/server/ServerEndpointExpert;
 	public final fun getLoadBalancer ()Lio/kuicksilver/quic/QuicLbConfig;
 	public final fun getLoops ()I
 	public final fun getMaxConnectionLifetime-FghU774 ()Lkotlin/time/Duration;
@@ -308,6 +309,19 @@ public final class io/kuicksilver/ktor/server/ServerEndpointConfig {
 	public final fun setMaxConnectionLifetime-BwNAW2A (Lkotlin/time/Duration;)V
 	public final fun setMaxConnections (I)V
 	public final fun setMaxConnectionsPerIp (Ljava/lang/Integer;)V
+}
+
+public final class io/kuicksilver/ktor/server/ServerEndpointExpert {
+	public final fun getConnectionIdLength ()I
+	public final fun getInitialAdmissionQueue ()I
+	public final fun getRejectInitialFromReflectivePorts ()Z
+	public final fun getStatelessPerAddressPerSecond ()I
+	public final fun getStatelessTotalPerSecond ()I
+	public final fun setConnectionIdLength (I)V
+	public final fun setInitialAdmissionQueue (I)V
+	public final fun setRejectInitialFromReflectivePorts (Z)V
+	public final fun setStatelessPerAddressPerSecond (I)V
+	public final fun setStatelessTotalPerSecond (I)V
 }
 
 public final class io/kuicksilver/ktor/server/ServerObservability {
