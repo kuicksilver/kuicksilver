@@ -136,7 +136,7 @@ class ClientDiagnosticsTest {
                     assertEquals(FallbackReason.NoAlternative, first.kuicksilverDiagnostics?.fallback)
                     assertEquals(
                         listOf(
-                            LogLevel.Info to "kuicksilver: https://127.0.0.1:$portOne: no HTTP/3 alternative advertised, using HTTP/1.1",
+                            LogLevel.Info to "kuicksilver: https://127.0.0.1:$portOne: no usable HTTP/3 alternative, using HTTP/1.1",
                         ),
                         log.lines,
                     )
@@ -144,7 +144,7 @@ class ClientDiagnosticsTest {
                     assertEquals(1, log.lines.size, "the origin's second call logs nothing at Info: ${log.lines}")
                     c.get("https://127.0.0.1:$portTwo/").bodyAsText()
                     assertEquals(
-                        "kuicksilver: https://127.0.0.1:$portTwo: no HTTP/3 alternative advertised, using HTTP/1.1",
+                        "kuicksilver: https://127.0.0.1:$portTwo: no usable HTTP/3 alternative, using HTTP/1.1",
                         log.lines
                             .drop(1)
                             .single()
@@ -166,7 +166,7 @@ class ClientDiagnosticsTest {
                 testClient(Http3Discovery.Auto, engine = { observability { logger = log } }).use { c ->
                     val first = c.get("https://127.0.0.1:$port/")
                     assertEquals(FallbackReason.NoAlternative, first.kuicksilverDiagnostics?.fallback)
-                    assertTrue(log.lines.none { "no HTTP/3 alternative advertised" in it.second }, "${log.lines}")
+                    assertTrue(log.lines.none { "no usable HTTP/3 alternative" in it.second }, "${log.lines}")
                 }
             } finally {
                 server.stopSuspend(100, 500)
@@ -186,7 +186,7 @@ class ClientDiagnosticsTest {
                         assertEquals("ok", a.await())
                         assertEquals("ok", b.await())
                     }
-                    assertEquals(1, log.lines.count { "no HTTP/3 alternative advertised" in it.second }, "${log.lines}")
+                    assertEquals(1, log.lines.count { "no usable HTTP/3 alternative" in it.second }, "${log.lines}")
                 }
             } finally {
                 server.stopSuspend(100, 500)
@@ -560,7 +560,7 @@ class ClientDiagnosticsTest {
             try {
                 testClient(Http3Discovery.Auto, engine = { observability { logger = log } }).use { c ->
                     c.get("https://127.0.0.1:$port/?token=secret")
-                    val line = log.lines.single { "no HTTP/3 alternative advertised" !in it.second }.second
+                    val line = log.lines.single { "no usable HTTP/3 alternative" !in it.second }.second
                     assertEquals("kuicksilver: GET https://127.0.0.1:$port/ -> HTTP/1.1 (fallback=NoAlternative)", line)
                     assertFalse("secret" in line, line)
                     assertFalse(log.lines.any { "secret" in it.second }, "no line carries the query: ${log.lines}")

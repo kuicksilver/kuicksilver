@@ -55,11 +55,13 @@ echo "sha256/$(openssl s_client -connect api.example.com:443 -servername api.exa
 ```
 
 **When no pin matches**, the handshake fails with `TlsException.Verify` whose `reason` is `VerifyReason.PinMismatch`.
-Over TCP the call throws that exception (on the JVM a `TlsException` is an `javax.net.ssl.SSLException`). Over QUIC the
+Over TCP the call throws that exception (on the JVM a `TlsException` is a `javax.net.ssl.SSLException`). Over QUIC the
 connection ends with `QuicException.ConnectionLost.TransportClosed` (TLS alert 42, `bad_certificate`) whose `cause` is
 the `TlsException.Verify`; in the default `Auto` mode the call then goes over TCP, fails the same way there, and throws
 the TCP failure with the HTTP/3 one in `suppressed`. `PinMismatch.chainPins` lists the pins the server's validated chain
-has, leaf first, in the same `sha256/` form: logged once, it shows what to pin, or which key the server changed to
+has, leaf first, in the same `sha256/` form: logged once, it shows what to pin, or which key the server changed to. It
+is empty when the mismatch came from an Android Network Security Config `<pin-set>` (the platform's check, with the
+default trust), which does not say what the chain has
 ([troubleshooting](troubleshooting.md#the-handshake-fails-with-a-certificate-error)).
 
 - The pins hold for every host the client talks to: give a pinned API a client of its own.

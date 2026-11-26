@@ -492,7 +492,9 @@ internal class KuicksilverEngine(
      * response advertised no HTTP/3 either (the store holds no fresh, usable `h3` entry for the origin once the response's
      * `Alt-Svc` was learned) also gets one line at the protocol-choice level, once per origin for this client
      * ([noAlternativeLogged]): so "why not HTTP/3" has an answer at Info when the server sends no `Alt-Svc` at all, and an
-     * origin's first call that learns its alternative logs nothing.
+     * origin's first call that learns its alternative logs nothing. An origin that announces HTTP/3 only in an ALTSVC frame
+     * on its HTTP/2 connection (RFC 7838 section 4) may still get the line on its first call, when the frame is learned
+     * after the response.
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private suspend fun logDiagnostics(
@@ -517,10 +519,12 @@ internal class KuicksilverEngine(
                 // what the response taught: the store after its Alt-Svc; the checks under the locks, the logging after them
                 val advertised = altSvcLock.withLock { altSvc.h3For(url) != null }
                 if (!advertised && firstNoAlternative(origin)) {
-                    logger.log(wanted, "kuicksilver: $origin: no HTTP/3 alternative advertised, using ${d.protocol}")
+                    logger.log(wanted, "kuicksilver: $origin: no usable HTTP/3 alternative, using ${d.protocol}")
                 }
             }
             if (logger.isEnabled(level)) logger.log(level, d.line(data.method.value, data.url))
+        } catch (e: CancellationException) {
+            throw e // the call's cancellation (the Alt-Svc lock above suspends), never swallowed as a logger's failure
         } catch (_: Throwable) {
             // a logger that fails never fails the call (as EngineEvents.emit)
         }
@@ -2012,5 +2016,5 @@ internal fun isIpLiteral(host: String): Boolean =
 internal fun HttpMethod.isIdempotent(): Boolean =
     this in setOf(HttpMethod.Get, HttpMethod.Head, HttpMethod.Options, HttpMethod.Put, HttpMethod.Delete, HttpMethod("TRACE"))
 
-/** How many origins [KuicksilverEngine] remembers having logged "no HTTP/3 alternative advertised" for (least recently seen forgotten first). */
+/** How many origins [KuicksilverEngine] remembers having logged "no usable HTTP/3 alternative" for (least recently seen forgotten first). */
 internal const val NO_ALTERNATIVE_LOG_ORIGINS = 1024

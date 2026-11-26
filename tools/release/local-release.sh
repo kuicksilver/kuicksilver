@@ -160,7 +160,7 @@ echo "-- preconditions"
 [ "$gh" = 0 ] || [ "$central_pre" = 0 ] || { echo "REFUSED: --github-prerelease and --central-prerelease exclude each other" >&2; exit 1; }
 [ "$central_pre" = 0 ] || [[ "$version" == *-* ]] || { echo "REFUSED: --central-prerelease takes a prerelease, not $version" >&2; exit 1; }
 # the month's Central quota: what earlier deployments took is the operator's to give (0 when there were none), never assumed
-if [ "$gh" = 0 ] && [ "$dry" = 0 ] && { [ -z "${KSL_CENTRAL_USED_RELEASES+x}" ] || [ -z "${KSL_CENTRAL_USED_FILES+x}" ] || [ -z "${KSL_CENTRAL_USED_BYTES+x}" ]; }; then
+if [ "$gh" = 0 ] && [ "$dry" = 0 ] && { [ -z "${KSL_CENTRAL_USED_RELEASES:+x}" ] || [ -z "${KSL_CENTRAL_USED_FILES:+x}" ] || [ -z "${KSL_CENTRAL_USED_BYTES:+x}" ]; }; then
   refuse "KSL_CENTRAL_USED_RELEASES, KSL_CENTRAL_USED_FILES and KSL_CENTRAL_USED_BYTES are not all set: give this month's earlier deployments from the portal (0 when there were none)"
 fi
 # the month's Central quota counts releases too (a deployment that is dropped counts all the same)

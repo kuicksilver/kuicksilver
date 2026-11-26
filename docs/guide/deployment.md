@@ -712,8 +712,8 @@ From a Kuicksilver client, every response says how it was served and, if not ove
 `response.kuicksilverDiagnostics?.fallback`. With `engine { observability { logger = KuicksilverLogger.platform(LogLevel.Info) } }`
 the engine also logs one line per call that HTTP/3 could have served and did not (a lost race, a fallback, a broken
 alternative, a proxy), and one line per origin whose responses advertise no HTTP/3
-([Why did this request not use HTTP/3?](observability.md#why-did-this-request-not-use-http3)). So: `<origin>: no HTTP/3
-alternative advertised, using HTTP/2.0` is a server that sends no `Alt-Svc` (check it with the curl lines above); a line
+([Why did this request not use HTTP/3?](observability.md#why-did-this-request-not-use-http3)). So: `<origin>: no usable HTTP/3
+alternative, using HTTP/2.0` is a server that sends no `Alt-Svc` (check it with the curl lines above); a line
 with `fallback=HandshakeTimeout` or `marked broken` is a server that announces HTTP/3 that the client cannot reach. In `Auto` mode the first call to an origin goes over TCP, HTTP/2 or HTTP/1.1 (`NoAlternative`) unless a
 `FileAltSvcStore` remembers the alternative from an earlier run.
 

@@ -672,6 +672,8 @@ direct() { # <label> <exit code> <pattern> <checkout target> <command...>
 }
 direct "negative_centralUsedUnset" 1 "KSL_CENTRAL_USED_RELEASES, KSL_CENTRAL_USED_FILES and KSL_CENTRAL_USED_BYTES are not all set" \
   release/0.4.x env -u KSL_CENTRAL_USED_FILES bash tools/release/local-release.sh 0.4.0-rc1 --central-prerelease
+direct "negative_centralUsedEmpty" 1 "KSL_CENTRAL_USED_RELEASES, KSL_CENTRAL_USED_FILES and KSL_CENTRAL_USED_BYTES are not all set" \
+  release/0.4.x env KSL_CENTRAL_USED_FILES= bash tools/release/local-release.sh 0.4.0-rc1 --central-prerelease
 direct "negative_centralNoReleaseLeft" 1 "no Central release left this month" \
   release/0.4.x env KSL_CENTRAL_USED_RELEASES=7 bash tools/release/local-release.sh 0.4.0-rc1 --central-prerelease
 direct "negative_centralQuotaNotANumber" 2 "take whole numbers, not 'lots'" \

@@ -2504,11 +2504,13 @@ echo "sha256/$(openssl s_client -connect api.example.com:443 -servername api.exa
 ```
 
 **When no pin matches**, the handshake fails with `TlsException.Verify` whose `reason` is `VerifyReason.PinMismatch`.
-Over TCP the call throws that exception (on the JVM a `TlsException` is an `javax.net.ssl.SSLException`). Over QUIC the
+Over TCP the call throws that exception (on the JVM a `TlsException` is a `javax.net.ssl.SSLException`). Over QUIC the
 connection ends with `QuicException.ConnectionLost.TransportClosed` (TLS alert 42, `bad_certificate`) whose `cause` is
 the `TlsException.Verify`; in the default `Auto` mode the call then goes over TCP, fails the same way there, and throws
 the TCP failure with the HTTP/3 one in `suppressed`. `PinMismatch.chainPins` lists the pins the server's validated chain
-has, leaf first, in the same `sha256/` form: logged once, it shows what to pin, or which key the server changed to
+has, leaf first, in the same `sha256/` form: logged once, it shows what to pin, or which key the server changed to. It
+is empty when the mismatch came from an Android Network Security Config `<pin-set>` (the platform's check, with the
+default trust), which does not say what the chain has
 ([troubleshooting](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/troubleshooting.md#the-handshake-fails-with-a-certificate-error)).
 
 - The pins hold for every host the client talks to: give a pinned API a client of its own.
@@ -3489,8 +3491,10 @@ default logger, the platform's at warnings and up, leaves out: set `logger = Kui
 to see them (the first alternative marked broken on a network is one Warn line all the same). Calls over HTTP/3, and
 calls HTTP/3 was never a candidate for (`http://`, `http3 { enabled = false }`, `Auto` without `Alt-Svc`), are logged
 at `Debug`. The first call to an origin whose response advertised no HTTP/3 (no usable `h3` in its `Alt-Svc`)
-also gets one line at the protocol-choice level, once per origin for the client: `kuicksilver: https://example.com: no HTTP/3 alternative
-advertised, using HTTP/2.0`. `null` turns the lines off. The line is built only when the logger wants its level, and its format stays the same within 0.3.x:
+also gets one line at the protocol-choice level, once per origin for the client: `kuicksilver: https://example.com: no usable HTTP/3
+alternative, using HTTP/2.0`. An alternative the client refuses (an unprivileged port for a privileged origin, say) counts
+as none. A server that announces HTTP/3 only in an ALTSVC frame on its HTTP/2 connection, not in an `Alt-Svc` header
+field, may still get the line on its first call: the frame can be learned after the response. `null` turns the lines off. The line is built only when the logger wants its level, and its format stays the same within 0.3.x:
 
 ```text
 kuicksilver: GET https://example.com/path -> HTTP/2.0 (fallback=HandshakeTimeout, alt=example.com:443 via AltSvc, raced, headStart=10ms, h3Failure=Timeout, marked broken)
@@ -4573,8 +4577,8 @@ From a Kuicksilver client, every response says how it was served and, if not ove
 `response.kuicksilverDiagnostics?.fallback`. With `engine { observability { logger = KuicksilverLogger.platform(LogLevel.Info) } }`
 the engine also logs one line per call that HTTP/3 could have served and did not (a lost race, a fallback, a broken
 alternative, a proxy), and one line per origin whose responses advertise no HTTP/3
-([Why did this request not use HTTP/3?](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/observability.md#why-did-this-request-not-use-http3)). So: `<origin>: no HTTP/3
-alternative advertised, using HTTP/2.0` is a server that sends no `Alt-Svc` (check it with the curl lines above); a line
+([Why did this request not use HTTP/3?](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/observability.md#why-did-this-request-not-use-http3)). So: `<origin>: no usable HTTP/3
+alternative, using HTTP/2.0` is a server that sends no `Alt-Svc` (check it with the curl lines above); a line
 with `fallback=HandshakeTimeout` or `marked broken` is a server that announces HTTP/3 that the client cannot reach. In `Auto` mode the first call to an origin goes over TCP, HTTP/2 or HTTP/1.1 (`NoAlternative`) unless a
 `FileAltSvcStore` remembers the alternative from an earlier run.
 
@@ -5231,7 +5235,7 @@ limits `webTransport { initialMaxStreamsBidi; initialMaxStreamsUni; initialMaxDa
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
 | `logger` | `KuicksilverLogger` | `KuicksilverLogger.Default` | 0.3.0 | stable | | the engine's and its QUIC endpoints' diagnostics; `Default` is the platform's logger at warnings and up (SLF4J on the JVM, Logcat on Android, `NSLog` on Apple platforms, standard error elsewhere); `KuicksilverLogger.platform(LogLevel.Info)`, `KuicksilverLogger.Stderr`, `None` or your own |
-| `protocolChoiceLogLevel` | `LogLevel?` | `LogLevel.Info` | 0.3.0 | stable | | level of the logger's line for a call HTTP/3 could have served but did not, which the default logger (warnings and up) leaves out; calls over HTTP/3 or never meant for it are logged at `Debug`, but the first call to each origin whose response advertised no HTTP/3 also gets one line at this level ("no HTTP/3 alternative advertised"); `null` writes none ([Why did this request not use HTTP/3?](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/observability.md#why-did-this-request-not-use-http3)). The first alternative marked broken on a network is one warning line whatever this says |
+| `protocolChoiceLogLevel` | `LogLevel?` | `LogLevel.Info` | 0.3.0 | stable | | level of the logger's line for a call HTTP/3 could have served but did not, which the default logger (warnings and up) leaves out; calls over HTTP/3 or never meant for it are logged at `Debug`, but the first call to each origin whose response advertised no HTTP/3 also gets one line at this level ("no usable HTTP/3 alternative"); `null` writes none ([Why did this request not use HTTP/3?](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/observability.md#why-did-this-request-not-use-http3)). The first alternative marked broken on a network is one warning line whatever this says |
 | `qlog` | `QlogSink?` | `null` | 0.3.0 | stable | | a qlog trace per HTTP/3 connection; wrap a file sink in `AsyncQlogSink` |
 | `eventListener` | `KuicksilverEventListener?` | `null` | 0.3.0 | experimental | | call, protocol, race, Alt-Svc, DNS and pool events |
 | `connectionListener` | `ConnectionListener?` | `null` | 0.3.0 | experimental | | lifecycle of every QUIC connection of the engine |
@@ -6829,7 +6833,7 @@ the `FallbackReason` table below; with
 `engine { observability { logger = KuicksilverLogger.platform(LogLevel.Info) } }` the engine logs one line per call that
 HTTP/3 could have served and did not (at `observability { protocolChoiceLogLevel }`, `Info` by default, which the
 default logger at `Warn` leaves out). An origin whose responses advertise no HTTP/3 gets one line of its own, on its
-first call: "<origin>: no HTTP/3 alternative advertised, using <protocol>" means the server sends no `Alt-Svc`, while
+first call: "<origin>: no usable HTTP/3 alternative, using <protocol>" means the server sends no `Alt-Svc`, while
 a line with `HandshakeTimeout` or `marked broken` means it announces HTTP/3 and the client cannot reach it. The
 first time an alternative is marked broken on a network the engine also logs one warning that the default logger shows:
 "HTTP/3 to <origin> failed (<reason>); using TCP for <duration>. See response.kuicksilverDiagnostics"; after it the
