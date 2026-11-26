@@ -11,6 +11,11 @@ kotlin {
             api(project(":kuicksilver-tls"))
             api(libs.ktor.network)
         }
+        // KuicksilverLogger.platform on the JVM logs through SLF4J, which Ktor's JVM artifacts bring at run time; without it,
+        // to standard error (PlatformLogger.jvm.kt)
+        jvmMain.dependencies {
+            compileOnly(libs.slf4j.api)
+        }
         jvmTest.dependencies {
             implementation(kotlin("test-junit5"))
             implementation(libs.jazzer.junit)

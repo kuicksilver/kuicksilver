@@ -6209,6 +6209,7 @@ kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.stableAddress
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.trySendDoesNotSuspend
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NormalPathExceptionsJvmTest.aNormalConnectionBuildsOnlyItsCloseReasons
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.PlatformLoggerJvmTest.withoutAnSlf4jProviderTheWarningsGoToStandardError
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.PlatformLoggerJvmTest.withoutSlf4jOnTheClassPathTheWarningsGoToStandardError
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.PreferredAddressJvmTest.nameIsRefusedByItsName
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.QueuedReceiveTest.acceleratedIdleCloseInterruptsTheWaitingReceiver
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.QueuedReceiveTest.acceleratedInterruptEndsAReceiveInFlight

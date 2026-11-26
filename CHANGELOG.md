@@ -1244,7 +1244,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   engine refuses to start a connector serving HTTP/2 over TLS 1.2 whose `keyExchangeGroups` leave `secp256r1` out.
 - Logging: `KuicksilverLogger.Default` is the platform's logger at warnings and up, and every QUIC endpoint and the Ktor
   client start with it: SLF4J on the JVM (logger `io.kuicksilver`; standard error when no SLF4J provider is on the
-  classpath), Logcat on Android (tag `Kuicksilver`), `NSLog` on Apple platforms, standard error on Linux and Windows.
+  classpath, or no `slf4j-api` at all: the module compiles against it, Ktor brings it), Logcat on Android (tag `Kuicksilver`), `NSLog` on Apple platforms, standard error on Linux and Windows.
   Before, the default was `KuicksilverLogger.Stderr`. The Ktor server logs to the application's log (`environment.log`)
   unless `observability { logger }` is set: its default is `ServerObservability.ApplicationLog` (not nullable, as on the
   client), and a logger of the application's own takes every engine line, TCP, HTTP/1.1, HTTP/2 and the TLS file
