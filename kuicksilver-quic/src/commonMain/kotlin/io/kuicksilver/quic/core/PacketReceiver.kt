@@ -321,8 +321,13 @@ internal class PacketReceiver(
         // RFC 9001 section 5.7: "a server MUST NOT process incoming 1-RTT protected packets before the TLS handshake is complete";
         // a TLS stack may hand it the 1-RTT read key before the client's Finished is verified (BoringSSL's QUIC API and
         // NullTlsSession do). Such packets "MAY be stored and later decrypted": they wait with those held for keys, until
-        // onHandshakeDone replays them
-        val beforeFinished = type == PacketType.OneRtt && c.role == TlsRole.Server && c.state == ConnectionState.Handshaking
+        // onHandshakeDone replays them. A client in 0-RTT holds them too: the handshake's end settles the 0-RTT first (a
+        // rejection resets every stream we opened and the limits, RFC 9001 section 4.6.2), so the server's 0.5-RTT frames
+        // (its streams, MAX_DATA, MAX_STREAMS, ACKs of our 0-RTT packets) are read against the settled state, as ngtcp2's
+        // client does (it buffers 1-RTT packets until its handshake completed)
+        val beforeFinished =
+            type == PacketType.OneRtt && c.state == ConnectionState.Handshaking &&
+                (c.role == TlsRole.Server || c.remembered != null)
         if (key == null || beforeFinished) {
             // 0-RTT waits for its key only on a server that accepts it, and only until the handshake shows whether it was accepted
             if (type == PacketType.ZeroRtt &&
