@@ -258,6 +258,13 @@ A client that prefers v2 but must start in v1 (the widely deployed version) sets
 with `versions = listOf(VersionProfile.V2, VersionProfile.V1)`: the first flight is v1, the server upgrades it through
 compatible version negotiation (RFC 9368 section 2.3).
 
+Which version a connection ended up with is `QuicConnection.version` (experimental, 0.3.0): `VersionProfile.V1` or
+`VersionProfile.V2`, null until the handshake settled it. With more than one version configured it can differ from the
+one the client's first flight offered, so read it rather than `versions` or `initialVersion`. It is set before
+`awaitHandshake()` returns and before `onHandshakeCompleted` (a server's 0-RTT connection: when it accepted the early
+data), never changes afterwards and stays readable after the close; `ConnectionInfo.version` is the same value for a
+connection listener, and the Ktor client's `QuicConnectionSnapshot.version` carries it per call.
+
 ## Binding an endpoint and connecting
 
 A socket error inside the endpoint loop ends the endpoint: every connection fails with `ConnectionLost.Internal`,

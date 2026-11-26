@@ -52,6 +52,19 @@ public interface QuicConnection : AutoCloseable {
     @ExperimentalKuicksilverApi
     public val keyExchangeGroup: String? get() = null
 
+    /**
+     * The QUIC version the connection speaks, [VersionProfile.V1] or [VersionProfile.V2] (RFC 9369); null until the handshake
+     * settled it. With more than one version in `QuicConfig.versions` it can differ from the one the client's first flight
+     * offered: a server that prefers another version both support switches to it (compatible version negotiation, RFC 9368
+     * section 2.3), and a Version Negotiation packet makes the client start over in another one (RFC 9000 section 6). Set
+     * on the endpoint loop when the handshake completed (a server's 0-RTT connection: when it accepted the early data, the
+     * version being chosen by then), before [awaitHandshake] returns and before `ConnectionListener.onHandshakeCompleted`;
+     * it never changes afterwards and stays readable after the connection closed. Readable from any thread.
+     * Implementations outside this library need not override it: the default is null.
+     */
+    @ExperimentalKuicksilverApi
+    public val version: VersionProfile? get() = null
+
     /** The connection's paths; the first is the one it was established on (RFC 9000 section 9). */
     public val paths: List<QuicPath>
 

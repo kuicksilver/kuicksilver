@@ -519,6 +519,7 @@ public final class io/kuicksilver/ktor/client/QuicConnectionSnapshot : io/kuicks
 	public final fun getRttVariation-UwyO8pc ()J
 	public final fun getSmoothedRtt-UwyO8pc ()J
 	public fun getTransport ()Lio/kuicksilver/ktor/client/Transport;
+	public final fun getVersion ()Lio/kuicksilver/quic/VersionProfile;
 	public fun toString ()Ljava/lang/String;
 }
 

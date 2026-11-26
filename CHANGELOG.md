@@ -14,6 +14,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- QUIC (experimental): `QuicConnection.version` and `ConnectionInfo.version` say which QUIC version the handshake settled,
+  `VersionProfile.V1` or `V2` (RFC 9369); null until then. With both versions configured it can differ from the one the
+  client's first flight offered (compatible version negotiation, RFC 9368). The Ktor client's `QuicConnectionSnapshot`
+  carries it as `version`.
 - HTTP/3 qlog: `http:capsule_created` and `http:capsule_parsed` (draft-ietf-quic-qlog-h3-events-14 section 6) for every
   capsule on an Extended CONNECT stream. Each event carries the capsule's type and lengths, never its value, so a trace
   shows a WebTransport WT_CLOSE_SESSION (0x2843) without its reason.

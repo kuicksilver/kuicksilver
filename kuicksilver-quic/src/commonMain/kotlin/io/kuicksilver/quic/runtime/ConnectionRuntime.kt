@@ -180,6 +180,7 @@ internal class ConnectionRuntime(
             { core.remoteAddress },
             { pathInfos },
             { pathChangeCount },
+            { negotiatedVersion },
         )
 
     // ---- path diagnostics (ConnectionInfo.paths) ----
@@ -806,6 +807,7 @@ internal class ConnectionRuntime(
             val e = core.nextEvent() ?: break
             when (e) {
                 ConnectionEvent.HandshakeCompleted -> {
+                    negotiatedVersion = core.version // settled: no switch after the handshake (RFC 9368 section 2)
                     earlyAccepted = core.earlyDataAccepted
                     certificateCompression = core.peerCertificateCompression // read once, on the loop, like the certificates
                     certificates = core.peerCertificates // read once, on the loop: the TLS object is not shared across threads
@@ -837,6 +839,8 @@ internal class ConnectionRuntime(
                 }
 
                 ConnectionEvent.EarlyDataAccepted -> {
+                    // a server chose the version with the ClientHello's transport parameters, before it accepted the early data
+                    if (serverSide) negotiatedVersion = core.version
                     earlyAccepted = true
                     loop.observer.zeroRtt(this, io.kuicksilver.quic.ZeroRttOutcome.Accepted)
                     alpn = core.negotiatedAlpn // read on the loop: an early-accepted connection reaches accept() before completion
@@ -1299,6 +1303,9 @@ internal class ConnectionRuntime(
 
     @Volatile private var group: String? = null // read on the loop when the handshake completes, as the certificates
     override val keyExchangeGroup: String? get() = group
+
+    @Volatile private var negotiatedVersion: io.kuicksilver.quic.VersionProfile? = null // written on the loop, as the group
+    override val version: io.kuicksilver.quic.VersionProfile? get() = negotiatedVersion
 
     @ExperimentalKuicksilverApi
     override suspend fun ping(): Boolean =

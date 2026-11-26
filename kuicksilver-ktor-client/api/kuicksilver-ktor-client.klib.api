@@ -598,6 +598,8 @@ final class io.kuicksilver.ktor.client/QuicConnectionSnapshot : io.kuicksilver.k
         final fun <get-smoothedRtt>(): kotlin.time/Duration // io.kuicksilver.ktor.client/QuicConnectionSnapshot.smoothedRtt.<get-smoothedRtt>|<get-smoothedRtt>(){}[0]
     final val transport // io.kuicksilver.ktor.client/QuicConnectionSnapshot.transport|{}transport[0]
         final fun <get-transport>(): io.kuicksilver.ktor.client/Transport // io.kuicksilver.ktor.client/QuicConnectionSnapshot.transport.<get-transport>|<get-transport>(){}[0]
+    final val version // io.kuicksilver.ktor.client/QuicConnectionSnapshot.version|{}version[0]
+        final fun <get-version>(): io.kuicksilver.quic/VersionProfile? // io.kuicksilver.ktor.client/QuicConnectionSnapshot.version.<get-version>|<get-version>(){}[0]
 
     final fun toString(): kotlin/String // io.kuicksilver.ktor.client/QuicConnectionSnapshot.toString|toString(){}[0]
 }

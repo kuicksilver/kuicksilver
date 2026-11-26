@@ -2615,7 +2615,9 @@ before it. `transport` on the diagnostics themselves says `Quic` or `Tcp`.
   `http3 { connectionListener }` hears (the connection's name for its whole life, and of its qlog trace); the active
   `path` and all `paths` with the connection IDs on each ([QUIC: Observability](quic.md#observability)); `smoothedRtt`,
   `minRtt` and `rttVariation`; and `pathChanges`, the moves to another path (migrations, NAT rebindings, the server's
-  preferred address) between the moment this call took the connection and the snapshot. It is plain data, no handle:
+  preferred address) between the moment this call took the connection and the snapshot; and the QUIC `version` the
+  handshake settled, `VersionProfile.V1` or `V2` (RFC 9369), which can differ from the one the client offered first
+  when both sides allow both ([QUIC: Configuration](quic.md#configuration)). It is plain data, no handle:
   neither a response nor an exception that carries the diagnostics keeps the connection in memory (for the live
   connection, join `connectionId` with what the listener hears). From the response head until the call ends, each read
   of `connection` takes a snapshot of the live connection; when the call ends — its body read or the response released,
