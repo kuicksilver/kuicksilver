@@ -16,8 +16,9 @@ You need Kotlin 2.3 or newer (Kotlin/Native: 2.4.x), JVM 17 or newer (Android: `
 another Ktor version fails when the engine is created ([Install: Supported Ktor
 versions](https://github.com/kuicksilver/kuicksilver/blob/main/docs/install.md#supported-ktor-versions)).
 
-**0.3.0 is not published yet.** Until it is, the block below does not resolve: build the library from a checkout and
-depend on `0.3.0-SNAPSHOT` with `mavenLocal()`, which needs Docker (and Xcode on macOS) even for a JVM application
+**0.3.0 is the release in preparation and not published yet.** A release candidate, 0.3.0-rc1, will be on Maven
+Central first. Until then the block below does not resolve: build the library from a checkout and depend on
+`0.3.0-SNAPSHOT` with `mavenLocal()`, which needs Docker (and Xcode on macOS) even for a JVM application
 ([Install: Versions](https://github.com/kuicksilver/kuicksilver/blob/main/docs/install.md#versions) has the commands).
 
 <!-- guide-sync: not compiled (a Gradle build script) -->

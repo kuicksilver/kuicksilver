@@ -29,8 +29,9 @@ drop-in Ktor client and server engines.
 
 > **Status: 0.x, experimental, no production users we know of. Do not use it in production yet.** The API can change between any two 0.x releases
 > ([stability](docs/stability.md)). 0.2.0 and 0.2.1 are withdrawn; this README describes 0.3.0,
-> the release in preparation. Until 0.3.0 is on Maven Central, build it from `main` and use `0.3.0-SNAPSHOT`
-> ([Install](docs/install.md#versions)). Try it, and tell us what breaks.
+> the release in preparation; a release candidate, 0.3.0-rc1, will be on Maven Central first. Until then, build it from
+> `main` and use `0.3.0-SNAPSHOT`, which needs Docker ([Install](docs/install.md#versions)). Try it, and tell us what
+> breaks.
 
 ## Add it
 

@@ -319,11 +319,33 @@ guide to 0.2.2, `## [0.2.2] - unreleased` in the CHANGELOG; the script refuses t
 - `context7.json` (step 7) points at the branch whose docs describe the newest published version; for a patch release
   of the newest line that is the maintenance branch until the next minor version is released from `main`.
 
+## Prereleases on Maven Central
+
+`tools/release/local-release.sh <version> --central-prerelease` releases a prerelease (`X.Y.Z-rcN`, say) as
+[Every release](#every-release) releases a final version: the same preconditions, gate record, build, checks, signing,
+SBOM and provenance, one deployment to the Central Portal and a GitHub release. 0.3.0-rc1 is released this way. Use it
+sparingly: Central's monthly quota for the namespace is small, and the version can never be removed.
+
+What the documentation says at that point:
+
+- The tree is still the line of the final version: every Gradle and sample fallback names `<X.Y.Z>-SNAPSHOT`, which
+  the script checks as for any release. The README, `docs/install.md`, `docs/guide/ios.md` and
+  `docs/guide/quickstart.md` keep naming the final version `X.Y.Z` as the version to depend on, and keep saying that it
+  is the release in preparation: the script checks their coordinates, and refuses the "release in preparation" note,
+  only for a final version.
+- The CHANGELOG gets the prerelease's section as described under [Prereleases on GitHub only](#prereleases-on-github-only).
+- After the prerelease is on Central, and not before (its coordinates would not resolve), a commit of its own on
+  `main` adds the pointer to it: in the README's status note, in the "Versions" section of `docs/install.md` and in step
+  1 of the quickstart, the prerelease's version as the one to try now (`0.3.0-rc1` in the BOM line), next to the
+  build-from-source path. The release commit of the final version removes that pointer with the
+  "release in preparation" note.
+
 ## Prereleases on GitHub only
 
 A prerelease (`X.Y.Z-alphaN`, `-betaN`, `-rcN`) may be published as a GitHub prerelease only, not on Maven Central:
 Central grants this namespace a limited number of releases, bytes and files per month, and a version on Central can
-never be replaced or removed. 0.3.0-rc1 is published this way; the final 0.3.0 goes to Central as in
+never be replaced or removed. 0.3.0-rc1 is not published this way but on Maven Central
+([Prereleases on Maven Central](#prereleases-on-maven-central)); the final 0.3.0 goes to Central as in
 [Every release](#every-release).
 
 ```

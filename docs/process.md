@@ -150,7 +150,8 @@ This is a practice of review, not a check a tool runs. The same six QUIC stacks 
   [section 5](spec/threat-model.md#5-negative-controls--release-gate-checklist) the negative controls the release gate
   runs. A change that touches a threat updates it in the same commit.
 - [`tools/check/doc-refs.sh`](../tools/check/doc-refs.sh) checks that every file, anchor, `negative_*` test, C symbol,
-  Kotlin member and Gradle task the documentation names exists; [`tools/check/code-refs.py`](../tools/check/code-refs.py)
+  Kotlin member and Gradle task the documentation names exists, and that a guide section a source comment cites by name
+  (`docs/guide/<page>.md, "<heading>"`) is a heading of that page; [`tools/check/code-refs.py`](../tools/check/code-refs.py)
   that every source line `docs/spec` cites (`File.kt:N`) is still the line recorded in `tools/check/code-refs.lock`;
   [`tools/check/links.sh`](../tools/check/links.sh) checks the relative links.
 
@@ -534,8 +535,8 @@ counts the deployment against the Central limits and uploads one signed deployme
 Central validates it.
 
 A prerelease can be published on GitHub only, never on Maven Central, with `--github-prerelease`
-([release.md](release.md#prereleases-on-github-only)); 0.3.0-rc1 is published this way, and the final 0.3.0 goes to
-Central; without the mode the script refuses a prerelease unless `--central-prerelease` asks for Central. The mode
+([release.md](release.md#prereleases-on-github-only)); `--central-prerelease` sends a prerelease to Central instead
+([release.md](release.md#prereleases-on-maven-central)), as for 0.3.0-rc1; without the mode the script refuses a prerelease unless `--central-prerelease` asks for Central. The mode
 refuses a final version, runs the same preconditions, build, checks, signing and home-directory scan, does not read or
 pass on the Central Portal token and uploads nothing. Instead of the deployment it writes a signed Maven
 repository zip of the publication (every artifact with its POM, Gradle module metadata, `.asc` and checksums), a short
