@@ -20,3 +20,10 @@
     private *** learnAltSvcFrameBatch(...);
     private *** finishAltSvcFrames(...);
 }
+
+# The engine's event listener and logger are called in EngineEvents.deliver, never in a caller's coroutine loop (EngineEvents.emit
+# says why: ART 7.x). An application's R8 inlines it back into those loops (R8 9.3 does); kept, it does not.
+-keepclassmembers,allowobfuscation,allowshrinking class io.kuicksilver.ktor.client.EngineEvents {
+    *** deliver(...);
+}
+
