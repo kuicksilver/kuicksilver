@@ -69,6 +69,8 @@ class Http3SettingsGroupsTest {
         b.earlyData = Http3EarlyDataPolicy.WaitForHandshake()
         b.webTransport { maxSessions = 2 }
         assertEquals(setOf("enableConnectProtocol", "h3Datagram", "earlyData", "webTransport"), b.assignedOptions())
+        b.webTransport { initialMaxData = 1 }
+        assertEquals(setOf("enableConnectProtocol", "h3Datagram", "earlyData", "webTransport", "webTransport.limits"), b.assignedOptions())
         assertEquals(emptySet(), b.build().toBuilder().assignedOptions())
     }
 

@@ -441,8 +441,9 @@ public class Http3ClientConfig {
 
     /**
      * The HTTP/3 SETTINGS and limits of the engine's connections (`Http3Settings.Builder`: QPACK, field sections). The
-     * engine derives `enableConnectProtocol`, `h3Datagram` and `webTransport { }` (from [webTransport]) and refuses them
-     * here, as it does `earlyData` (a server's policy).
+     * engine derives `enableConnectProtocol`, `h3Datagram` and `webTransport { enabled, maxSessions }` (from [webTransport])
+     * and refuses them here, as it does `earlyData` (a server's policy); the per-session WebTransport flow-control limits
+     * (`webTransport { initialMaxStreamsBidi, initialMaxStreamsUni, initialMaxData }`) are the client's to set here.
      */
     public fun settings(block: Http3Settings.Builder.() -> Unit) {
         settingsBuilder.block()
@@ -881,7 +882,7 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
             mapOf(
                 "enableConnectProtocol" to "on for WebSockets and WebTransport (RFC 9220)",
                 "h3Datagram" to "follows the QUIC datagrams (RFC 9297)",
-                "webTransport" to "set with http3 { webTransport { } }",
+                "webTransport" to "enabled and maxSessions are set with http3 { webTransport { } }",
                 "earlyData" to "a server's policy; the client's 0-RTT is http3 { earlyData { enabled } }",
             )
 

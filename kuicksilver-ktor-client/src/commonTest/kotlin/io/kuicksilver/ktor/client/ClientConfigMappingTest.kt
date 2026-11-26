@@ -198,6 +198,9 @@ class ClientConfigMappingTest {
             assertTrue("remove it" in e.message.orEmpty(), e.message)
         }
         // assigning the default value explicitly is refused too: the option is not the application's to set
+        // the per-session WebTransport limits are the client's own
+        val limits = KuicksilverEngineConfig().apply { http3 { settings { webTransport { initialMaxData = 65_536 } } } }
+        assertEquals(65_536L, limits.resolveHttp3Settings().webTransportInitialMaxData)
         val same = KuicksilverEngineConfig().apply { http3 { quic { expert { maxUniStreams = 100 } } } }
         assertFailsWith<IllegalArgumentException> { same.resolveQuic() }
     }
