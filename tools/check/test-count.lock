@@ -73,6 +73,7 @@ kuicksilver-engine-interop/src/jvmTest	io.kuicksilver.engineinterop.WebSocketPai
 kuicksilver-engine-interop/src/jvmTest	io.kuicksilver.engineinterop.WebSocketPairSuite.textEcho
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.Http2SettingsBuilderTest.defaultsAreTheDocumentedOnes
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.Http2SettingsBuilderTest.everyOptionReachesTheSettings
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.Http2SettingsBuilderTest.negative_countLimitsAboveTheirCeilingAreRefused
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.Http2SettingsBuilderTest.negative_floodBudgetsAboveTheirCeilingAreRefused
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.Http2SettingsBuilderTest.negative_valuesBeyondTheWireRangeAreRefusedByName
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.AltSvcFrameTest.negative_clientIgnoresInvalidAltSvcFrames

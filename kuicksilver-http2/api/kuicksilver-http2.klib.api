@@ -97,6 +97,11 @@ final class io.kuicksilver.http2/Http2Settings { // io.kuicksilver.http2/Http2Se
                 final fun <set-resets>(io.kuicksilver.config/RateLimit) // io.kuicksilver.http2/Http2Settings.Builder.FloodLimits.resets.<set-resets>|<set-resets>(io.kuicksilver.config.RateLimit){}[0]
 
             final object Companion { // io.kuicksilver.http2/Http2Settings.Builder.FloodLimits.Companion|null[0]
+                final const val MAX_CONTINUATION_FRAMES // io.kuicksilver.http2/Http2Settings.Builder.FloodLimits.Companion.MAX_CONTINUATION_FRAMES|{}MAX_CONTINUATION_FRAMES[0]
+                    final fun <get-MAX_CONTINUATION_FRAMES>(): kotlin/Int // io.kuicksilver.http2/Http2Settings.Builder.FloodLimits.Companion.MAX_CONTINUATION_FRAMES.<get-MAX_CONTINUATION_FRAMES>|<get-MAX_CONTINUATION_FRAMES>(){}[0]
+                final const val MAX_CONTROL_FRAMES_QUEUED // io.kuicksilver.http2/Http2Settings.Builder.FloodLimits.Companion.MAX_CONTROL_FRAMES_QUEUED|{}MAX_CONTROL_FRAMES_QUEUED[0]
+                    final fun <get-MAX_CONTROL_FRAMES_QUEUED>(): kotlin/Int // io.kuicksilver.http2/Http2Settings.Builder.FloodLimits.Companion.MAX_CONTROL_FRAMES_QUEUED.<get-MAX_CONTROL_FRAMES_QUEUED>|<get-MAX_CONTROL_FRAMES_QUEUED>(){}[0]
+
                 final val MAX_GLITCHES // io.kuicksilver.http2/Http2Settings.Builder.FloodLimits.Companion.MAX_GLITCHES|{}MAX_GLITCHES[0]
                     final fun <get-MAX_GLITCHES>(): io.kuicksilver.config/RateLimit // io.kuicksilver.http2/Http2Settings.Builder.FloodLimits.Companion.MAX_GLITCHES.<get-MAX_GLITCHES>|<get-MAX_GLITCHES>(){}[0]
                 final val MAX_RESETS // io.kuicksilver.http2/Http2Settings.Builder.FloodLimits.Companion.MAX_RESETS|{}MAX_RESETS[0]

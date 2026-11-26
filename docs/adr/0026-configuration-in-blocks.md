@@ -251,4 +251,8 @@ The design left these cases open or met them only in the code; each was decided 
   (nghttp2's), `RateLimit(3300, 100000)` for resets and `RateLimit(33000, 1000000)` for glitches, is refused by `build()`:
   floods run at hundreds of thousands of resets a second on one connection, legitimate clients at a handful, so the ceiling
   leaves room for any real application and still stops a flood. The ceilings are public (`FloodLimits.MAX_RESETS`,
-  `MAX_GLITCHES`).
+  `MAX_GLITCHES`). The count limits got ceilings of the same kind: `maxContinuationFrames` at most 800 (100 times
+  nghttp2's 8; at the smallest frame size 12.5 MiB of field block, while a CONTINUATION flood spends its CPU on the count)
+  and `maxControlFramesQueued` at most 100 000 (10 times Go's 10 000, not 100: a queued frame holds tens of bytes, and a
+  peer that never reads would hold tens of MiB per connection at 1 000 000), public as `MAX_CONTINUATION_FRAMES` and
+  `MAX_CONTROL_FRAMES_QUEUED`.

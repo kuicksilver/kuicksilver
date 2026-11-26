@@ -131,11 +131,14 @@ public class Http2Settings private constructor(
         /** The flood limits of a [Builder]; every one ends the connection with ENHANCE_YOUR_CALM when the peer passes it. */
         @KuicksilverDsl
         public class FloodLimits internal constructor() {
-            /** CONTINUATION frames allowed in one field block; default 8. */
+            /** CONTINUATION frames allowed in one field block; default 8 (nghttp2's), at most [MAX_CONTINUATION_FRAMES]. */
             @SecuritySensitive
             public var maxContinuationFrames: Int = 8
 
-            /** Control frames (SETTINGS and PING acknowledgements, RST_STREAM, WINDOW_UPDATE) queued for the peer; default 10 000. */
+            /**
+             * Control frames (SETTINGS and PING acknowledgements, RST_STREAM, WINDOW_UPDATE) queued for the peer; default 10 000
+             * (Go's), at most [MAX_CONTROL_FRAMES_QUEUED].
+             */
             @SecuritySensitive
             public var maxControlFramesQueued: Int = 10_000
 
@@ -169,6 +172,20 @@ public class Http2Settings private constructor(
 
                 /** The largest [glitches] budget: 33 000 a second, 1 000 000 at once, 100 times the default. */
                 public val MAX_GLITCHES: RateLimit = RateLimit(33_000, 1_000_000)
+
+                /**
+                 * The largest [maxContinuationFrames]: 800, 100 times the default. At the smallest frame size (16 KiB) that is
+                 * 12.5 MiB of field block, beyond any header list a peer sends; a CONTINUATION flood (CVE-2024-27316) spends
+                 * its CPU on the frame count, empty frames included, so the count must stay bounded.
+                 */
+                public const val MAX_CONTINUATION_FRAMES: Int = 800
+
+                /**
+                 * The largest [maxControlFramesQueued]: 100 000, 10 times the default. A peer that never reads (PING and
+                 * SETTINGS floods, CVE-2019-9512 and CVE-2019-9515) holds that many frames of tens of bytes each, a few MiB
+                 * per connection; 100 times the default would be tens of MiB per connection.
+                 */
+                public const val MAX_CONTROL_FRAMES_QUEUED: Int = 100_000
             }
         }
 
@@ -190,8 +207,14 @@ public class Http2Settings private constructor(
             require(settingsAckTimeout.isPositive()) { "settingsAckTimeout must be positive" }
             require(maxHeaderBlockTime.isPositive()) { "maxHeaderBlockTime must be positive" }
             val f = floodLimits
-            require(f.maxContinuationFrames >= 0) { "floodLimits { maxContinuationFrames } must not be negative" }
-            require(f.maxControlFramesQueued >= 1) { "floodLimits { maxControlFramesQueued } must be positive" }
+            require(f.maxContinuationFrames in 0..FloodLimits.MAX_CONTINUATION_FRAMES) {
+                "floodLimits { maxContinuationFrames } must be 0..${FloodLimits.MAX_CONTINUATION_FRAMES}: more no longer bounds a " +
+                    "CONTINUATION flood (CVE-2024-27316), got ${f.maxContinuationFrames}"
+            }
+            require(f.maxControlFramesQueued in 1..FloodLimits.MAX_CONTROL_FRAMES_QUEUED) {
+                "floodLimits { maxControlFramesQueued } must be 1..${FloodLimits.MAX_CONTROL_FRAMES_QUEUED}: more lets a peer " +
+                    "that never reads hold that much memory, got ${f.maxControlFramesQueued}"
+            }
             require(f.maxEmptyFrames >= 0) { "floodLimits { maxEmptyFrames } must not be negative" }
             require(f.resets.perSecond <= FloodLimits.MAX_RESETS.perSecond && f.resets.burst <= FloodLimits.MAX_RESETS.burst) {
                 "floodLimits { resets } must be at most ${FloodLimits.MAX_RESETS}: a larger budget no longer bounds Rapid Reset " +

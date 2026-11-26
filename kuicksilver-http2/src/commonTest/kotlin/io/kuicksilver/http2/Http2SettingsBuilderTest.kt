@@ -100,4 +100,36 @@ class Http2SettingsBuilderTest {
         assertEquals(3_300, top.resetsPerSecond)
         assertEquals(100_000, top.resetBurst)
     }
+
+    /**
+     * Self-attack on the count limits: a CONTINUATION or control-frame limit beyond its ceiling would no longer bound a flood,
+     * so it is refused like a negative one; the ceilings themselves are accepted.
+     */
+    @Test fun negative_countLimitsAboveTheirCeilingAreRefused() {
+        for (bad in listOf(-1, 801, Int.MAX_VALUE)) {
+            val e = assertFailsWith<IllegalArgumentException>("$bad") { http2Settings { floodLimits { maxContinuationFrames = bad } } }
+            assertEquals(
+                "floodLimits { maxContinuationFrames } must be 0..800: more no longer bounds a CONTINUATION flood (CVE-2024-27316), " +
+                    "got $bad",
+                e.message,
+            )
+        }
+        for (bad in listOf(0, 100_001, Int.MAX_VALUE)) {
+            val e = assertFailsWith<IllegalArgumentException>("$bad") { http2Settings { floodLimits { maxControlFramesQueued = bad } } }
+            assertEquals(
+                "floodLimits { maxControlFramesQueued } must be 1..100000: more lets a peer that never reads hold that much " +
+                    "memory, got $bad",
+                e.message,
+            )
+        }
+        val top =
+            http2Settings {
+                floodLimits {
+                    maxContinuationFrames = Http2Settings.Builder.FloodLimits.MAX_CONTINUATION_FRAMES
+                    maxControlFramesQueued = Http2Settings.Builder.FloodLimits.MAX_CONTROL_FRAMES_QUEUED
+                }
+            }
+        assertEquals(800, top.maxContinuationFrames)
+        assertEquals(100_000, top.maxControlFramesQueued)
+    }
 }
