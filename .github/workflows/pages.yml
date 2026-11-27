@@ -52,6 +52,10 @@ defaults:
   run:
     shell: bash
 
+env:
+  # the mirror kill switch the setup action reads (CONTRIBUTING.md, "Dependency verification")
+  KSL_CENTRAL_MIRROR: ${{ vars.KSL_CENTRAL_MIRROR }}
+
 jobs:
   resolve:
     # a published prerelease does not start the site (docs/release.md, "Prereleases on GitHub only"); a workflow_run only

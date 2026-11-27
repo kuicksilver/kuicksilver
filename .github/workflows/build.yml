@@ -57,6 +57,8 @@ defaults:
   run:
     shell: bash
 env:
+  # the mirror kill switch the setup action reads (CONTRIBUTING.md, "Dependency verification")
+  KSL_CENTRAL_MIRROR: ${{ vars.KSL_CENTRAL_MIRROR }}
   # every Gradle step: a run that failed on a dependency Central answered "not found" for (no test and no dependency
   # verification failed) runs once more with --refresh-dependencies, one refused with 429 or 5xx up to four more times
   # after growing pauses spread at random (tools/ci/gradlew-retry.sh)

@@ -59,9 +59,11 @@ runs:
         # repository), the layout follows the Gradle version
         HASH: ${{ hashFiles('gradle/verification-metadata.xml', 'gradle/libs.versions.toml', 'gradle/wrapper/gradle-wrapper.properties', 'settings.gradle.kts', 'build-logic/settings.gradle.kts', 'build-logic/build.gradle.kts') }}
         # the kill switch: the repository variable KSL_CENTRAL_MIRROR=off leaves Google's mirror of Central out of every
-        # job (CONTRIBUTING.md, "Dependency verification"); unset or any other value keeps it
-        MIRROR: ${{ vars.KSL_CENTRAL_MIRROR != 'off' }}
+        # job (CONTRIBUTING.md, "Dependency verification"); unset or any other value keeps it. Each workflow passes the
+        # variable in through its top-level env (the vars context is not promised inside a composite action)
+        KSL_CENTRAL_MIRROR: ${{ env.KSL_CENTRAL_MIRROR }}
       run: |
+        if [ "${KSL_CENTRAL_MIRROR:-}" = off ]; then MIRROR=false; else MIRROR=true; fi
         case "$MIRROR" in true) mode=mirror ;; false) mode=central ;; *) echo "::error::mirror switch '$MIRROR' is neither true nor false"; exit 1 ;; esac
         echo "gradle-deps: Maven Central $([ "$mode" = mirror ] && echo "behind Google's mirror" || echo "alone (KSL_CENTRAL_MIRROR=off)")"
         { echo "mirror=$MIRROR"; echo "prefix=gradle-deps-v1-$mode-"; echo "key=gradle-deps-v1-$mode-$HASH"; } >> "$GITHUB_OUTPUT"
@@ -109,7 +111,7 @@ runs:
     - name: Gradle properties for CI
       shell: bash
       env:
-        MIRROR: ${{ steps.gradle-deps-key.outputs.mirror }}   # vars.KSL_CENTRAL_MIRROR != 'off'
+        MIRROR: ${{ steps.gradle-deps-key.outputs.mirror }}   # KSL_CENTRAL_MIRROR != off (the workflow's env)
       run: |
         # OpenSSL builds downloaded from another job (or restored from the cache) are reused, never rebuilt (kuicksilver-native/openssl.gradle.kts)
         mkdir -p "${GRADLE_USER_HOME:-$HOME/.gradle}"
