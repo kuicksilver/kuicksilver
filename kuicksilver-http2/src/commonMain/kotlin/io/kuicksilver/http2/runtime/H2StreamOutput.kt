@@ -98,6 +98,7 @@ public class H2StreamOutput(
      * Suspends until everything flushed so far was handed to the stream (sent as DATA within the peer's windows), or
      * [done] is over (the stream ended, failed or this was cancelled; [closedCause] tells a failure). A flush returns once
      * the writer is within the lead (or at once after [releaseLead]); this waits for the rest too. The owner bounds it.
+     * Call it from the writer only, after its own flush: what was flushed is the writer's own count, unsynchronized.
      */
     public suspend fun awaitHanded() {
         val target = flushed
