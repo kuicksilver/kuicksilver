@@ -155,8 +155,9 @@ public class Http2Settings private constructor(
 
             /**
              * The glitch budget: 330 a second, 10 000 at once (nghttp2's numbers). Counted events: PRIORITY, unknown frame
-             * types, SETTINGS, empty DATA without END_STREAM, a PING with no DATA or HEADERS of ours since the previous PING (a
-             * bandwidth probe that follows our data is free, as grpc-go's ping strikes), and every stream error the peer causes.
+             * types, SETTINGS after the peer's first (its preface, RFC 9113 section 3.4, is free), empty DATA without
+             * END_STREAM, a PING with no DATA or HEADERS of ours since the previous PING (a bandwidth probe that follows our data
+             * is free, as grpc-go's ping strikes), and every stream error the peer causes.
              * At most [MAX_GLITCHES] (100 times the default), for the same reason as [resets].
              */
             @SecuritySensitive

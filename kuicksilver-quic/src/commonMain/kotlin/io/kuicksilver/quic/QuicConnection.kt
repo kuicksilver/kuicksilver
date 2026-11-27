@@ -23,6 +23,9 @@ public interface QuicConnection : AutoCloseable {
     /**
      * The next stream the peer opened, in id order. A peer stream counts against the limits we grant (`QuicConfig.maxBidiStreams`,
      * `maxUniStreams`) until it was handed out here and is done: read to its end or its reset surfaced, and our half finished.
+     * A client that sent 0-RTT gets a peer stream here only after [earlyDataAccepted] is settled (RFC 9001 section 4.6.2:
+     * the server's answer, and with a rejection the reset of every stream we opened, come before anything of the server's
+     * 1-RTT packets).
      */
     public suspend fun acceptStream(): QuicStream
 
@@ -260,3 +263,44 @@ public val QuicConnection.handshakeStapleUntil: Long
 @io.kuicksilver.annotations.InternalKuicksilverApi
 public val QuicConnection.sniSelectedFor: String?
     get() = (this as? io.kuicksilver.quic.runtime.ConnectionRuntime)?.sniSelectedName
+
+/**
+ * Suspends until everything this side sent on [this] connection was acknowledged and nothing waits to be sent again (a
+ * lost frame's content goes out once more, RFC 9002 section 6), and returns true; returns false when the connection
+ * closed or ended first. For a close that should not take the last frames with it: CONNECTION_CLOSE goes out once and the
+ * socket may close right after it (RFC 9000 section 10.2), so a RESET_STREAM or STOP_SENDING still in flight then is
+ * never repeated and the peer learns of neither until its idle timeout. Not bounded: the caller bounds the wait (a peer
+ * that does not acknowledge holds it forever). Stream data blocked on the peer's credit does not hold it; see
+ * [sendsUnsettled] for what does. Returns true at once for a connection that is not an endpoint's.
+ */
+@io.kuicksilver.annotations.InternalKuicksilverApi
+public suspend fun QuicConnection.awaitSendsSettled(): Boolean =
+    (this as? io.kuicksilver.quic.runtime.ConnectionRuntime)?.awaitSendsSettled() ?: true
+
+/** What [awaitSendsSettled] still waits for on [this] connection, null when nothing (or not an endpoint's connection). */
+@io.kuicksilver.annotations.InternalKuicksilverApi
+public suspend fun QuicConnection.sendsUnsettled(): String? = (this as? io.kuicksilver.quic.runtime.ConnectionRuntime)?.sendsUnsettled()
+
+/**
+ * Queues every unacknowledged frame of [this] connection again and sends what the congestion window has room for now
+ * (RFC 9002 section 7: nothing above the window without a probe timer expiry; the probe timeout and its backoff are left
+ * as they are, and with the window full the next probe timeout sends). Before a close whose last frames may have been
+ * lost: the next probe timeout can be seconds away after a backoff. No-op once the connection is closing or gone.
+ */
+@io.kuicksilver.annotations.InternalKuicksilverApi
+public suspend fun QuicConnection.probeUnsettled() {
+    (this as? io.kuicksilver.quic.runtime.ConnectionRuntime)?.probeUnsettled()
+}
+
+/**
+ * A connection closed by this side ([QuicConnection.close]) and still in its closing state sends its CONNECTION_CLOSE once
+ * more (RFC 9000 section 10.2.1 lets the closing packet be sent again; the rate is the caller's to limit): true when it
+ * went out, false when the connection is not closing (draining after the peer's close, or gone).
+ */
+@io.kuicksilver.annotations.InternalKuicksilverApi
+public suspend fun QuicConnection.repeatClose(): Boolean = (this as? io.kuicksilver.quic.runtime.ConnectionRuntime)?.repeatClose() ?: false
+
+/** The current probe timeout of [this] connection (RFC 9002 section 6.2.1, without the backoff); null when not an endpoint's. */
+@io.kuicksilver.annotations.InternalKuicksilverApi
+public suspend fun QuicConnection.currentPto(): kotlin.time.Duration? =
+    (this as? io.kuicksilver.quic.runtime.ConnectionRuntime)?.currentPto()

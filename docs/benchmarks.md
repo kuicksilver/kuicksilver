@@ -718,6 +718,17 @@ local; before = parent `c9513c37e`.
 | HTTP/3, after the exchange | 84.0-84.8 K (6 runs); 87.7 K on the CI runner | 78.00-78.41 K (16 runs, records 0, 0, 2) |
 | a space after N packets in flight, idle | N records | 2 records after about log2(N/2) idle periods |
 
+The core's 33 744 B held again after a regression (2026-11-26): the local transport parameters that a qlog trace logs
+with the peer's (`transport:parameters_set`) were kept in a field of the core for the life of every connection,
+traced or not, and the core held 33 928 B (on the macOS CI runner too), over the 33 900 B ceiling. They wait in the
+trace now (`QlogWriter.pendingLocalTp`) until it logs them, so an untraced core holds none of it.
+
+The HTTP/3 connection measured 78 000-78 560 B in 15 runs the same day (78 720 B on the macOS CI runner while the
+core still held the parameters, 78 536 B without them). The floor is the table's; the 560 B spread is timing: a stream
+ticker's second channel segment (312 B), the packet builder's writer still pointing at the endpoint's last batch slot
+(152 B), the probe list's array after a PTO (56 B) and a few continuations. Its ceiling is 80 608 B: two records
+(1 488 B) and that spread above the highest run.
+
 ## msquic's goodput outlier
 
 Some repetitions are 2–6 % slower, with either client (2026-10-20: four of five JVM, two of five

@@ -92,6 +92,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -156,12 +157,62 @@ internal class H1Connection(
      */
     override val isOpen: Boolean get() = !closed && !input.isClosedForRead && !input.hasUnread
 
+    /** The watch of the idle connection ([startIdleWatch]); guarded by [watchLock]. */
+    private var idleWatch: Job? = null
+    private val watchLock = SpinLock()
+
+    /**
+     * Watches the input of the connection while it is idle, as Go's net/http (its persistConn's read loop peeks while
+     * idle): the server's close (close_notify, its FIN, a failure) or bytes no request asked for (RFC 9112 section 9.2:
+     * "the client SHOULD close the connection [...] unless the data consists only of one or more CRLF (which can be
+     * discarded per Section 2.2)") run [onSignal], which closes the connection in order when it is still idle. Data of
+     * CRLFs only closes it too: the exception allows discarding them, it does not require it (Go's net/http closes on any
+     * byte as well). RFC 9112 section 9.5: "Implementations SHOULD constantly monitor open connections for a received closure
+     * signal and respond to it as appropriate". Before, such a connection was seen only when it was next taken, at its
+     * eviction or the engine's close, and stayed half-closed (CLOSE_WAIT) for up to `idleTimeout`. The same for TLS
+     * and cleartext, direct or through a proxy (the input is the one the exchanges read).
+     */
+    override fun startIdleWatch(
+        scope: CoroutineScope,
+        onSignal: () -> Unit,
+    ) {
+        // created and recorded under the lock, started after it: the watch never runs (nor resumes inline) while it is held
+        val watch =
+            scope.launch(start = CoroutineStart.LAZY) {
+                try {
+                    input.awaitUnsolicited()
+                } catch (_: Throwable) {
+                    // a failed or cancelled input is a closure signal too; this watch's own end is not (below)
+                }
+                if (isActive) onSignal()
+            }
+        val recorded =
+            watchLock.withLock {
+                if (idleWatch?.isActive == true) {
+                    false
+                } else {
+                    idleWatch = watch
+                    true
+                }
+            }
+        if (recorded) watch.start() else watch.cancel()
+    }
+
+    override suspend fun stopIdleWatch() {
+        takeIdleWatch()?.cancelAndJoin()
+    }
+
+    private fun takeIdleWatch(): Job? = watchLock.withLock { idleWatch.also { idleWatch = null } }
+
+    // a closed connection is watched no longer (a socket's close need not end the channel the watch waits on)
     override fun closeTransport() {
+        takeIdleWatch()?.cancel()
         tls?.close()
         socket.close()
     }
 
     override fun closeTransportOrderly() {
+        takeIdleWatch()?.cancel()
         orderly?.invoke() ?: closeTransport()
     }
 
@@ -177,6 +228,7 @@ internal class H1Connection(
     // the raw socket first, with a reset: the TLS session's close ends its output, and a raw writer still draining would
     // send a FIN (and the rest it holds) ahead of the reset
     override fun abortTransport() {
+        takeIdleWatch()?.cancel()
         socket.abort()
         tls?.close()
     }
@@ -208,19 +260,25 @@ internal class H1Connection(
      * then, cleanly, never a reset. [inputDone] completes once the session stopped reading [input]. [onEvent] (tests) gets
      * "waiting" once everything this side sends before the server's close is out, then "server closed" or "T2". A
      * cancellation (the end handlers' bound) or a [close] meanwhile (the pool's, the engine's) closes the connection where it
-     * stands. The slot comes back when it is over, or at that [close].
+     * stands. The slot comes back when it is over, or at that [close]. The waits for the server go through [within] (the
+     * session's [io.kuicksilver.ktor.client.WebSocketLifetime.serverWithin]): once the engine was closed they last the
+     * grace at most, then this side's close_notify and FIN go, cleanly (RFC 6455 section 5.5.1: the client "MAY close the
+     * connection at any time after sending and receiving a Close message"); [onEvent] gets "engine closed" instead of "T2"
+     * whenever [engineClosed] says so.
      */
     suspend fun closeAfterWebSocket(
         waitMillis: Long,
         inputDone: Job,
         serverClosedForTest: (suspend () -> Unit)? = null,
+        within: suspend (kotlin.time.Duration, suspend () -> Unit) -> Boolean = { d, b -> completedWithin(d) { b() } != null },
+        engineClosed: () -> Boolean = { false },
         onEvent: (String) -> Unit = {},
     ) {
         if (!claimClose()) return
         try {
             // in a coroutine of its own, which [close] cancels (abortClaimedClose): the end handler that runs this goes on
             coroutineScope {
-                val work = launch { closeInOrder(waitMillis, inputDone, serverClosedForTest, onEvent) }
+                val work = launch { closeInOrder(waitMillis, inputDone, serverClosedForTest, within, engineClosed, onEvent) }
                 lingering = work
                 if (abortRequested) work.cancel()
                 work.join()
@@ -246,6 +304,8 @@ internal class H1Connection(
         waitMillis: Long,
         inputDone: Job,
         serverClosedForTest: (suspend () -> Unit)?,
+        within: suspend (kotlin.time.Duration, suspend () -> Unit) -> Boolean,
+        engineClosed: () -> Boolean,
         onEvent: (String) -> Unit,
     ) {
         val deadline =
@@ -258,20 +318,27 @@ internal class H1Connection(
             onEvent("waiting")
             // a close read as T2 fires is the server's close: dropped, the server's FIN was not read over TLS
             val serverClosed =
-                completedWithin(left().milliseconds) {
+                within(left().milliseconds) {
                     inputDone.join()
                     drainToEnd(input)
                     serverClosedForTest?.invoke()
-                    true
-                } == true
-            onEvent(if (serverClosed) "server closed" else "T2")
+                }
+            onEvent(
+                when {
+                    serverClosed -> "server closed"
+                    engineClosed() -> "engine closed"
+                    else -> "T2"
+                },
+            )
             if (tls != null) {
                 // close_notify: after the server's, or once T2 is over; then the server's FIN
                 withTimeoutOrNull(ORDERLY_CLOSE_TIMEOUT) { tls.shutdown(drainTimeout = null, stopAwaitingPeer = DONE) }
                 // the session's pumps stop before the socket's input is read here: its reader may still be reading it
                 // (the server's input ended without close_notify, or the shutdown above did not wait for the peer)
                 val pumpsStopped = withTimeoutOrNull(ORDERLY_CLOSE_TIMEOUT) { tls.closeAndAwaitPumps() } != null
-                if (serverClosed && pumpsStopped && tcpIn != null) withTimeoutOrNull(left()) { drainToEnd(tcpIn) }
+                if (serverClosed && pumpsStopped && tcpIn != null) {
+                    within(left().milliseconds) { drainToEnd(tcpIn) }
+                }
             }
             // this side's FIN after everything written, then the close
             withTimeoutOrNull(ORDERLY_CLOSE_TIMEOUT) { (tcpOut ?: output).flushAndClose() }
@@ -493,8 +560,15 @@ internal class H1Pool(
     /** The platform's cleartext policy (Android Network Security Configuration); replaced by tests. */
     internal var cleartextPermitted: (String) -> Boolean = { host -> platformCleartextPermitted(host) }
 
+    /**
+     * The watches of the idle HTTP/1.1 connections ([H1Connection.startIdleWatch]): not the engine's request job; cancelled
+     * by [closeAll].
+     */
+    private val idleWatchers =
+        CoroutineScope(selector.coroutineContext.minusKey(Job) + SupervisorJob() + CoroutineName("kuicksilver-idle-watch"))
+
     /** Limits, keep-alive and idle expiry; internal for tests. */
-    internal val pool = ConnectionPool<H1Connection>(config.poolLimits(), clock)
+    internal val pool = ConnectionPool<H1Connection>(config.poolLimits(), idleWatchers, clock)
 
     /** This engine's TLS session tickets (resumption secrets stay native); closed by [closeAll], so closing the engine drops them. */
     internal val sessions = SessionCache()
@@ -543,6 +617,7 @@ internal class H1Pool(
                 // closes still running end hard (their finally closes TLS and the socket) before the selector goes
                 closers.coroutineContext[Job]!!.cancelAndJoin()
                 h2Scope.cancel()
+                idleWatchers.cancel()
                 sessions.close() // a connection still finishing stores its ticket into a closed cache, which releases it
                 proxySessions.close()
             }
@@ -1590,6 +1665,8 @@ internal class H1Pool(
                                                                 ws.lifetime.remainingTransportWaitMillis(),
                                                                 ws.inputDone,
                                                                 webSocketServerEndForTest,
+                                                                { d, b -> ws.lifetime.serverWithin(d, afterOwnEnd = true) { b() } != null },
+                                                                { ws.lifetime.isHurried },
                                                             ) { webSocketClosingForTest?.invoke(it) }
                                                         }
 

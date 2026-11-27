@@ -426,9 +426,25 @@ so nothing leaves after the wait (on macOS a server that stopped reading, its re
 until it sends something itself); an HTTP/2 or HTTP/3 stream is reset), 5 s for the server's close of the transport (then the client
 closes its side cleanly), and over HTTP/2 and HTTP/3 5 s more for the server's END_STREAM or FIN after the client's own
 (then the stream is reset). The session's end handlers are cut off two close waits after the session ended, whatever
-they still wait for. The pools close after that, as for any request (at most about 3 s more). The connection, its pool slot and the engine's
+they still wait for. The pools close after that, as for any request (at most about 3 s more: the HTTP/1.1 and HTTP/2 connections' orderly closes, and at the same time each HTTP/3 connection's wait of up to 1 s for the server to acknowledge what it sent, then its close, repeated once a probe timeout later, at most 250 ms). The connection, its pool slot and the engine's
 `close()` wait for the session, not for the call: `client.close()` right after `close(reason)` still sends the Close
 before the pools close. A call that fails or is cancelled before the session queued its Close still closes it with the
 closing handshake (RFC 6455 sections 7.1.7 and 7.3): one Close, 1001 Going Away (or the application's own code when it sends
 one, as from a `finally`), bounded by the same close wait; only a call that ends during the handshake ends it at once. A coroutine of
 the session that fails is reported to the event listener (`webSocketFailed`).
+
+A closed client waits for no server once its Close is written. Once the engine is closed (Ktor closes it when
+`client.close()` was called and the client's open work is over; a session of `webSocketSession()` still open counts as
+such work), a session that wrote its own Close (RFC 6455 section 7.1.2) no longer waits for the server's Close or its
+close of the transport, whether it was closing then or closes later; its transport ends cleanly (close_notify and a FIN,
+END_STREAM, a FIN; section 5.5.1: the client "MAY close the connection at any time after sending and receiving a Close
+message"). A session ended so before the server's Close is not a clean close (section 7.1.5: 1006), though Ktor's
+`closeReason` reports the client's own code. Until the server ends its side the Close may be unread there, so the server
+gets 1 s to read it and end, and over HTTP/2 and HTTP/3 a Close it never answered keeps the rest of its close wait (at
+least the grace; over HTTP/2 the Close counts as written only once the stream took it), so that the end of the stream or
+the connection does not discard it. A session whose Close cannot be written (a server that reads slowly or not at all)
+keeps its close wait: the engine's close does not cut it short. Over HTTP/1.1 the connection closes after the grace, and
+bytes the server still sends then get a reset from the closed socket (RFC 6455 sections 5.5.1 and 7.1.1 allow the
+close). While the client is open the waits above apply in full. The server engine's stop likewise stops waiting for a
+client's END_STREAM or FIN after a WebSocket that ended in order, so its grace period goes to the requests still
+running.

@@ -1,17 +1,22 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
 
-// Repositories. Maven Central answers 404 for files it has now and then (CI runs 44630132347, 44657561143, 44674970605);
-// Gradle takes a 404 as "not there" and asks the next repository, so in CI (kuicksilver.centralMirror=true, set by
-// .github/actions/setup) Google's mirror of Central comes last, asked only for a module the others did not find. A
-// version range would list the versions of every repository, the mirror's on every resolution, so the build has none
-// (build-logic pins the one the Kotlin plugin asks for). Builds outside CI leave the mirror out: a machine behind a
-// filter may not reach it. It changes no trust: every file still has to match gradle/verification-metadata.xml
-// (signature or SHA-256). Central comes before the Gradle Plugin Portal, which answers
-// for Central's modules with a redirect there, one more hop that can fail; the portal is asked only for the plugins
-// only it has (exclusiveContent), Google's repository only for the Android and Google groups.
-// build-logic/settings.gradle.kts has the same lists. A missing file of a module that was found (a jar) is asked for only
-// where its metadata came from: tools/ci/gradlew-retry.sh retries that in CI.
+// Repositories. In CI (kuicksilver.centralMirror=true, set by .github/actions/setup unless the repository variable
+// KSL_CENTRAL_MIRROR is off: CONTRIBUTING.md, "Dependency verification") Google's mirror of Maven Central comes before
+// Central: Central answers 429 Too Many Requests to GitHub's runners when a matrix of jobs resolves at once (runs
+// 44892895905, 45958310638, 45987232788), and now and then 404 for files it has (runs 44630132347, 44657561143,
+// 44674970605). Gradle takes a 404 as "not there" and asks the next repository, so Central stays as the fallback for a
+// module the mirror does not have (yet); any other answer (a 403, 429 or 5xx) fails the resolution, so the mirror's
+// content filter keeps away what Central does not serve: plugin markers, the Plugin Portal's own plugins, Google's own
+// groups. A version range would list the versions of every repository on every resolution, so the build has none
+// (build-logic pins the one the Kotlin plugin asks for). Builds outside CI (the release included) leave the mirror out:
+// a machine behind a filter may not reach it, and an unreachable repository fails the resolution rather than falling
+// through. It changes no trust: every file still has to match gradle/verification-metadata.xml (signature or SHA-256,
+// per artifact, whatever repository served it; CONTRIBUTING.md, "Dependency verification"). Central comes before the
+// Gradle Plugin Portal, which answers for Central's modules with a redirect there, one more hop that can fail; the
+// portal is asked only for the plugins only it has (exclusiveContent), Google's repository only for the Android and
+// Google groups. build-logic/settings.gradle.kts and the samples have the same lists. A missing file of a module that
+// was found (a jar) is asked for only where its metadata came from: tools/ci/gradlew-retry.sh retries that in CI.
 pluginManagement {
     includeBuild("build-logic")
     repositories {
@@ -22,6 +27,25 @@ pluginManagement {
                 includeGroupByRegex("com\\.google\\..*")
             }
         }
+        if (providers.gradleProperty("kuicksilver.centralMirror").orNull == "true") {
+            maven("https://maven-central.storage-download.googleapis.com/maven2/") {
+                name = "MavenCentralMirror"
+                // never a plugin marker (Central has some, the Plugin Portal all), the Plugin Portal's own
+                // plugins or Google's own groups: Gradle asks the next repository only after a 404, so a 403,
+                // 429 or 5xx the mirror answered for a module it does not have would fail the resolution
+                mavenContent {
+                    releasesOnly()
+                    excludeModuleByRegex(".*", ".*\\.gradle\\.plugin")
+                    excludeModule("org.jmailen.gradle", "kotlinter-gradle")
+                    excludeModule("org.jetbrains.kotlinx", "kotlinx-benchmark-plugin")
+                    excludeGroupByRegex("org\\.gradle\\.kotlin(\\..*)?")
+                    excludeGroupByRegex("androidx\\..*")
+                    excludeGroupByRegex("com\\.android(\\..*)?")
+                    excludeGroupByRegex("com\\.google\\.android(\\..*)?")
+                    excludeGroupByRegex("com\\.google\\.testing\\.platform(\\..*)?")
+                }
+            }
+        }
         mavenCentral()
         exclusiveContent {
             forRepository { gradlePluginPortal() }
@@ -29,12 +53,6 @@ pluginManagement {
                 includeModule("org.jmailen.gradle", "kotlinter-gradle")
                 includeModule("org.jetbrains.kotlinx", "kotlinx-benchmark-plugin")
                 includeGroupByRegex("org\\.gradle\\.kotlin(\\..*)?")
-            }
-        }
-        if (providers.gradleProperty("kuicksilver.centralMirror").orNull == "true") {
-            maven("https://maven-central.storage-download.googleapis.com/maven2/") {
-                name = "MavenCentralMirror"
-                mavenContent { releasesOnly() }
             }
         }
     }
@@ -48,13 +66,26 @@ dependencyResolutionManagement {
                 includeGroupByRegex("com\\.google\\..*")
             }
         }
-        mavenCentral()
         if (providers.gradleProperty("kuicksilver.centralMirror").orNull == "true") {
             maven("https://maven-central.storage-download.googleapis.com/maven2/") {
                 name = "MavenCentralMirror"
-                mavenContent { releasesOnly() }
+                // never a plugin marker (Central has some, the Plugin Portal all), the Plugin Portal's own
+                // plugins or Google's own groups: Gradle asks the next repository only after a 404, so a 403,
+                // 429 or 5xx the mirror answered for a module it does not have would fail the resolution
+                mavenContent {
+                    releasesOnly()
+                    excludeModuleByRegex(".*", ".*\\.gradle\\.plugin")
+                    excludeModule("org.jmailen.gradle", "kotlinter-gradle")
+                    excludeModule("org.jetbrains.kotlinx", "kotlinx-benchmark-plugin")
+                    excludeGroupByRegex("org\\.gradle\\.kotlin(\\..*)?")
+                    excludeGroupByRegex("androidx\\..*")
+                    excludeGroupByRegex("com\\.android(\\..*)?")
+                    excludeGroupByRegex("com\\.google\\.android(\\..*)?")
+                    excludeGroupByRegex("com\\.google\\.testing\\.platform(\\..*)?")
+                }
             }
         }
+        mavenCentral()
     }
 }
 rootProject.name = "kuicksilver"

@@ -38,8 +38,13 @@ import io.kuicksilver.quic.core.fail
 import io.kuicksilver.quic.core.failInternal
 import io.kuicksilver.quic.core.localCidBySeq
 import io.kuicksilver.quic.core.localCidSeqOn
+import io.kuicksilver.quic.core.probeUnsettledNow
+import io.kuicksilver.quic.core.pto
 import io.kuicksilver.quic.core.remoteCidOn
 import io.kuicksilver.quic.core.remoteCidSeqOn
+import io.kuicksilver.quic.core.repeatCloseNow
+import io.kuicksilver.quic.core.sendsSettled
+import io.kuicksilver.quic.core.sendsUnsettled
 import io.kuicksilver.quic.core.silentClose
 import io.kuicksilver.quic.core.takeReceivedTokens
 import io.kuicksilver.quic.emit
@@ -81,7 +86,28 @@ internal class ConnectionRuntime(
     private val leakId = LeakRegistry.open("quic.connection")
 
     /** The loop dropped this connection from its table: it is released, or goes with the endpoint's core. */
-    internal fun forgotten() = LeakRegistry.close(leakId)
+    internal fun forgotten() = LeakRegistry.close(leakId, core.timers.closedLateBy)
+
+    /** Tests: this connection's leak record. */
+    internal val leakIdForTest: Long get() = leakId
+
+    /** The end of the closing or draining period last told the registry ([noteClosingPeriod]); loop only. */
+    private var closingPeriodNoted: io.kuicksilver.quic.TimeMark? = null
+
+    /**
+     * Tells the leak sentinel's record that this connection is in its closing or draining period (RFC 9000 section 10.2) and
+     * when that ends: it stays in the loop's table until then by design, which is no slow teardown (an in-process server's
+     * connection that drains for 3 x PTO before its first RTT sample, about 3 s, after its client went away mid-handshake).
+     * Nothing in production (the record is 0) beyond the state check. Loop only.
+     */
+    private fun noteClosingPeriod() {
+        if (leakId == 0L) return
+        if (core.state != ConnectionState.Closing && core.state != ConnectionState.Draining) return
+        val end = core.timers.closeDeadline ?: return
+        if (end == closingPeriodNoted) return
+        closingPeriodNoted = end
+        LeakRegistry.closing(leakId, end - loop.now(), core.timers.closePto)
+    }
 
     private val closedDeferred = CompletableDeferred<QuicException.ConnectionLost>()
     override val closed: Deferred<QuicException.ConnectionLost> get() = closedDeferred
@@ -830,6 +856,7 @@ internal class ConnectionRuntime(
 
     internal fun drainEvents() {
         refreshPathRemotes()
+        noteClosingPeriod()
         val limit = core.datagramPayloadLimit
         datagramLimit = if (core.peerAcceptsDatagrams) limit else NO_DATAGRAMS
         resetStreamAtBoth = core.streams.peerResetStreamAt
@@ -1350,6 +1377,56 @@ internal class ConnectionRuntime(
             loop.flush(core)
             true
         }
+
+    /**
+     * `QuicConnection.awaitSendsSettled`: checked on the loop after every poll, which every acknowledgment, loss and timer
+     * is followed by. True once settled, false when the connection ended first.
+     */
+    internal suspend fun awaitSendsSettled(): Boolean =
+        withContext(loop.dispatcher) {
+            val ticker = newTicker()
+            try {
+                while (!core.sendsSettled()) {
+                    if (finished) return@withContext false
+                    try {
+                        ticker.receive()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Throwable) {
+                        return@withContext false // the connection ended: its tickers close with its reason
+                    }
+                }
+                // settled, unless it is because the connection is closing or gone (it then sends nothing more)
+                !finished && core.state != ConnectionState.Closing && core.state != ConnectionState.Draining &&
+                    core.state != ConnectionState.Closed
+            } finally {
+                removeTicker(ticker)
+            }
+        }
+
+    /** `QuicConnection.sendsUnsettled`: [ConnectionCore.sendsUnsettled] read on the loop; "connection ended" once it did. */
+    internal suspend fun sendsUnsettled(): String? =
+        withContext(loop.dispatcher) { if (finished) "connection ended" else core.sendsUnsettled() }
+
+    /** `QuicConnection.probeUnsettled`: [ConnectionCore.probeUnsettledNow], then a flush. */
+    internal suspend fun probeUnsettled() {
+        withContext(loop.dispatcher) {
+            if (finished) return@withContext
+            core.probeUnsettledNow()
+            loop.flush(core)
+        }
+    }
+
+    /** `QuicConnection.repeatClose`: [ConnectionCore.repeatCloseNow], then a flush; false when nothing was sent again. */
+    internal suspend fun repeatClose(): Boolean =
+        withContext(loop.dispatcher) {
+            if (!core.repeatCloseNow()) return@withContext false
+            loop.flush(core)
+            true
+        }
+
+    /** The connection's current probe timeout (RFC 9002 section 6.2.1, without the backoff), read on the loop. */
+    internal suspend fun currentPto(): kotlin.time.Duration = withContext(loop.dispatcher) { core.pto() }
 
     override suspend fun exportKeyingMaterial(
         label: String,

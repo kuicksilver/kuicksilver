@@ -1,27 +1,27 @@
 diff --git a/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionCore.close.kt b/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionCore.close.kt
-index 16a150654..a567c4a6f 100644
+index 0702a4809..99fad5cb9 100644
 --- a/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionCore.close.kt
 +++ b/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionCore.close.kt
-@@ -44,7 +44,6 @@ internal fun ConnectionCore.enterClosing(reason: QuicException.ConnectionLost) {
+@@ -55,7 +55,6 @@ internal fun ConnectionCore.enterClosing(reason: QuicException.ConnectionLost) {
      closeSent =
          false
-     timers.closeDeadline = now + pto() * 3
+     startClosePeriod()
 -    paths.dropAllResponses()
      streams.settleHeldUntilAnswer(false) // an answer that never comes stands for no acceptance
      events += ConnectionEvent.Closed(reason)
      // `now` must be the moment the closing state begins (a fresh `loop.now()`, see ConnectionRuntime.close), never a cached
-@@ -117,7 +116,6 @@ internal fun ConnectionCore.peerClosed(
-     val closing = state == ConnectionState.Closing
-     state = ConnectionState.Draining
-     timers.closeDeadline = now + pto() * 3
+@@ -160,7 +159,6 @@ internal fun ConnectionCore.peerClosed(
+     // case, the draining state ends when the closing state would have ended"; only a connection that was not closing starts
+     // a period now
+     if (!closing) startClosePeriod()
 -    paths.dropAllResponses()
      streams.settleHeldUntilAnswer(false) // an answer that never comes stands for no acceptance
      // RFC 9000 section 10.2.2: a closing endpoint that receives CONNECTION_CLOSE may drain; the connection already ended with our
      // own reason, reported once
-@@ -171,7 +169,6 @@ internal fun ConnectionCore.checkStatelessReset(
-     this.now = now
+@@ -218,7 +216,6 @@ internal fun ConnectionCore.checkStatelessReset(
+     // analogy with section 10.2.2's draining after closing
+     if (state != ConnectionState.Closing) startClosePeriod()
      state = ConnectionState.Draining
-     timers.closeDeadline = now + pto() * 3
 -    paths.dropAllResponses()
      streams.settleHeldUntilAnswer(false) // an answer that never comes stands for no acceptance
      val reason = QuicException.ConnectionLost.StatelessReset()

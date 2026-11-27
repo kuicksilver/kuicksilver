@@ -888,7 +888,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   The connection core (RFC 9113 sections 3.4, 5, 6) runs the preface, stream states, SETTINGS with an acknowledgement
   deadline, flow control that returns credit only as the application reads (with window auto-tuning), PING and a two-phase
   GOAWAY, and bounds every flood per connection: CONTINUATION frames and field-block bytes before decoding, queued control
-  frames, empty DATA frames, a glitch budget for PRIORITY, SETTINGS, unknown frames, PINGs with nothing of ours in between
+  frames, empty DATA frames, a glitch budget for PRIORITY, SETTINGS after the peer's preface, unknown frames, PINGs with nothing of ours in between
   and the stream errors the peer causes (MadeYouReset), a server's budget for the client's RST_STREAM frames (Rapid Reset), with reset streams counted
   until their handler returns. Field lists are HPACK-encoded in wire order. New experimental `Http2Settings`.
   New fuzz targets `http2.frames`, `http2.hpackDecode`, `http2.connectionServer` and `http2.hpackRoundTrip` (differential),
@@ -2234,6 +2234,91 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   layer refuses TLS 1.2 for QUIC, RFC 9001 section 4.2), so such a client fell back to TCP with `FallbackReason.TlsFailure`
   and the QUIC hop to a CONNECT-UDP proxy whose TLS allowed TLS 1.2 failed likewise. The engine now gives its
   QUIC connections TLS 1.3 only, whatever `tls { versions }` says, as the server engine did.
+
+- QUIC: when a handshake's active address came back to where the client is, the resend of what had gone to the other
+  address owed a PTO probe in each space, so its first datagram went out above the congestion window although no
+  probe timer had expired (RFC 9002 section 7: only "on a PTO timer expiration ... or when entering recovery"). The
+  frames are now queued again within the window; with the window full, the regular probe timeout is the fallback.
+- HTTP/3 client, `client.close()` right after a call failed during its upload (a socket timeout, a cancellation): the
+  server could keep the request and its connection open until its idle timeout (30 s). The failed call resets its
+  stream with H3_REQUEST_CANCELLED (RFC 9114 section 4.1.1), and the engine's close then sent CONNECTION_CLOSE once and
+  closed the socket (RFC 9000 section 10.2 allows that), so loss recovery never repeated a reset still in flight. A
+  server whose receive buffer the upload had filled (about 208 KiB by default on Linux and Android) lost both and
+  learned of neither. The engine's close now gives each HTTP/3 connection up to 1 s, as an HTTP/1.1 connection's
+  close_notify and at the same time as those, for the server to acknowledge what it sent: the unacknowledged frames go
+  again at once and once more halfway through, within the congestion window (RFC 9002 section 7: no datagram above it
+  without a probe timer expiry, so a full window waits for the regular probe; the probe timeout's backoff is left as
+  it is), the client's WebTransport sessions on it are closed first, and the connection then closes with
+  H3_NO_ERROR and repeats its CONNECTION_CLOSE once a probe timeout later (at most 250 ms; RFC 9000 section 10.2.1).
+  Found on the API 24 emulator by the vendored contract test
+  `HttpTimeoutTest.testSocketTimeoutWriteFailOnWritePerRequestAttributes` (`H3OrderlyCloseTest`).
+- HTTP/2 body, cancelled while it was read: the cancel emptied the body's buffer from its own thread while the reader
+  (Ktor's copier into the application's channel, in `HttpStatement.execute {}`) read it on another, so `Buffer.clear`
+  threw an EOFException out of `cancel` (or the read lost its bytes), the stream was never reset with CANCEL (RFC 9113
+  section 8.1) and the call's resources stayed open. A reader waiting for content also saw the stream's own
+  cancellation instead of the cancel's cause. The cancel now only fails the body, once (the first cause stays, a second
+  cancel does nothing), wakes a waiting reader and resets the stream; the reader drops the buffer itself. The HTTP/1.1
+  connection input (a socket timeout's cancel during a body read) and the request body's activity counter had the same
+  buffer race and are fixed the same way; the HTTP/3 body (a ktor-io channel, whose cancel never touches the buffer)
+  did not.
+- WebSocket: `client.close()` no longer waits out the close wait of a session whose server does not answer. Once the
+  engine is closed, a session whose Close is written ends without waiting for the server's Close or its close of the
+  transport (T1, T2, and the wait for its END_STREAM or FIN), on HTTP/1.1, HTTP/2 and HTTP/3. Its transport ends
+  cleanly: close_notify and a FIN, END_STREAM, a FIN, with no reset before the clean end (RFC 6455 section 5.5.1: the
+  client "MAY close the connection at any time after sending and receiving a Close message"). Until the server ends its
+  side the Close may be unread there, so the server still gets 1 s to do so. Over HTTP/2 and HTTP/3, where the stream's
+  reset or the connection's close would discard it, a Close the server never answered keeps the rest of its close wait
+  instead, at least the grace (over HTTP/2 the Close counts as written only once the stream took it, not once it is
+  queued behind the window). Over HTTP/1.1 the connection closes after the grace: bytes the server still sends then get
+  a reset from the closed socket, which RFC 6455 sections 5.5.1 and 7.1.1 allow. A session ended before the server's
+  Close is not a clean close (section 7.1.5: 1006), though Ktor's `closeReason` reports the client's own code. A session
+  whose Close cannot be written (a server that reads slowly or not at all) keeps its close wait, as before. Before, the
+  engine's cleanup waited up to the 5 s close wait for each such session. The leak sentinel caught this as 4990 ms
+  against Ktor's Netty server (`ClientToNettyWebSocketTest`, whose teardown stopped the server under closing sessions;
+  it now waits for each closing handshake and for the client's end first). The server engine's stop likewise no longer
+  waits for a client's END_STREAM or FIN after a WebSocket over HTTP/2 or HTTP/3 that ended in order; the client gets
+  RST_STREAM NO_ERROR or STOP_SENDING H3_NO_ERROR. Before, a stop with a grace period waited up to 5 s for it.
+- QUIC client, rejected 0-RTT: the server's 0.5-RTT flight was read before the rejection. A 1-RTT packet held for its
+  key was replayed when the key arrived, a step before the handshake's end settled the 0-RTT (RFC 9001 section 4.6.2).
+  The rejection then restarted the connection's credit and stream limits at the server's transport parameters, so a
+  MAX_DATA or MAX_STREAMS in that flight was lost, and an ACK of a rejected 0-RTT packet there was taken as an
+  acknowledgment instead of a PROTOCOL_VIOLATION. A client in 0-RTT now holds the server's 1-RTT packets until the
+  handshake's end, as ngtcp2's client does, and reads them after the 0-RTT is settled; a peer stream is handed out only
+  with `earlyDataAccepted` settled.
+- HTTP/3 client, rejected 0-RTT: the connection could close with QPACK_ENCODER_STREAM_ERROR when both sides used the
+  QPACK dynamic table. The first attempt to open the control and QPACK streams in 0-RTT could be superseded as it
+  ended: the rejection was noted (the critical streams moved to a new generation) while it waited to resume, and it
+  then reported the streams open anyway. Our encoder's Set Dynamic Table Capacity, made for the new generation once
+  the server's SETTINGS arrived, found no streams yet and was dropped, and the server's decoder, its table still of
+  capacity 0 (RFC 9204 section 3.2.3), refused the inserts after it. Decoder-stream bytes of the new generation were
+  dropped the same way. A superseded attempt now leaves the streams to the next one, and a write for a generation whose
+  streams are not open yet waits for them. Encoder instructions made for a dropped encoder stream close the connection
+  with H3_INTERNAL_ERROR instead of going silently, and, as defence in depth, the client reads no server stream until
+  the 0-RTT's answer is known.
+- QUIC: a closing connection that receives the peer's CONNECTION_CLOSE now drains until the end its closing state had.
+  RFC 9000 section 10.2.2: "In this case, the draining state ends when the closing state would have ended." A Stateless
+  Reset that reaches a closing connection keeps that end too; section 10.3.1 says only that the endpoint "MUST enter the
+  draining period", and keeping the end is our reading by analogy with section 10.2.2. Before, draining started a new
+  period of 3 x PTO, so a connection whose peer closed at about the same time stayed up to twice as long.
+- QUIC: a draining connection frees its packet protection keys and its TLS session at once (RFC 9000 section 10.2.2:
+  "Retaining packet protection keys is unnecessary once a connection is in the draining state."). It sends and reads
+  nothing then; its connection IDs stay for the rest of the period, so the peer's late packets are still dropped quietly.
+  Before, the keys and the session were kept for the whole period, about 3 s for a connection closed before its first
+  RTT sample. A closing connection keeps them: it builds its CONNECTION_CLOSE anew each time it repeats it.
+  - `ConnectionCore`'s `peerCertificates`, `localCertificates`, `negotiatedAlpn`, `keyExchangeGroup`,
+    `peerCertificateCompression` and `earlyDataAccepted` keep answering what the session said when it was freed, also
+    once the connection is closed. Before, a closed connection's `peerCertificates` turned empty unless read earlier,
+    and its `earlyDataAccepted` null.
+  - `ConnectionCore.exportKeyingMaterial` on a draining connection now throws IllegalStateException, as on a closed
+    one. `QuicConnection.exportKeyingMaterial` already failed with the close reason.
+- HTTP/1.1 client: an idle pooled connection is now watched for the server's close (RFC 9112 section 9.5: "Implementations
+  SHOULD constantly monitor open connections for a received closure signal and respond to it as appropriate"). When the
+  server ends it (close_notify, or a FIN alone) or sends bytes no request asked for, the client closes it in order at once
+  (its close_notify, then its FIN) and drops it from the pool. A request that takes the connection first ends the watch
+  before it uses the connection, so a connection is either handed out or closed, never both. Before, the close was seen
+  only when the connection was next taken, at its eviction (`idleTimeout`, 5 minutes by default) or at the engine's
+  close, and the socket stayed half-closed until then.
+
 - WebTransport (experimental): on a draft-02 session, which Chrome and Firefox speak, a stream the peer resets before its
   header named a session now reaches the session's application with the reset's code (draft-02 section 4.3: an
   implementation that "intentionally allows only one session over a given HTTP/3 connection [...] SHALL forward the error

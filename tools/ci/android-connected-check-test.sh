@@ -1,55 +1,202 @@
 #!/usr/bin/env bash
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
-# Tests android-connected-check.sh with a fake ./gradlew and adb: one more run only after a stalled APK install. Then
+# Tests android-connected-check.sh with a fake ./gradlew and adb: up to two more runs only when every failed task is the
+# connected test task of a module whose test APK install stalled and no test case failed, also when Gradle reported the
+# stall as "There were failing tests" (run 46008475587); a retry leaves out the connected test tasks of the modules that
+# passed in an earlier run (a result XML of that run, a task that did not fail), never a stalled one, a module that has
+# not run or one whose results are older; every run gets ADB_INSTALL_TIMEOUT (4 minutes, ddmlib's own default, unless set, whole minutes
+# only) and UTP's install timeout 5 minutes above it (runs 46008475587 and 46038965099: ddmlib's default of 4 minutes);
+# -q never reaches Gradle. The lines are those of runs 46008475587 (a stall) and 45987232788 (a test that failed,
+# FAILED in ANSI color). Then
 # device-serial.sh, which pins the gate's current-API device steps to emulator-5554, against a fake adb: the command runs
 # with ANDROID_SERIAL set to that device only, and never when it is missing (an API 24 emulator alone is refused).
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
-fails=0; unset KSL_CONNECTED_TASKS
-case_run() {   # case_run <name> <expected exit> <expected runs> <outputs, one per run: ok|stall|test|halfstall>
-  # with $want_args set, every run's arguments must be those
+fails=0; unset KSL_CONNECTED_TASKS ADB_INSTALL_TIMEOUT
+case_run() {   # case_run <name> <expected exit> <expected runs> <outputs, one per run: ok|stall|test|... (the fake below)>
+  # with $want_args set, every run's arguments must be those, with $want_last the last run's; $script_args are the
+  # script's own arguments; $want_timeout is the ADB_INSTALL_TIMEOUT every run must see (default 4); $old_results names
+  # modules with a result XML from before the script ran. No run may get -q or --quiet.
   local name=$1 want_rc=$2 want_runs=$3
   shift 3
-  local dir
+  local dir sargs=()
+  read -r -a sargs <<< "${script_args:-}"
   dir=$(mktemp -d)
   printf '%s\n' "$@" > "$dir/plan"
+  local om
+  for om in ${old_results:-}; do
+    mkdir -p "$dir/$om/build/outputs/androidTest-results/connected/androidDeviceTest"
+    touch -t 202601010000 "$dir/$om/build/outputs/androidTest-results/connected/androidDeviceTest/TEST-old.xml"
+  done
   cat > "$dir/gradlew" <<'G'
 #!/usr/bin/env bash
-n=$(( $(cat runs 2>/dev/null || echo 0) + 1 )); echo $n > runs; echo "$*" >> args
+n=$(( $(cat runs 2>/dev/null || echo 0) + 1 )); echo $n > runs; echo "$*" >> args; echo "${ADB_INSTALL_TIMEOUT-unset}" >> env
 what=$(sed -n "${n}p" plan)
+passed() {   # module $1's connected tests passed: its result XML, as UTP writes it
+  echo "> Task :$1:connectedAndroidDeviceTest"; echo "Starting 296 tests on $dev"; echo "Finished 296 tests on $dev"
+  mkdir -p "$1/build/outputs/androidTest-results/connected/androidDeviceTest"
+  echo '<testsuite tests="296" failures="0"/>' > "$1/build/outputs/androidTest-results/connected/androidDeviceTest/TEST-$1.xml"
+}
+dev='test(AVD) - 7.0' t=io.kuicksilver.quic.api.QuicApiTest m=endpointCloseSendsConnectionCloseToPeers
+net=kuicksilver-ktor-network quic=kuicksilver-quic
+apk() { echo "[/home/runner/work/kuicksilver/kuicksilver/$1/build/outputs/apk/androidTest/$1-androidTest.apk]"; }
+stall_errors() {   # the lines of a stalled install of module $1 (run 46008475587, in its order) that are not lifecycle
+  # or WARN output: ddmlib's trace, UTP's exception and its cause, the task's failure
+  echo "com.android.ddmlib.ShellCommandUnresponsiveException"
+  echo "	at com.android.ddmlib.SplitApkInstaller.uploadApk(SplitApkInstaller.java:131)"
+  echo "Test execution failed with fatal error!"; echo "Message: Failed to install split APK(s): $(apk "$1")"
+  echo "Caused by: com.android.ddmlib.InstallException: Failed to install-write all apks"
+  echo "Failed to install split APK(s): $(apk "$1")"
+  echo "Failed to install-write all apks"; echo "com.android.ddmlib.InstallException: Failed to install-write all apks"
+}
+refused() {   # module $1's install refused with $2 (no stall): UTP's exception, its cause, the task's failure
+  echo "> Task :$1:connectedAndroidDeviceTest"; echo "Message: Failed to install split APK(s): $(apk "$1")"
+  echo "Caused by: com.android.ddmlib.InstallException: $2"; echo "> Task :$1:connectedAndroidDeviceTest FAILED"
+  echo "Failed to install split APK(s): $(apk "$1")"; echo "com.android.ddmlib.InstallException: $2"
+}
+stall() {   # all the lines of a stalled install of module $1
+  echo "> Task :$1:connectedAndroidDeviceTest"; echo "02:02:11 E/662332423: null"; stall_errors "$1"
+  echo "Starting 0 tests on $dev"; echo "Finished 0 tests on $dev"
+  echo "> Task :$1:connectedAndroidDeviceTest FAILED"; echo "ErrorName: UNKNOWN"; echo "ErrorType: TEST"
+}
+fail1() {   # Gradle's summary of one failed task $1, with --stacktrace
+  echo "FAILURE: Build failed with an exception."; echo; echo "* What went wrong:"
+  echo "Execution failed for task '$1' (registered by plugin 'com.android.internal.kotlin.multiplatform.library')."
+  echo "> There were failing tests. See the report at: file:///w/build/reports/androidTests/connected/androidMain/index.html"
+  echo "* Exception is:"; echo "org.gradle.api.tasks.TaskExecutionException: Execution failed for task '$1' (registered by plugin 'x')."
+  echo "Caused by: org.gradle.api.GradleException: There were failing tests. See the report at: file:///w/index.html"
+  echo "BUILD FAILED in 13m 31s"
+}
+failn() {   # Gradle's summary of several failures (--continue, or tasks that ran at once): a task path, or other text
+  local i=0 f
+  echo "FAILURE: Build completed with $# failures."
+  for f in "$@"; do
+    i=$((i + 1)); echo; echo "$i: Task failed with an exception."; echo "-----------"; echo "* What went wrong:"
+    case $f in
+      :*) echo "Execution failed for task '$f'."; echo "> There were failing tests. See the report at: file:///w/index.html"
+          echo "* Exception is:"; echo "org.gradle.api.tasks.TaskExecutionException: Execution failed for task '$f'." ;;
+      *) echo "$f" ;;
+    esac
+  done
+  echo "BUILD FAILED in 13m 31s"
+}
 case $what in
   ok) echo "BUILD SUCCESSFUL"; exit 0 ;;
-  stall) echo "com.android.ddmlib.ShellCommandUnresponsiveException"; echo "com.android.ddmlib.InstallException: Failed to install-write all apks"; exit 1 ;;
+  stall) stall $net; fail1 ":$net:connectedAndroidDeviceTest"; exit 1 ;;   # run 46008475587: no test case failed
+  # run 46038965099: http2 passed, then net's install stalled; net wrote a result XML of its own (0 tests)
+  passstall) passed kuicksilver-http2; stall $net; mkdir -p "$net/build/outputs/androidTest-results/connected/x"
+    echo '<testsuite tests="0"/>' > "$net/build/outputs/androidTest-results/connected/x/TEST-$net.xml"
+    fail1 ":$net:connectedAndroidDeviceTest"; exit 1 ;;
+  passstallnet) passed kuicksilver-http3; stall $net; fail1 ":$net:connectedAndroidDeviceTest"; exit 1 ;;
+  stalltwo) stall $net; stall kuicksilver-ktor-server; failn ":$net:connectedAndroidDeviceTest" ":kuicksilver-ktor-server:connectedAndroidDeviceTest"; exit 1 ;;
+  stallnosummary) stall $net; exit 1 ;;
+  stallelsewhere) stall $net; fail1 ":$quic:connectedAndroidDeviceTest"; exit 1 ;;
   halfstall) echo "com.android.ddmlib.InstallException: Failed to install-write all apks"; exit 1 ;;
-  stallandtests) echo "There were failing tests"; echo "com.android.ddmlib.ShellCommandUnresponsiveException"; echo "com.android.ddmlib.InstallException: Failed to install-write all apks"; exit 1 ;;
+  # module quic's instrumentation crashed before its first test: UTP 32.3.3 prints no marker, the task fails
+  stallcrash) stall $net; echo "> Task :$quic:connectedAndroidDeviceTest"; echo "Starting 0 tests on $dev"
+    echo "Finished 0 tests on $dev"; echo "> Task :$quic:connectedAndroidDeviceTest FAILED"
+    failn ":$net:connectedAndroidDeviceTest" ":$quic:connectedAndroidDeviceTest"; exit 1 ;;
+  # under -q: a stall and a test that failed at the same time, ERROR lines only (no marker, no task line)
+  quietconcurrent) stall_errors $net; failn ":$net:connectedAndroidDeviceTest" ":$quic:connectedAndroidDeviceTest"; exit 1 ;;
+  # module server's install failed otherwise, next to module net's stall
+  stallstorage) stall $net; refused kuicksilver-ktor-server "INSTALL_FAILED_INSUFFICIENT_STORAGE"
+    failn ":$net:connectedAndroidDeviceTest" ":kuicksilver-ktor-server:connectedAndroidDeviceTest"; exit 1 ;;
+  stallupload) stall $net; refused kuicksilver-ktor-server "Failed to install-write all apks"
+    failn ":$net:connectedAndroidDeviceTest" ":kuicksilver-ktor-server:connectedAndroidDeviceTest"; exit 1 ;;
+  stallmixed) stall $net; echo "com.android.ddmlib.InstallException: INSTALL_FAILED_INSUFFICIENT_STORAGE"
+    fail1 ":$net:connectedAndroidDeviceTest"; exit 1 ;;
+  stallothertask) stall $net; failn ":$net:connectedAndroidDeviceTest" ":$quic:compileAndroidDeviceTest"; exit 1 ;;
+  stallnontask) stall $net; failn ":$net:connectedAndroidDeviceTest" "Could not resolve all files for configuration ':$quic:androidDeviceTestRuntimeClasspath'."; exit 1 ;;
+  # one marker of a failed test case each, next to a stall whose task is the only one that failed
+  stallpertest) stall $net; printf '%s > %s[%s] \033[31mFAILED \033[0m\n' "$t" "$m" "$dev"; echo "	java.lang.AssertionError: Expected value to be true."; fail1 ":$net:connectedAndroidDeviceTest"; exit 1 ;;
+  stallcount) stall $net; echo "Tests on $dev failed: There was 1 failure(s)."; fail1 ":$net:connectedAndroidDeviceTest"; exit 1 ;;
+  stallprogress) stall $net; echo "$dev Tests 198/1883 completed. (0 skipped) (1 failed)"; fail1 ":$net:connectedAndroidDeviceTest"; exit 1 ;;
+  stallexecute) stall $net; echo "Execute $t.$m: FAILED"; fail1 ":$net:connectedAndroidDeviceTest"; exit 1 ;;
+  realtest)   # run 45987232788: a test case failed, no install stalled
+    echo "> Task :$quic:connectedAndroidDeviceTest"; echo "Starting 1883 tests on $dev"
+    echo "$dev Tests 188/1883 completed. (0 skipped) (0 failed)"
+    printf '%s > %s[%s] \033[31mFAILED \033[0m\n' "$t" "$m" "$dev"; echo "	java.lang.AssertionError: Expected value to be true."
+    echo "$dev Tests 198/1883 completed. (0 skipped) (1 failed)"; echo "Tests on $dev failed: There was 1 failure(s)."
+    echo "Finished 1883 tests on $dev"; echo "Execute $t.$m: FAILED"
+    echo "> Task :$quic:connectedAndroidDeviceTest FAILED"; fail1 ":$quic:connectedAndroidDeviceTest"; exit 1 ;;
   *) echo "There were failing tests"; exit 1 ;;
 esac
 G
   chmod +x "$dir/gradlew"
   mkdir "$dir/bin"; printf '#!/bin/sh\nexit 0\n' > "$dir/bin/adb"; chmod +x "$dir/bin/adb"
   local rc=0
-  (cd "$dir" && PATH="$dir/bin:$PATH" bash "$here/android-connected-check.sh" > out.log 2>&1) || rc=$?
-  local runs bad_args=""
-  runs=$(cat "$dir/runs")
+  (cd "$dir" && PATH="$dir/bin:$PATH" bash "$here/android-connected-check.sh" ${sargs[@]+"${sargs[@]}"} > out.log 2>&1) || rc=$?
+  local runs bad_args="" bad_env=""
+  runs=$(cat "$dir/runs" 2>/dev/null || echo 0)
+  touch "$dir/args" "$dir/env"
   [ -z "${want_args:-}" ] || ! grep -qvxF -- "$want_args" "$dir/args" || bad_args=$(grep -vxF -- "$want_args" "$dir/args" | head -1)
-  if [ "$rc" -ne "$want_rc" ] || [ "$runs" -ne "$want_runs" ] || [ -n "$bad_args" ]; then
-    echo "FAIL $name: exit $rc (want $want_rc), runs $runs (want $want_runs)${bad_args:+, arguments '$bad_args' (want '$want_args')}"; fails=$((fails + 1))
+  [ -z "${want_last:-}" ] || [ "$(tail -n 1 "$dir/args")" = "$want_last" ] || bad_args="last run: $(tail -n 1 "$dir/args")"
+  ! grep -qvxF -- "${want_timeout:-4}" "$dir/env" || bad_env=$(grep -vxF -- "${want_timeout:-4}" "$dir/env" | head -1)
+  local quiet_re='(^| )(--quiet|-[qwidsSmauvt]*q[qwidsSmauvt]*|[^ ]*org[.]gradle[.]logging[.]level=(quiet|lifecycle))( |$)'
+  [ -n "$bad_args" ] || ! grep -qiE "$quiet_re" "$dir/args" || bad_args=$(grep -iE "$quiet_re" "$dir/args" | head -1)
+  if [ "$rc" -ne "$want_rc" ] || [ "$runs" -ne "$want_runs" ] || [ -n "$bad_args" ] || [ -n "$bad_env" ]; then
+    echo "FAIL $name: exit $rc (want $want_rc), runs $runs (want $want_runs)${bad_args:+, arguments '$bad_args' (want '${want_last:-${want_args:-no -q}}')}${bad_env:+, ADB_INSTALL_TIMEOUT '$bad_env' (want '${want_timeout:-4}')}"; fails=$((fails + 1))
   else
     echo "ok $name"
   fi
   rm -rf "$dir"
 }
 case_run "a passing run is not repeated" 0 1 ok
-case_run "a stalled install runs once more" 0 2 stall ok
-case_run "negative_a stalled install twice fails" 1 2 stall stall
+case_run "a stalled install Gradle calls failing tests, no test case failed, runs once more" 0 2 stall ok
+case_run "stalled installs of two modules, no other failure, run once more" 0 2 stalltwo ok
+case_run "a stalled install twice, then a pass, passes after two retries" 0 3 stall stall ok
+case_run "negative_a stalled install three times fails" 1 3 stall stall stall
+case_run "negative_a retry that fails its tests fails" 1 2 stall test
+case_run "negative_a retry of a stall whose test case fails fails" 1 2 stall realtest
 case_run "negative_failing tests are never repeated" 1 1 test ok
 case_run "negative_the install message alone is not a stall" 1 1 halfstall ok
-case_run "negative_a retry that fails its tests fails" 1 2 stall test
-case_run "negative_failing tests next to a stalled install are not repeated" 1 1 stallandtests ok
-want_args="--stacktrace androidConnectedCheck" case_run "the root task by default, on the retry too" 0 2 stall ok
-KSL_CONNECTED_TASKS=":a:androidConnectedCheck :b:androidConnectedCheck" want_args="--stacktrace :a:androidConnectedCheck :b:androidConnectedCheck" \
+case_run "negative_a test case that failed is not repeated" 1 1 realtest ok
+case_run "negative_a stall without Gradle's list of failures is not repeated" 1 1 stallnosummary ok
+case_run "negative_a stall of one module while another one's task failed is not repeated" 1 1 stallelsewhere ok
+case_run "negative_a stall next to an instrumentation that crashed before its first test is not repeated" 1 1 stallcrash ok
+script_args="-q" case_run "negative_under -q a stall next to a test that failed is not repeated" 1 1 quietconcurrent ok
+case_run "negative_a stall next to another failed task is not repeated" 1 1 stallothertask ok
+case_run "negative_a stall next to another module's INSTALL_FAILED_INSUFFICIENT_STORAGE is not repeated" 1 1 stallstorage ok
+case_run "negative_a stall next to another module's upload failure without a stall of its own is not repeated" 1 1 stallupload ok
+case_run "negative_a stalled module whose install also failed otherwise is not repeated" 1 1 stallmixed ok
+case_run "negative_a stall next to a failure of no task is not repeated" 1 1 stallnontask ok
+case_run "negative_a stalled install with a FAILED test case is not repeated" 1 1 stallpertest ok
+case_run "negative_a stalled install with a count of failures is not repeated" 1 1 stallcount ok
+case_run "negative_a stalled install with failed tests in the progress is not repeated" 1 1 stallprogress ok
+case_run "negative_a stalled install with an Execute ... FAILED is not repeated" 1 1 stallexecute ok
+script_args="--max-workers=2 -q -Pkotlin.incremental=false" want_args="--stacktrace androidConnectedCheck --max-workers=2 -w -Pkotlin.incremental=false -Pandroid.experimental.testOptions.installApkTimeout=540" \
+  case_run "-q (the local gate's) reaches Gradle as -w, on the retry too" 0 2 stall ok
+script_args="--quiet" want_args="--stacktrace androidConnectedCheck -w -Pandroid.experimental.testOptions.installApkTimeout=540" case_run "--quiet reaches Gradle as -w" 1 1 test
+script_args="-qS" want_args="--stacktrace androidConnectedCheck -w -S -Pandroid.experimental.testOptions.installApkTimeout=540" case_run "-qS reaches Gradle as -w -S" 1 1 test
+script_args="-Sq" want_args="--stacktrace androidConnectedCheck -w -S -Pandroid.experimental.testOptions.installApkTimeout=540" case_run "-Sq reaches Gradle as -w -S" 1 1 test
+script_args="-qq --info" want_args="--stacktrace androidConnectedCheck -w --info -Pandroid.experimental.testOptions.installApkTimeout=540" case_run "-qq is dropped, -w once" 1 1 test
+script_args="-Dorg.gradle.logging.level=quiet -q" want_args="--stacktrace androidConnectedCheck -w -Pandroid.experimental.testOptions.installApkTimeout=540" \
+  case_run "-Dorg.gradle.logging.level=quiet and -q reach Gradle as one -w" 1 1 test
+script_args="-D org.gradle.logging.level=LIFECYCLE -s" want_args="--stacktrace androidConnectedCheck -w -s -Pandroid.experimental.testOptions.installApkTimeout=540" \
+  case_run "-D org.gradle.logging.level=LIFECYCLE reaches Gradle as -w" 1 1 test
+script_args="--system-prop=org.gradle.logging.level=quiet" want_args="--stacktrace androidConnectedCheck -w -Pandroid.experimental.testOptions.installApkTimeout=540" \
+  case_run "--system-prop=org.gradle.logging.level=quiet reaches Gradle as -w" 1 1 test
+script_args="--system-prop org.gradle.logging.level=quiet" want_args="--stacktrace androidConnectedCheck -w -Pandroid.experimental.testOptions.installApkTimeout=540" \
+  case_run "--system-prop org.gradle.logging.level=quiet reaches Gradle as -w" 1 1 test
+script_args="-Dorg.gradle.logging.level=info -Pq=1 -Dx=quiet" want_args="--stacktrace androidConnectedCheck -Dorg.gradle.logging.level=info -Pq=1 -Dx=quiet -Pandroid.experimental.testOptions.installApkTimeout=540" \
+  case_run "other levels and properties pass unchanged" 1 1 test
+case_run "the root task by default, on the retry too" 0 2 stall ok
+KSL_CONNECTED_TASKS=":a:androidConnectedCheck :b:androidConnectedCheck" want_args="--stacktrace :a:androidConnectedCheck :b:androidConnectedCheck -Pandroid.experimental.testOptions.installApkTimeout=540" \
   case_run "KSL_CONNECTED_TASKS replaces the root task, on the retry too" 0 2 stall ok
+I=-Pandroid.experimental.testOptions.installApkTimeout
+old_results="kuicksilver-quic" want_last="--stacktrace androidConnectedCheck $I=540 -x :kuicksilver-http2:connectedAndroidDeviceTest" \
+  case_run "a retry leaves out the module that passed, not the stalled one nor one with older results" 0 2 passstall ok
+want_last="--stacktrace androidConnectedCheck $I=540 -x :kuicksilver-http2:connectedAndroidDeviceTest -x :kuicksilver-http3:connectedAndroidDeviceTest" \
+  case_run "the second retry leaves out the modules that passed in both earlier runs" 0 3 passstall passstallnet ok
+want_last="--stacktrace androidConnectedCheck $I=540 -x :kuicksilver-http2:connectedAndroidDeviceTest" \
+  case_run "negative_a retry whose tests fail fails, also without the passed module" 1 2 passstall realtest
+want_args="--stacktrace androidConnectedCheck $I=540" case_run "a stall with no module passed retries everything" 0 2 stall ok
+ADB_INSTALL_TIMEOUT=7 want_timeout=7 want_args="--stacktrace androidConnectedCheck $I=720" \
+  case_run "a caller's ADB_INSTALL_TIMEOUT is kept, UTP's timeout 5 minutes above it" 1 1 test
+for bad in 0 1.5 10m 07 1000; do
+  ADB_INSTALL_TIMEOUT=$bad case_run "negative_ADB_INSTALL_TIMEOUT='$bad' is refused before Gradle runs" 2 0 ok
+done
 serial_run() {   # serial_run <name> <expected exit> <expected ANDROID_SERIAL, or - for not run> <adb devices lines...>
   local name=$1 want_rc=$2 want_serial=$3 dir rc=0 got
   shift 3

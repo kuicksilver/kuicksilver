@@ -70,6 +70,8 @@ internal class H3Call(
     webSocketMaxMessageSize: Long = DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE,
     /** A CONNECT-UDP request (RFC 9298) on an engine with `connectUdp`: a CONNECT call marked for `connectUdp(proxy)` routes. */
     connectUdp: Boolean = false,
+    /** The engine's stop request (KuicksilverApplicationEngine.stopping), for an Extended CONNECT for `websocket`. */
+    stopping: kotlinx.coroutines.Job? = null,
 ) : BaseApplicationCall(application),
     CoroutineScope {
     override val request =
@@ -93,6 +95,7 @@ internal class H3Call(
                 userDispatcher,
                 beforeUpgradeForTest,
                 webSocketMaxMessageSize,
+                stopping,
             )
         } else {
             H3Response(this, h3, altSvc)

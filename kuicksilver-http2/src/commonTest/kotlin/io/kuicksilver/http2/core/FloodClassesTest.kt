@@ -108,6 +108,26 @@ class FloodClassesTest {
         }
     }
 
+    /**
+     * RFC 9113 section 3.4: the connection preface "MUST" end with a SETTINGS frame, so the peer's first SETTINGS is no
+     * glitch; each later one is (CVE-2019-9515). With a budget of 2, the preface and two more SETTINGS pass and the third
+     * after the preface ends the connection, on both roles.
+     */
+    @Test
+    fun negative_onlyThePrefaceSettingsIsFree() {
+        for (role in Role.entries) {
+            // the peer's clock stands still: the budget never refills
+            val p = RawH2Peer(role, http2Settings { floodLimits { glitches = RateLimit(1, 2) } })
+            p.handshake()
+            assertEquals(0, p.core.glitchesTaken, "$role: the preface SETTINGS")
+            repeat(2) { p.send(FrameEncoder.settings(IntArray(0), LongArray(0))) }
+            assertEquals(2, p.core.glitchesTaken, "$role")
+            assertEquals(false, p.core.isClosed, "$role")
+            p.send(FrameEncoder.settings(IntArray(0), LongArray(0)))
+            p.assertConnectionError(Http2ErrorCode.ENHANCE_YOUR_CALM)
+        }
+    }
+
     @Test
     fun negative_settingsFloodWithoutReading() {
         // CVE-2019-9515: every SETTINGS is owed an ACK; the values change the windows of every stream (the costly kind)
@@ -335,10 +355,10 @@ class FloodClassesTest {
         assertEquals(false, s.core.isClosed)
         s.read()
         assertEquals(10, s.resets().count { it.errorCode == Http2ErrorCode.REFUSED_STREAM.code })
-        assertEquals(1, s.core.glitchesTaken, "the client's SETTINGS only")
+        assertEquals(0, s.core.glitchesTaken, "the client's preface SETTINGS is free")
         // two open at once at a limit of 1: the second is the client's error
         s.send(s.headers(id, endStream = false), s.headers(id + 2, endStream = false))
-        assertEquals(2, s.core.glitchesTaken)
+        assertEquals(1, s.core.glitchesTaken)
     }
 
     @Test
@@ -408,7 +428,7 @@ class FloodClassesTest {
             s.send(FrameEncoder.windowUpdate(0, 10), FrameEncoder.windowUpdate(1, 10))
         }
         assertEquals(false, s.core.isClosed)
-        assertEquals(1, s.core.glitchesTaken, "the client's SETTINGS only")
+        assertEquals(0, s.core.glitchesTaken, "the client's preface SETTINGS is free")
 
         val b = peer(Role.SERVER)
         b.send(b.headers(1, endStream = true))
@@ -422,7 +442,7 @@ class FloodClassesTest {
             repeat(4) { b.send(FrameEncoder.windowUpdate(1, 50), FrameEncoder.windowUpdate(0, 50)) }
         }
         assertEquals(false, b.core.isClosed)
-        assertEquals(1, b.core.glitchesTaken, "the client's SETTINGS only")
+        assertEquals(0, b.core.glitchesTaken, "the client's preface SETTINGS is free")
     }
 
     /**
@@ -500,7 +520,7 @@ class FloodClassesTest {
         }
         assertTrue(tiny > 1_000, "the model sends tiny increments: $tiny")
         assertEquals(false, s.core.isClosed)
-        assertEquals(1, s.core.glitchesTaken, "the client's SETTINGS only, after $tiny tiny increments")
+        assertEquals(0, s.core.glitchesTaken, "no glitch after $tiny tiny increments")
     }
 
     /**
@@ -518,9 +538,9 @@ class FloodClassesTest {
         s.core.release(1)
         assertEquals(0, s.core.activeStreams)
         s.send(FrameEncoder.windowUpdate(1, 100), FrameEncoder.windowUpdate(1, 100))
-        assertEquals(1, s.core.glitchesTaken)
+        assertEquals(0, s.core.glitchesTaken)
         s.send(FrameEncoder.windowUpdate(1, 100)) // a third one: no DATA of ours allows it
-        assertEquals(2, s.core.glitchesTaken)
+        assertEquals(1, s.core.glitchesTaken)
     }
 
     /**

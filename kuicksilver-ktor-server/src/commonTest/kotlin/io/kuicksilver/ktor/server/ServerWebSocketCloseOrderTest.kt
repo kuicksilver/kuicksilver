@@ -16,6 +16,7 @@ import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.LineEnding
 import io.ktor.utils.io.discard
+import io.ktor.utils.io.exhausted
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.readByte
 import io.ktor.utils.io.readByteArray
@@ -28,6 +29,9 @@ import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.ktor.network.connectTcp
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.QuicClientConfig
+import io.kuicksilver.quic.QuicConnection
+import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.awaitSendStopped
 import io.kuicksilver.tls.TlsConnection
@@ -150,17 +154,60 @@ class ServerWebSocketCloseOrderTest {
 
     /** Reads one HTTP/3 frame from [input]: its type and payload. */
     private suspend fun readH3Frame(input: ByteReadChannel): Pair<Long, ByteArray> {
-        suspend fun varint(): Long {
-            val first = input.readByte().toInt() and 0xff
-            val len = 1 shl (first ushr 6)
-            var v = (first and 0x3f).toLong()
-            repeat(len - 1) { v = (v shl 8) or (input.readByte().toLong() and 0xff) }
-            return v
-        }
-        val type = varint()
-        val len = varint()
+        val type = readVarint(input)
+        val len = readVarint(input)
         return type to input.readByteArray(len.toInt())
     }
+
+    /** Reads one QUIC variable-length integer (RFC 9000 section 16) from [input]. */
+    private suspend fun readVarint(input: ByteReadChannel): Long {
+        val first = input.readByte().toInt() and 0xff
+        val len = 1 shl (first ushr 6)
+        var v = (first and 0x3f).toLong()
+        repeat(len - 1) { v = (v shl 8) or (input.readByte().toLong() and 0xff) }
+        return v
+    }
+
+    /** The settings in a SETTINGS frame's [payload]: identifier and value varint pairs (RFC 9114 section 7.2.4). */
+    private suspend fun settingsOf(payload: ByteArray): Map<Long, Long> {
+        val input = ByteReadChannel(payload)
+        val out = HashMap<Long, Long>()
+        while (!input.exhausted()) out[readVarint(input)] = readVarint(input)
+        return out
+    }
+
+    /**
+     * The client side of the server's unidirectional streams on a bare QUIC connection [c] (no HTTP/3 session of ours):
+     * the server's SETTINGS go to [settings] and the id of its first GOAWAY to [goAway] (RFC 9114 section 7.2.6); its QPACK
+     * streams are read and dropped (a client whose SETTINGS are empty allows the server no dynamic table: RFC 9204 section
+     * 3.2.3, SETTINGS_QPACK_MAX_TABLE_CAPACITY defaults to 0).
+     * Runs until the connection ends or the caller cancels it.
+     */
+    private suspend fun readServerStreams(
+        c: QuicConnection,
+        settings: CompletableDeferred<Map<Long, Long>>,
+        goAway: CompletableDeferred<Long>,
+    ): Unit =
+        coroutineScope {
+            while (true) {
+                val st = runCatching { c.acceptStream() }.getOrNull() ?: break
+                launch {
+                    runCatching {
+                        if (readVarint(st.input) != 0L) {
+                            st.input.discard() // a QPACK stream (RFC 9204 section 4.2)
+                            return@runCatching
+                        }
+                        val (type, payload) = readH3Frame(st.input)
+                        assertEquals(4L, type, "the control stream's first frame is SETTINGS (RFC 9114 section 6.2.1)")
+                        settings.complete(settingsOf(payload))
+                        while (true) {
+                            val (t, p) = readH3Frame(st.input)
+                            if (t == 7L) goAway.complete(readVarint(ByteReadChannel(p)))
+                        }
+                    }.exceptionOrNull()?.let { settings.completeExceptionally(it) }
+                }
+            }
+        }
 
     /** A DATA frame (type 0) carrying [payload] (under 64 bytes). */
     private fun dataFrame(payload: ByteArray) = byteArrayOf(0, payload.size.toByte()) + payload
@@ -233,6 +280,70 @@ class ServerWebSocketCloseOrderTest {
             server.stop(100, 500)
         }
     }
+
+    /**
+     * A stop with a long grace period while the server waits for a client's FIN after its own (the close wait, 5 s): the
+     * client is stopped at once with H3_NO_ERROR, as after the close wait, and the stop is over well within it.
+     *
+     * The client is a bare QUIC connection with its own control stream, not a Kuicksilver HTTP/3 client: the stop sends
+     * its GOAWAY too (RFC 9114 section 5.2), on the control stream, and the STOP_SENDING may arrive before or after it
+     * (two streams: QUIC orders neither against the other). A Kuicksilver client closes its connection when a GOAWAY finds
+     * it idle, and a stream opened raw on its QUIC connection is no exchange of its: with the GOAWAY first (seen on the
+     * Windows CI runner) it closed with H3_NO_ERROR before the STOP_SENDING arrived. This client closes, as an idle
+     * client may, only once it has both.
+     */
+    @Test fun negative_h3StopEndsTheWaitForTheClientsFin() =
+        h3ServerTest {
+            val (server, port) = tlsServer { routes() }
+            val ep = QuicEndpoint.bind(InetSocketAddress("127.0.0.1", 0))
+            var stopped = false
+            try {
+                val c =
+                    ep.connect(
+                        InetSocketAddress("127.0.0.1", port),
+                        QuicClientConfig.Builder(ServerFixtures.clientTls(alpn = listOf("h3"))).build(),
+                    )
+                try {
+                    coroutineScope {
+                        val settings = CompletableDeferred<Map<Long, Long>>()
+                        val goAway = CompletableDeferred<Long>()
+                        val serverStreams = launch { readServerStreams(c, settings, goAway) }
+                        val control = c.openUni()
+                        control.output.writeFully(byteArrayOf(0x00, 0x04, 0x00)) // control stream, empty SETTINGS
+                        control.output.flush()
+                        // RFC 9220 section 3: no Extended CONNECT before SETTINGS_ENABLE_CONNECT_PROTOCOL (0x08) = 1
+                        assertEquals(1L, withTimeout(10.seconds) { settings.await() }[0x08L], "SETTINGS_ENABLE_CONNECT_PROTOCOL")
+                        val st: QuicStream = rawExtendedConnect(c, "websocket", "/ws", listOf("sec-websocket-version" to "13"))
+                        val stopSending = async { st.awaitSendStopped() }
+                        assertEquals(1L, readH3Frame(st.input).first, "the 200's HEADERS")
+                        st.output.writeFully(dataFrame(clientClose))
+                        st.output.flush()
+                        // the server's Close, then its FIN
+                        while (runCatching { readH3Frame(st.input) }.isSuccess) continue
+                        assertNull(withTimeoutOrNull(SLOW_CLIENT) { stopSending.await() }, "the server waits for the FIN")
+                        assertTrue(!goAway.isCompleted, "no GOAWAY before the stop")
+                        val started = TimeSource.Monotonic.markNow()
+                        val stop = launch(Dispatchers.IO) { server.stop(10_000, 20_000) }
+                        assertEquals(Http3ErrorCode.NO_ERROR, withTimeout(10.seconds) { stopSending.await() })
+                        // the stop's graceful GOAWAY (RFC 9114 section 5.2), before or after the STOP_SENDING
+                        withTimeout(10.seconds) { goAway.await() }
+                        // the exchange is over (stopped), and a client idle after a GOAWAY closes its connection: so the
+                        // stop does not wait out its idle-close fallback for this one
+                        c.close(Http3ErrorCode.NO_ERROR)
+                        withTimeout(10.seconds) { stop.join() }
+                        stopped = true
+                        val took = started.elapsedNow()
+                        assertTrue(took < 3.seconds, "the stop took $took, the close wait is 5 s")
+                        serverStreams.cancel()
+                    }
+                } finally {
+                    c.close()
+                }
+            } finally {
+                ep.close()
+                if (!stopped) server.stop(100, 500)
+            }
+        }
 
     @Test fun h3NoStopSendingWhileTheClientHoldsItsFinClientCloses() =
         h3ServerTest {

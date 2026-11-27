@@ -1,6 +1,6 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+@file:OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class, io.kuicksilver.annotations.InternalKuicksilverApi::class)
 
 package io.kuicksilver.ktor.client
 
@@ -25,10 +25,12 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.ChannelResult
 import kotlinx.coroutines.channels.SendChannel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.coroutines.CoroutineContext
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.TimeMark
 import kotlin.time.TimeSource
 
@@ -40,12 +42,34 @@ import kotlin.time.TimeSource
  * SHOULD wait for the server to close the connection but MAY close the connection at any time after sending and receiving
  * a Close message, e.g., if it has not received a TCP Close from the server in a reasonable time period".
  *
- * The bound this gives `client.close()` (which waits for every session's end) against a server that stays silent: three
- * close waits (15 s) after the session's own Close at most. T1 for the server's Close; T2 for its close of the transport;
- * over HTTP/2 and HTTP/3 one more for its END_STREAM or FIN after the client's own, before the stream is reset. The end
- * handlers are cut off two close waits after the session ended, whatever they still wait for.
+ * While the client is open a session whose server stays silent waits out these bounds: three close waits (15 s) after
+ * its own Close at most. T1 for the server's Close; T2 for its close of the transport; over HTTP/2 and HTTP/3 one more for
+ * its END_STREAM or FIN after the client's own, before the stream is reset. The end handlers are cut off two close waits
+ * after the session ended, whatever they still wait for.
+ *
+ * The engine's `close()` (`client.close()`) ends every wait for the server at once, in the sessions closing then and in
+ * those that close later ([WebSocketLifetime.hurry]): the client "MAY close the connection at any time after sending and
+ * receiving a Close message" (RFC 6455 section 5.5.1), and before the server's Close the client's own close of the
+ * connection is the abnormal case section 7.1.1 lets a client "initiate". What the client still sends is not cut: its own
+ * Close goes out first (section 7.1.2: the endpoint that starts the closing handshake "MUST send a Close control frame"),
+ * then its side of the transport ends cleanly (close_notify and a FIN, END_STREAM, a FIN), no reset before that clean end.
+ * The server's own end is still waited for, [WEBSOCKET_HURRY_GRACE_MILLIS] (1 s) at most: until it ends its side, our
+ * Close may be unread, and the reset or the connection's close that follows would discard it; over HTTP/2 and HTTP/3 a
+ * Close the server never answered keeps the rest of its close wait instead ([WebSocketLifetime.serverWithin]). A session
+ * whose Close cannot be written (a server that reads slowly or not at all) keeps its close wait: the engine's close does
+ * not cut a writer short.
  */
 internal const val WEBSOCKET_CLOSE_WAIT_MILLIS: Long = 5_000
+
+/**
+ * How long, once the engine was closed ([WebSocketLifetime.hurry]), a session still waits for the server's end of the
+ * transport (its FIN, END_STREAM or FIN) after its own Close went out: until the server ends its side, nothing says it read
+ * that Close (a Close it never answered, our reply to its Close, or two Closes that crossed), and what follows (over
+ * HTTP/2 a reset of the stream, over HTTP/3 the connection's close, over HTTP/1.1 a reset the closed socket answers the
+ * server's next bytes with) would discard it unread. A server that reads ends within it, and the order stays the
+ * server's first; a silent one costs this, not the close waits.
+ */
+internal const val WEBSOCKET_HURRY_GRACE_MILLIS: Long = 1_000
 
 /**
  * What the engine gives each call for a WebSocket session that may outlive it: [hold] is the engine's in-flight job of the
@@ -54,7 +78,46 @@ internal const val WEBSOCKET_CLOSE_WAIT_MILLIS: Long = 5_000
 internal class WebSocketCallTrack(
     val hold: Job,
     val events: EngineEvents,
+    /** The engine's sessions, which its `close()` hurries ([WebSocketSessions.hurryAll]); null outside an engine (tests). */
+    val sessions: WebSocketSessions? = null,
 )
+
+/**
+ * The engine's WebSocket sessions that have not ended yet: its `close()` ends their waits for the server at once
+ * ([WebSocketLifetime.hurry]), and a session that starts after that is hurried as it starts.
+ */
+internal class WebSocketSessions {
+    private val lock = SpinLock()
+    private val live = LinkedHashSet<WebSocketLifetime>()
+    private var closed = false
+
+    /** Adds [lifetime]; false once the engine was closed (it is not added, and its waits are to be cut at once). */
+    fun add(lifetime: WebSocketLifetime): Boolean =
+        lock.withLock {
+            if (!closed) live += lifetime
+            !closed
+        }
+
+    fun remove(lifetime: WebSocketLifetime) {
+        lock.withLock { live -= lifetime }
+    }
+
+    /** The engine was closed: every live session's waits for the server end now, and so do those of sessions added later. */
+    fun hurryAll() {
+        val all =
+            lock.withLock {
+                closed = true
+                live.toList().also { live.clear() }
+            }
+        for (l in all) l.hurry()
+    }
+
+    /** The grace each session gives the server after its own end once the engine was closed (tests shorten it). */
+    @kotlin.concurrent.Volatile var hurryGraceMillis: Long = WEBSOCKET_HURRY_GRACE_MILLIS
+
+    /** The sessions not ended yet (tests). */
+    val size: Int get() = lock.withLock { live.size }
+}
 
 /** The [WebSocketCallTrack] of a request, put by the engine before the call is routed. */
 internal val WebSocketCallTrackKey: AttributeKey<WebSocketCallTrack> = AttributeKey("io.kuicksilver.ktor.client.WebSocketCallTrack")
@@ -88,7 +151,9 @@ internal val WebSocketLifetimeKey: AttributeKey<WebSocketLifetime> = AttributeKe
  *   when it sends one meanwhile (Ktor's own answer to the cancellation, a Close 1000 without a reason, goes out as 1001),
  *   never a second Close; a call that ends before the session was made (the handshake) cancels it at once;
  * - the engine's cleanup after `client.close()` waits for the session's end (the engine's in-flight job of the call is
- *   held until every [invokeOnEnd] handler has run), so a lingering session is not cut by the pools closing under it.
+ *   held until every [invokeOnEnd] handler has run), so a lingering session is not cut by the pools closing under it;
+ *   the engine's `close()` ends every wait for the server at once ([hurry]), so that end comes as soon as the session's
+ *   own Close and the clean end of its transport went out, never after the close waits.
  *
  * The transport's own close comes after the session ([invokeOnEnd]): Ktor's writer ends its channel right after its Close
  * (a TCP half-close, close_notify, END_STREAM or FIN at once), so the engines hand it a channel whose end only flushes
@@ -123,6 +188,22 @@ internal class WebSocketLifetime(
     private val endedAt = AtomicReference<TimeMark?>(null)
     private val ended = AtomicBoolean(false)
     private val endHandlers = ArrayList<suspend (Throwable?) -> Unit>()
+
+    /** Completed by [hurry]: the engine was closed, the waits for the server end at once. */
+    private val hurried: CompletableJob = Job()
+
+    /**
+     * Completed once the session's writer ended its channel in order ([writerEnded]): its own Close, if any, went to the
+     * transport whole. A writer that failed or was cancelled never completes it.
+     */
+    private val writerEnd: CompletableJob = Job()
+
+    /** The grace after this side's own end once the engine was closed: the engine's (a test may shorten it), or the default. */
+    private val hurryGraceMillis: Long get() = track?.sessions?.hurryGraceMillis ?: WEBSOCKET_HURRY_GRACE_MILLIS
+
+    /** T1 ended because the engine was closed, after the session's own Close was written ([hurry]). */
+    private val hurriedOut = AtomicBoolean(false)
+
     private var endCause: Throwable? = null
     private val lock = SpinLock()
 
@@ -168,18 +249,87 @@ internal class WebSocketLifetime(
      * What is left of T2, the wait for the server's close of the transport (its TCP FIN, END_STREAM or FIN): the close
      * wait counted from the session's end, which in an orderly session is when both Closes were sent and received; the
      * whole wait before the session ended. The transports close their own side when it is over, or as soon as the server
-     * closed its side first.
+     * closed its side first. Once the engine was closed ([hurry]) the waits are bounded by the grace instead
+     * ([serverWithin]).
      */
     fun remainingTransportWaitMillis(): Long {
         val at = endedAt.load() ?: return closeWaitMillis
         return (closeWaitMillis - at.elapsedNow().inWholeMilliseconds).coerceAtLeast(0)
     }
 
+    /**
+     * How long the transports wait for what this side still sends after the session (HTTP/2: its last DATA and
+     * END_STREAM): the close wait; once the engine was closed ([hurry]), what is left of T1 (from the session's own Close),
+     * at least the grace, so the engine's close never holds a session past its T1 for its own sending.
+     */
+    fun ownEndBoundMillis(): Long = if (hurried.isCompleted) maxOf(remainingCloseWaitMillis(), hurryGraceMillis) else closeWaitMillis
+
     /** The close wait itself (both T1 and T2). */
     val closeWait: Long get() = closeWaitMillis
 
+    /** Whether the engine was closed ([hurry]). */
+    val isHurried: Boolean get() = hurried.isCompleted
+
+    /**
+     * The engine was closed (`client.close()`): every wait for the server ends now, and those that come later are not
+     * waited at all. In T1 the session still writes its own Close (RFC 6455 section 7.1.2: "MUST send a Close control
+     * frame"), within what is left of the close wait, and is ended once it did, without the server's Close (section 7.1.1:
+     * the abnormal case a client may close the connection in); its transport then ends as after an orderly session. T2,
+     * which section 5.5.1 lets a client cut "at any time after sending and receiving a Close message", and the wait after
+     * this side's own end become [WEBSOCKET_HURRY_GRACE_MILLIS] at most, for the server to read the Close and end its side.
+     * A session that has not sent its own Close yet goes on (a call in flight outlives `close()`), and once it sends one
+     * it is not waited for either.
+     */
+    fun hurry() {
+        hurried.complete()
+    }
+
+    /** The session's writer ended its channel to the transport in order ([HeldTransportEnd]): its last frame was handed on. */
+    fun writerEnded() {
+        writerEnd.complete()
+    }
+
+    /**
+     * [block]'s result within [deadline] (as [io.kuicksilver.tls.completedWithin]: a result that came is never dropped),
+     * or null when the deadline passed first. For the waits for the server's end of the transport: before this side's own
+     * end ([afterOwnEnd] false: HTTP/2 and HTTP/3 hold their END_STREAM or FIN until the server's, T2) and after it (and
+     * HTTP/1.1's wait for the server's close, which comes before this side's). Once the engine was closed ([hurry]) a
+     * wait before this side's end stops, so that end goes at once. A wait after it is bounded by
+     * [WEBSOCKET_HURRY_GRACE_MILLIS], counted from the engine's close or from now when that came first: as long as the
+     * server has not ended its side, the session's Close may still be unread there. Over a transport whose end
+     * [discardsUnread] (HTTP/2: the stream's reset; HTTP/3: the connection's close), a session ended before the server
+     * answered its Close keeps what is left of its close wait (T1, from its own Close) instead, at least the grace: the
+     * server may still be reading what was sent, that Close among it, and nothing but its own end says it read it.
+     */
+    suspend fun <T : Any> serverWithin(
+        deadline: kotlin.time.Duration,
+        afterOwnEnd: Boolean,
+        discardsUnread: Boolean = false,
+        block: suspend () -> T,
+    ): T? {
+        if (!afterOwnEnd) return io.kuicksilver.tls.completedWithinUnless(hurried, deadline, block)
+        if (discardsUnread && hurriedOut.load()) {
+            val left = maxOf(remainingCloseWaitMillis(), hurryGraceMillis).milliseconds
+            return io.kuicksilver.tls.completedWithin(minOf(deadline, left), block)
+        }
+        return kotlinx.coroutines.coroutineScope {
+            val graceOver =
+                launch {
+                    hurried.join()
+                    kotlinx.coroutines.delay(hurryGraceMillis)
+                }
+            try {
+                io.kuicksilver.tls.completedWithinUnless(graceOver, deadline, block)
+            } finally {
+                graceOver.cancel()
+            }
+        }
+    }
+
     init {
         data.attributes.put(WebSocketLifetimeKey, this)
+        // a session that starts after the engine's close() waits for no server either
+        if (track?.sessions?.add(this) == false) hurried.complete()
         // the call waits for the session as it did while the session ran under it: a call that ends in order ends once
         // the session's coroutines did; cancelled with the call, this child lets it end at once
         CoroutineScope(callContext + CoroutineName("kuicksilver-websocket-session")).launch(start = CoroutineStart.UNDISPATCHED) {
@@ -193,8 +343,13 @@ internal class WebSocketLifetime(
             job.invokeOnCompletion { sessionCause ->
                 end(
                     when {
+                        // ended at the engine's close once its own Close was written: the transport ends as in order
+                        sessionCause != null && hurriedOut.load() -> null
+
                         sessionCause != null -> cause ?: sessionCause
+
                         cause == null || ownClose.load() -> null
+
                         else -> cause
                     },
                 )
@@ -259,20 +414,45 @@ internal class WebSocketLifetime(
     /**
      * T1: the session's coroutines end within the close wait from its own Close (its Close written, the server's read),
      * or are cancelled then, whichever way the call ends; the end handlers then get that cancellation and end the
-     * transport at once.
+     * transport at once. Once the engine was closed ([hurry]) the server's Close is not waited for: the session is ended
+     * as soon as its writer ended in order (its Close written), and its transport ends as after an orderly session. A
+     * writer that has not written its Close yet (a server that reads slowly, or not at all: flow control, a full send
+     * buffer) keeps the close wait it has: the engine's close does not cut it short.
      */
     private fun boundByCloseWait() {
         // on the call's dispatcher (its clock), outside its job: the call may have ended already
         GlobalScope.launch(callTimers + CoroutineName("kuicksilver-websocket-close"), start = CoroutineStart.ATOMIC) {
-            var done = false
+            // true: the session ended; false: the engine was closed and the session's writer ended; null: the close wait passed
+            var outcome: Boolean? = null
             try {
-                done = withTimeoutOrNull(remainingCloseWaitMillis()) { job.join() } != null
+                outcome =
+                    withTimeoutOrNull(remainingCloseWaitMillis()) {
+                        val ended =
+                            select {
+                                job.onJoin { true }
+                                hurried.onJoin { false }
+                            }
+                        ended ||
+                            select {
+                                job.onJoin { true }
+                                writerEnd.onJoin { false }
+                            }
+                    }
             } finally {
-                if (!done) {
-                    cut.store(true)
-                    job.cancel(
-                        CancellationException("no Close from the server (or the own Close not written) within the close wait"),
-                    )
+                when (outcome) {
+                    true -> {}
+
+                    false -> {
+                        hurriedOut.store(true)
+                        job.cancel(CancellationException("the engine was closed: the server's Close is not waited for"))
+                    }
+
+                    null -> {
+                        cut.store(true)
+                        job.cancel(
+                            CancellationException("no Close from the server (or the own Close not written) within the close wait"),
+                        )
+                    }
                 }
             }
         }
@@ -359,7 +539,10 @@ internal class WebSocketLifetime(
                         }.cancel()
                 }
             } finally {
-                if (completeHold) hold?.complete()
+                if (completeHold) {
+                    track?.sessions?.remove(this@WebSocketLifetime)
+                    hold?.complete()
+                }
             }
         }
     }
@@ -423,6 +606,14 @@ private class OwnCloseWatch(
 @OptIn(io.ktor.utils.io.InternalAPI::class)
 internal class HeldTransportEnd(
     private val out: io.ktor.utils.io.ByteWriteChannel,
+    /** Told when the writer ended this channel in order ([WebSocketLifetime.writerEnded]). */
+    private val lifetime: WebSocketLifetime? = null,
+    /**
+     * Waits, at the writer's end, until [out] handed everything on to the transport: [out]'s flush may return with bytes
+     * still queued in front of the stream (HTTP/2's lead after the session's own Close), and the writer has not written
+     * its Close until they went. Null where a flush already waits for that (HTTP/1.1, HTTP/3).
+     */
+    private val delivered: (suspend () -> Unit)? = null,
 ) : io.ktor.utils.io.ByteWriteChannel {
     @kotlin.concurrent.Volatile var endRequested: Boolean = false
         private set
@@ -450,7 +641,10 @@ internal class HeldTransportEnd(
     override suspend fun flushAndClose() {
         count()
         out.flush()
+        delivered?.invoke()
         endRequested = true
+        // in order only: a transport that failed under the writer did not take its Close
+        if (out.closedCause == null) lifetime?.writerEnded()
     }
 
     private fun count() {

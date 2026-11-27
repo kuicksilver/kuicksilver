@@ -173,6 +173,7 @@ internal fun mayBeTaken(e: Throwable): Boolean =
         e !is io.kuicksilver.tls.TlsException &&
         e !is io.kuicksilver.native.KslException
 
+// more than the engine's EPHEMERAL_PAIR_ATTEMPTS (16), which then serves HTTP/1.1 alone: here giving up fails the test
 internal const val SAME_PORT_ATTEMPTS = 20
 
 private var ipv6LoopbackProbe: Boolean? = null

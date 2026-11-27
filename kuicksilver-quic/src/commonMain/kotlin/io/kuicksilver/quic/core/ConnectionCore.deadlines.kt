@@ -102,7 +102,12 @@ internal fun ConnectionCore.runDueTimers(now: TimeMark) {
     if (state == ConnectionState.Closing ||
         state == ConnectionState.Draining
     ) {
-        timers.closeDeadline?.let { if (it <= now) markClosed() }
+        timers.closeDeadline?.let {
+            if (it <= now) {
+                timers.closedLateBy = now - it // how late the timer ran: a held-up loop (GC, a starved host), no longer period
+                markClosed()
+            }
+        }
         return
     }
     if (state ==

@@ -46,6 +46,14 @@ class IdleFootprintTest {
     }
 
     private companion object {
+        // 78 000-78 560 measured (2026-11-26, JVM 21, macOS arm64, 15 runs after the qlog parameters left the core; 78 720
+        // on the macOS runner with them, 78 536 without), records 0, 0, 2 in every run. The 78 000 floor is unchanged; what
+        // varies (560 B) is timing, row by row: a stream ticker's receive segment (312 B: kotlinx's channel keeps a second
+        // segment while its receive cursor lags a segment behind the sends), the packet builder's writer still pointing at
+        // the endpoint's last batch slot (152 B, the slot's buffer views; the endpoint owns and reuses the slot, so no
+        // connection memory), the probe list's array after a PTO (56 B), and a few continuations and deferreds (24 B each).
+        // No new path from the hardening or WebTransport merges. Two records (1 488) plus that spread above 78 560 is
+        // 80 608: the ceiling, raised by 608 B from 80 000, which left 1 440 B.
         // 78.00-78.41 K measured (2026-11-26, JVM 21, macOS arm64, 16 runs), the inventory taken once every space has given
         // back the records it does not keep idle (MemoryBench waits for it, and prints the records kept per space: 0, 0, 2
         // in every run). A space's sent-packet records were as many as it ever had in flight at once and stayed: 87.7 K on
@@ -76,7 +84,12 @@ class IdleFootprintTest {
         // last request stream and its 8 KiB input segment when that request had arrived while the loop waited
         // (docs/benchmarks.md, "Memory"); this ceiling catches that mode coming back. 88-104 K with 4 KiB reassembly
         // windows, 292 K with per-stream staging arrays
-        const val HTTP3_CEILING = 80_000L
+        const val HTTP3_CEILING = 80_608L
+        // 33 744 measured again (2026-11-26, JVM 21, every run): the local transport parameters a qlog trace logs with the
+        // peer's (quic-events-04 section 5.3) wait in the trace (QlogWriter.pendingLocalTp), which an untraced core lacks.
+        // 33 928 on the macOS runner and here while the core held them, a TransportParameters and its version array
+        // (+176) and the core's field (+8), for the life of every connection, traced or not; 33 752 with the field kept
+        // empty without a trace.
         // 33 744 measured (2026-11-26, JVM 21, every run): -2 320 B, three sent-packet records fewer (the Initial and
         // Handshake spaces, discarded, keep none; the acknowledged list let go of the one it still referenced: -2 232)
         // and each space's pool an array of 4 instead of an ArrayList of 10 (-144), less the idle mark and the

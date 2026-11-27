@@ -12,6 +12,12 @@ internal class Timers {
     var lastActivity: TimeMark = TimeMark(0)
     var lastAckElicitingSent: TimeMark = TimeMark.NEVER
     var closeDeadline: TimeMark? = null
+
+    /** The PTO [closeDeadline] was set from (3 x it, RFC 9000 section 10.2); the leak sentinel checks a period against it. */
+    var closePto: Duration? = null
+
+    /** Set when [closeDeadline] ended the connection: how long after the deadline its timer ran (the loop's own lateness). */
+    var closedLateBy: Duration? = null
     var lastCloseSent: TimeMark? = null
     var keepAlivePending: Boolean = false
 

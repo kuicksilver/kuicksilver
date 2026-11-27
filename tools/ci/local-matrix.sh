@@ -237,7 +237,7 @@ step "lint: doc refs, test gates, commit types" bash -c 'rc=0
 # unasked fails here as there
 step "lint: doc refs and test gates, negatives" bash -c 'rc=0
   KSL_FUZZ_FORMATS_BASE=$(git merge-base HEAD main 2>/dev/null || true); export KSL_FUZZ_FORMATS_BASE
-  for t in ar-diff llvm-tool doc-refs code-refs test-discovery test-bytecode test-count test-sleeps env-apis rfc-tests reproducers fuzz-formats commit-msg deadline-sites test-hooks select-races race-tests wall-bounds tracked-hashes wildcard-binds sentinel kdoc-links art7-loops; do
+  for t in ar-diff llvm-tool android-keep-rules doc-refs code-refs test-discovery test-bytecode test-count test-sleeps env-apis rfc-tests reproducers fuzz-formats commit-msg deadline-sites test-hooks select-races race-tests wall-bounds tracked-hashes wildcard-binds sentinel kdoc-links art7-loops; do
     bash "tools/check/$t-test.sh" || rc=1
   done
   bash tools/migrate/config-0.3-test.sh || rc=1
@@ -246,6 +246,7 @@ step "lint: doc refs and test gates, negatives" bash -c 'rc=0
   bash tools/ci/interop-host-test.sh || rc=1
   bash tools/ci/sentinel-slow-test.sh || rc=1
   bash tools/ci/android-connected-check-test.sh || rc=1
+  bash tools/check/resolve-all-test.sh || rc=1   # CI: gradle-deps; a 429, 5xx or refused connection fails strict ksResolveAll (127.0.0.1 only)
   exit $rc'
 step "lint: fuzz (campaign.sh stubs, FuzzCase.kt copies)" bash -c 'bash tools/fuzz/campaign-test.sh && bash tools/check/fuzz-case-sync.sh && bash tools/check/fuzz-case-sync-test.sh'
 step "lint: interop peer images (stubs)"        bash tools/interop/peer-images-test.sh
@@ -521,7 +522,8 @@ fi
 # build with dependency verification then refuses the module: "No cached version of ... available for offline mode" for
 # error_prone_annotations, an hour into the gate (2026-10-23). Resolving every configuration here, online and on the host
 # (the init script of the "dependency verification" step, lenient), fetches whatever is missing; a failure of the build,
-# or of a configuration the JVM suites run with, refuses the gate before anything ran.
+# of a configuration the JVM suites run with, or of a request (a 429, a 5xx, a refused connection: what it left out is not
+# in the cache) refuses the gate before anything ran.
 if wants deps; then
   deps=(./gradlew "--max-workers=${KSL_GATE_WORKERS:-2}" -Pkotlin.incremental=false -I tools/check/resolve-all.init.gradle.kts --continue :build-logic:ksResolveAll ksResolveAll)
   if [ "$dry" = 1 ]; then
@@ -529,7 +531,8 @@ if wants deps; then
   else
     printf 'preflight: dependencies of the offline Docker builds (host, online) ... '
     if "${deps[@]}" > build/ci/preflight-deps.log 2>&1 \
-      && ! grep -Eq '^ksResolveAll [^ ]*:(jvm(Test)?(Compile|Runtime)Classpath|(compile|runtime)Classpath|kotlinCompiler(Plugin)?Classpath) (unresolved|failed)' build/ci/preflight-deps.log; then
+      && ! grep -Eq '^ksResolveAll [^ ]*:(jvm(Test)?(Compile|Runtime)Classpath|(compile|runtime)Classpath|kotlinCompiler(Plugin)?Classpath) (unresolved|failed)' build/ci/preflight-deps.log \
+      && ! grep -Eq '^ksResolveAll [^ ]* request failed:$' build/ci/preflight-deps.log; then
       echo ok
     else
       echo "FAIL (see build/ci/preflight-deps.log)"

@@ -48,10 +48,15 @@ internal object WebSocketOverH2 {
     /**
      * How long a session that ended in order waits, after its END_STREAM, for the client's (RFC 8441 section 5: "Orderly
      * TCP-level closures are represented as END_STREAM flags"); only a client that has not ended by then is stopped with
-     * RST_STREAM. As the client engine's wait (RFC 6455 section 7.1.1). The server's frame guard holds its end for Pongs
-     * after the server's Close for as long at most, over every transport (ServerWebSocket).
+     * RST_STREAM. As the client engine's wait (RFC 6455 section 7.1.1). Over HTTP/3 the same wait is for the client's FIN.
+     * The server's frame guard holds its end for Pongs after the server's Close for as long at most, over every transport
+     * (ServerWebSocket). A stop of the server ends it at once (KuicksilverApplicationEngine.stopping): the client is stopped
+     * then, as after the wait, and the stop's grace period is left to the requests still running.
      */
     val CLOSE_WAIT: kotlin.time.Duration = 5.seconds
+
+    /** A stop request that never comes (an upgrade made outside an engine: tests). */
+    val NEVER_STOPS: Job = Job()
 
     /**
      * The synthetic HTTP/1.1 upgrade headers of an Extended CONNECT: its fields (split `cookie` fields joined, section
@@ -95,6 +100,8 @@ internal class H2UpgradeResponse(
     private val userDispatcher: CoroutineContext,
     /** The engine's `webSockets { maxMessageSize }`: the largest WebSocket message a client may send (RFC 6455 section 10.4). */
     private val webSocketMaxMessageSize: Long = DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE,
+    /** The engine's stop request: from then on the client's END_STREAM is not waited for ([WebSocketOverH2.CLOSE_WAIT]). */
+    private val stopping: Job? = null,
 ) : H2Response(call, h2, sendStallMillis, altSvc = H2AltSvc({ null })) {
     override suspend fun respondOutgoingContent(content: OutgoingContent) {
         // before anything is committed, so the refusal can still be an ordinary error response: a handshake without one
@@ -191,7 +198,18 @@ internal class H2UpgradeResponse(
                 runCatching { output.flushAndClose() }
                 try {
                     output.done.join()
-                    if (output.endedInOrder) withTimeoutOrNull(WebSocketOverH2.CLOSE_WAIT) { h2.awaitClientEnd() }
+                    // not once the server is stopping: the client is then stopped at once (RST_STREAM NO_ERROR after our
+                    // END_STREAM, as after the close wait), so the stop's grace period is not spent waiting for it. The
+                    // reset is sent here, before the stream counts as done: a stopping connection whose last stream this
+                    // was closes right after, and the client must see the stream stopped, not only the connection's end
+                    if (output.endedInOrder) {
+                        val clientEnded =
+                            io.kuicksilver.tls.completedWithinUnless(
+                                stopping ?: WebSocketOverH2.NEVER_STOPS,
+                                WebSocketOverH2.CLOSE_WAIT,
+                            ) { h2.awaitClientEnd() }
+                        if (clientEnded == null) runCatching { h2.reset(Http2ErrorCode.NO_ERROR) }
+                    }
                 } catch (e: CancellationException) {
                     // cancelled while the last frames waited for window
                     withContext(NonCancellable) { runCatching { h2.reset(Http2ErrorCode.CANCEL) } }

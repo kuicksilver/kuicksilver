@@ -1206,7 +1206,7 @@ its JVM and macOS tests over real UDP.
 A connection ends exactly once, and `closed` completes with the reason: `ApplicationClosed` (ours or the peer's
 `close(code)`), `TransportClosed` (a protocol error, a TLS alert as `0x0100 + alert`), `Timeout`, `StatelessReset`,
 `NoViablePath`, `VersionNegotiation` or `Internal`. From then on everything that waits on the connection fails with that
-same exception: `openBidi`, `acceptStream`, `sendDatagram`, `keyUpdate`, `addPath`, `exportKeyingMaterial`, the stream
+same reason (on the JVM a copy may carry the receiving stack): `openBidi`, `acceptStream`, `sendDatagram`, `keyUpdate`, `addPath`, `exportKeyingMaterial`, the stream
 channels (a writer waiting for send-buffer room gets `ClosedWriteChannelException` with it as the cause) and the
 `datagrams` flow, which throws it even after a local `close`; `incomingStreams()` completes instead. `trySendDatagram`
 throws it too rather than answering `QueueFull`, so a caller retrying on `QueueFull` cannot spin on a dead connection.

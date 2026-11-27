@@ -8,6 +8,8 @@
 # any other; publishing is release.yml and interop-image.yml, both dispatch-only.
 #
 #   lint ──────────────────────────────────────────────── pins, SPDX, script syntax
+#   gradle-deps: every configuration resolved and verified once, its dependency cache saved for the jobs below (every job
+#     but lint, openssl-docker, the Windows ones and openssl-next needs it; none waits for it to succeed)
 #   openssl-docker (linux-x64, linux-arm64, mingw-x64 + the Windows JNI dll) ─┬─ linux (x64, arm64): manylinux C tests, .so, JVM suites, system OpenSSL
 #                                                        ├─ linux-native: -kn OpenSSL, test.kexe x64 + arm64, mingw test.exe + ksl_test.exe ── windows
 #                                                        ├─ apple (macOS arm64): ABI dumps, ASan C tests, JVM + macosArm64 suites, Intel-Mac dylib, repro
@@ -55,9 +57,11 @@ defaults:
   run:
     shell: bash
 env:
+  # the mirror kill switch the setup action reads (CONTRIBUTING.md, "Dependency verification")
+  KSL_CENTRAL_MIRROR: ${{ vars.KSL_CENTRAL_MIRROR }}
   # every Gradle step: a run that failed on a dependency Central answered "not found" for (no test and no dependency
-  # verification failed) runs once more with --refresh-dependencies, one refused with 429 or 5xx up to three more times
-  # after doubling pauses (tools/ci/gradlew-retry.sh)
+  # verification failed) runs once more with --refresh-dependencies, one refused with 429 or 5xx up to four more times
+  # after growing pauses spread at random (tools/ci/gradlew-retry.sh)
   G: bash tools/ci/gradlew-retry.sh --stacktrace
   # the leak sentinel fails a test whose teardown is slow, not only one that leaks (docs/process.md)
   KUICKSILVER_LEAK_STRICT: "1"
@@ -124,7 +128,7 @@ jobs:
       - name: 'lint: doc-refs and test-check negative controls, migration fixtures'
         run: |
           rc=0
-          for t in ar-diff llvm-tool doc-refs code-refs test-discovery test-bytecode test-count test-sleeps env-apis rfc-tests reproducers fuzz-formats commit-msg deadline-sites test-hooks select-races race-tests wall-bounds tracked-hashes wildcard-binds sentinel kdoc-links art7-loops; do
+          for t in ar-diff llvm-tool android-keep-rules doc-refs code-refs test-discovery test-bytecode test-count test-sleeps env-apis rfc-tests reproducers fuzz-formats commit-msg deadline-sites test-hooks select-races race-tests wall-bounds tracked-hashes wildcard-binds sentinel kdoc-links art7-loops; do
             bash "tools/check/$t-test.sh" || rc=1
           done
           bash tools/migrate/config-0.3-test.sh || rc=1   # the 0.2.x -> 0.3.0 configuration migration on its fixtures
@@ -213,10 +217,84 @@ jobs:
       - name: 'lint: ktlint'
         # kotlinter's lintKotlin only parses sources: no Kotlin/Native toolchain, OpenSSL or NDK is needed
         run: $G --max-workers=2 lintKotlin
+
+  gradle-deps:
+    # The Gradle dependencies of the whole build, resolved once per run before the matrix asks for them: Maven Central
+    # answers 429 Too Many Requests when many jobs resolve at once (runs 44892895905, 45958310638, 45987232788). Every
+    # configuration of every project is resolved with verification on (the check below), then the dependency cache this
+    # job resolved into (modules-2 of its Gradle user home, without lock files and gc.properties) is saved under one key
+    # per dependency set, gradle-deps-v1-<mirror|central>-<hash> (.github/actions/setup, "gradle-deps key"), not one per job or run. The
+    # matrix jobs restore it as Gradle's read-only dependency cache (the setup action's gradle-deps: restore) and
+    # download only what it lacks, through the mirror of Central (settings.gradle.kts); their own setup-gradle entries
+    # (build cache, transforms) are unchanged. Like the setup action's own cache, only main (push and schedule) and
+    # manual runs write the entry, once per dependency set; other runs read the newest one main wrote. This job's own
+    # Gradle user home is its setup-gradle entry, so it downloads only what changed since. A failure here (a
+    # verification gap, a repository that refused every retry) fails the run but holds no job back: the jobs that need
+    # it run anyway and resolve on their own. Windows jobs resolve on their own (the entry's path is on another drive
+    # there). A manual run whose `only` names none of the jobs that read the entry or this job's check (only Windows
+    # jobs and openssl-next, say) skips this job; the jobs that need it check the results of their other needs
+    # themselves (!cancelled()), so a skipped gradle-deps skips none of them, and they restore the newest entry main
+    # wrote. The list below is every job that needs gradle-deps, lint (whose dependency verification check moved here)
+    # and gradle-deps itself: a new job that restores the entry belongs in it. The entry is a copy of this job's whole
+    # modules-2, which setup-gradle carries over from run to run: files of earlier dependency sets that are still there
+    # go into it too (Gradle drops a file from its user home 30 days after its last use; keeping only what this run
+    # resolved would need Gradle's binary access journal or a second resolution into an empty home, which is the
+    # download this job exists to avoid). Its size is printed, and a warning raised above 4 GiB: GitHub keeps 10 GB of
+    # caches per repository, evicting the least recently used entries beyond that, setup-gradle's entries and the
+    # OpenSSL caches included, so an oversized entry pushes those out first.
+    if: >-
+      ${{ inputs.only == '' || contains(format(',{0},', inputs.only), ',gradle-deps,')
+      || contains(format(',{0},', inputs.only), ',lint,') || contains(format(',{0},', inputs.only), ',linux,')
+      || contains(format(',{0},', inputs.only), ',linux-native,')
+      || contains(format(',{0},', inputs.only), ',apple,') || contains(format(',{0},', inputs.only), ',apple-native,')
+      || contains(format(',{0},', inputs.only), ',android,') || contains(format(',{0},', inputs.only), ',jdk-compat,')
+      || contains(format(',{0},', inputs.only), ',interop-images,') || contains(format(',{0},', inputs.only), ',jvm-jar,')
+      || contains(format(',{0},', inputs.only), ',consumer-smoke,') }}
+    runs-on: ubuntu-24.04
+    permissions: { contents: read }
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: ./.github/actions/setup
+        id: setup
+      - name: 'check: ksResolveAll negative controls (local fake repository)'
+        # the check below fails on a 429, a 5xx, a refused connection or a missing file of a found module (printed as Gradle
+        # wrote it, so $G retries it), not only on a verification gap: a cache saved then would lack it (127.0.0.1 only)
+        run: bash tools/check/resolve-all-test.sh
       - name: 'check: dependency verification (every configuration)'
         # resolves every configuration of every project with verification on: an artifact gradle/verification-metadata.xml does
-        # not cover fails here, not in the one late job that happens to resolve it (CONTRIBUTING.md, "Dependency verification")
+        # not cover fails here, not in the one late job that happens to resolve it (CONTRIBUTING.md, "Dependency verification");
+        # so does a request a repository refused (429, 5xx) or could not answer, and a file of a found module that its repository
+        # lacks (asked of no other, and recorded as missing in the cache), so that no partial cache is saved below
         run: $G --max-workers=2 -I tools/check/resolve-all.init.gradle.kts -Pkuicksilver.resolveAll.strict=true --continue :build-logic:ksResolveAll ksResolveAll
+      - name: 'gradle-deps: is this dependency set saved already'
+        id: saved
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/gradle-deps-ro
+          key: ${{ steps.setup.outputs.gradle-deps-key }}
+          lookup-only: true
+      - name: 'gradle-deps: copy the dependency cache (no lock files, no gc.properties)'
+        if: steps.saved.outcome == 'success' && steps.saved.outputs.cache-hit != 'true'
+        run: |
+          # the copy, not the live cache: Gradle's read-only cache must not be written while it is read (dependency_caching.html)
+          src="${GRADLE_USER_HOME:-$HOME/.gradle}/caches/modules-2"
+          [ -d "$src" ] || { echo "::error::no $src after the resolution"; exit 1; }
+          mkdir -p "$HOME/gradle-deps-ro/modules-2"
+          rsync -a --exclude '*.lock' --exclude gc.properties "$src/" "$HOME/gradle-deps-ro/modules-2/"
+          echo "gradle-deps: $(find "$HOME/gradle-deps-ro/modules-2/files-2.1" -type f | wc -l) files, $(du -sh "$HOME/gradle-deps-ro/modules-2" | cut -f1)"
+          # the whole of this job's modules-2, older dependency sets included (the job's comment); 10 GB for all cache entries
+          kib=$(du -sk "$HOME/gradle-deps-ro/modules-2" | cut -f1)
+          [ "$kib" -le $((4 * 1024 * 1024)) ] ||
+            echo "::warning::the gradle-deps entry is $((kib / 1024)) MiB: GitHub keeps 10 GB of caches per repository, the least recently used go first"
+      - name: 'gradle-deps: save'
+        if: steps.saved.outcome == 'success' && steps.saved.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/gradle-deps-ro
+          key: ${{ steps.setup.outputs.gradle-deps-key }}
 
   openssl-docker:
     # The container-built OpenSSL targets, shared with the other jobs as artifacts (they reuse them through
@@ -273,11 +351,11 @@ jobs:
           retention-days: 7
 
   linux:
-    if: ${{ (inputs.only == '' || contains(format(',{0},', inputs.only), ',linux,')) }}
+    if: ${{ !cancelled() && needs.openssl-docker.result == 'success' && (inputs.only == '' || contains(format(',{0},', inputs.only), ',linux,')) }}
     # Linux JVM path end to end in the manylinux2014 images (glibc 2.17 floor): C tests, libksl.so, its exports and glibc floor,
     # then every module's JVM suite on the host JVM against that .so (tools/ci/docker-jvm.sh). arm64 runs on an arm64 runner
     # (native first, qemu-user only as a fallback — it lacks io_uring and parts of the UDP socket options).
-    needs: openssl-docker
+    needs: [openssl-docker, gradle-deps]
     strategy:
       fail-fast: false
       matrix:
@@ -291,12 +369,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
       - uses: ./.github/actions/setup
+        with: { gradle-deps: restore }
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: 'openssl-${{ matrix.target }}'
           path: 'build/openssl/${{ matrix.target }}'
       - name: LLVM binutils for the checks
-        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends llvm
+        # the image's Microsoft source is not needed here; when it breaks (403, unsigned) apt-get update fails
+        run: |
+          { grep -lrs packages.microsoft.com /etc/apt/sources.list.d || true; } | xargs -r sudo rm -f
+          sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends llvm
       - name: 'docker: image ${{ matrix.target }}'
         run: bash tools/openssl/build-docker.sh --image ${{ matrix.target }}
       # the ICMP error-queue tests (udp_recverr_*) run in a user and network namespace: Ubuntu 24.04 restricts unprivileged user
@@ -360,11 +442,11 @@ jobs:
           retention-days: 7
 
   linux-native:
-    if: ${{ (inputs.only == '' || contains(format(',{0},', inputs.only), ',linux-native,')) }}
+    if: ${{ !cancelled() && needs.openssl-docker.result == 'success' && (inputs.only == '' || contains(format(',{0},', inputs.only), ',linux-native,')) }}
     # Kotlin/Native for Linux and Windows: the -kn OpenSSL builds with the konan clang and sysroots, the prefixed archives, the
     # test executables; test.kexe x64 runs in the manylinux image, the arm64 ones go to linux-native-arm64 (a native arm64
     # runner: under QEMU the real-time suites ran 10-50x slower and timed out, run 38287900994), the mingw test.exe to windows.
-    needs: openssl-docker
+    needs: [openssl-docker, gradle-deps]
     runs-on: ubuntu-24.04
     permissions: { contents: read }
     timeout-minutes: 150
@@ -372,7 +454,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
       - uses: ./.github/actions/setup
-        with: { ndk: 'true', konan: 'linux_x64 linux_arm64 mingw_x64', openssl-cache: linux-native }
+        with: { gradle-deps: restore, ndk: 'true', konan: 'linux_x64 linux_arm64 mingw_x64', openssl-cache: linux-native }
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { name: openssl-mingw-x64, path: build/openssl/mingw-x64 }
       - name: 'native: link linux/mingw tests'
@@ -457,7 +539,7 @@ jobs:
           retention-days: 7
 
   linux-native-arm64:
-    if: ${{ (inputs.only == '' || contains(format(',{0},', inputs.only), ',linux-native-arm64,')) }}
+    if: ${{ !cancelled() && needs.linux-native.result == 'success' && (inputs.only == '' || contains(format(',{0},', inputs.only), ',linux-native-arm64,')) }}
     # The arm64 Kotlin/Native test executables linked by linux-native, run on a native arm64 runner in Ubuntu 24.04 (the K/N
     # arm64 sysroot needs glibc 2.25 > manylinux2014).
     needs: linux-native
@@ -487,7 +569,7 @@ jobs:
         with: { name: 'verify-linux-native-arm64-a${{ github.run_attempt }}', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
 
   windows:
-    if: ${{ (inputs.only == '' || contains(format(',{0},', inputs.only), ',windows,')) }}
+    if: ${{ !cancelled() && needs.linux-native.result == 'success' && (inputs.only == '' || contains(format(',{0},', inputs.only), ',windows,')) }}
     # Only runs the executables cross-built by linux-native (mingwX64 is Tier 3, built off Windows): the ksl C tests
     # (ksl_test.exe, ksl_udp_win.c among them) and every module's mingwX64 test.exe.
     needs: linux-native
@@ -615,11 +697,11 @@ jobs:
           retention-days: 30
 
   apple:
-    if: ${{ (inputs.only == '' || contains(format(',{0},', inputs.only), ',apple,')) }}
+    if: ${{ !cancelled() && needs.openssl-docker.result == 'success' && (inputs.only == '' || contains(format(',{0},', inputs.only), ',apple,')) }}
     # macOS arm64: everything that needs Xcode or the host JVM on a Mac, in the order of tools/ci/local-matrix.sh. checkKotlinAbi
     # runs here because the klib dumps of every target need the Apple, Android (NDK) and Kotlin/Native toolchains together;
     # the only Docker-built input, mingw-x64 OpenSSL, comes from openssl-docker.
-    needs: openssl-docker
+    needs: [openssl-docker, gradle-deps]
     runs-on: xcode-27   # Xcode 27.0 (27A266a, gradle/toolchains.toml) is only on this preview image; macos-26 has 26.x
     permissions: { contents: read }
     timeout-minutes: 240
@@ -627,7 +709,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
       - uses: ./.github/actions/setup
-        with: { ndk: 'true', xcode: 'true', konan: 'linux_x64 linux_arm64 mingw_x64', openssl-cache: apple }
+        with: { gradle-deps: restore, ndk: 'true', xcode: 'true', konan: 'linux_x64 linux_arm64 mingw_x64', openssl-cache: apple }
       - name: 'env: nothing that changes a native build is set'
         # the libraries built here are those a release reuses (tools/clean-build-env.sh, ksl_build_env_guard: the values the
         # setup action sets on purpose, the pinned NDK's LLVM tools, pass)
@@ -762,10 +844,10 @@ jobs:
           retention-days: 7
 
   apple-native:
-    if: ${{ (inputs.only == '' || contains(format(',{0},', inputs.only), ',apple-native,')) }}
+    if: ${{ !cancelled() && needs.openssl-docker.result == 'success' && (inputs.only == '' || contains(format(',{0},', inputs.only), ',apple-native,')) }}
     # Kotlin/Native on Apple, beside the apple job instead of after it: the macOS and iOS-simulator suites took 43 of its
     # 65 minutes. The prefix whitelist runs last: it reads the ios-arm64 OpenSSL the device compile builds.
-    needs: openssl-docker
+    needs: [openssl-docker, gradle-deps]
     runs-on: xcode-27   # Xcode 27.0 (27A266a, gradle/toolchains.toml) is only on this preview image; macos-26 has 26.x
     permissions: { contents: read }
     timeout-minutes: 180
@@ -774,7 +856,7 @@ jobs:
         with: { persist-credentials: false }
       - uses: ./.github/actions/setup
         # ndk: the pinned NDK's llvm-ar archives the Apple OpenSSL and libksl.a (tools/openssl/build.sh)
-        with: { ndk: 'true', xcode: 'true', openssl-cache: apple-native }
+        with: { gradle-deps: restore, ndk: 'true', xcode: 'true', openssl-cache: apple-native }
       - name: 'native: macosArm64 tests'
         run: |
           . tools/ci/matrix.sh
@@ -833,9 +915,11 @@ jobs:
           retention-days: 7
 
   android:
-    if: ${{ (inputs.only == '' || contains(format(',{0},', inputs.only), ',android,')) }}
+    if: ${{ !cancelled() && (inputs.only == '' || contains(format(',{0},', inputs.only), ',android,')) }}
     # AAR with libksl.so for arm64-v8a, x86_64 and armeabi-v7a (pinned NDK), the size, 16 KiB page and consumer keep rule gates, then the device tests on the
     # x86_64 emulator at minSdk 24 and at compileSdk 35 (KVM on the Linux runner; Apple-silicon runners cannot nest it).
+    # gradle-deps also on a pull request, where it saves nothing: minutes of waiting, no runner minutes, off the critical path
+    needs: gradle-deps
     strategy:
       fail-fast: false
       matrix:
@@ -851,7 +935,7 @@ jobs:
         with: { persist-credentials: false }
       - uses: ./.github/actions/setup
         # android.jar of the compileSdk and the dexdump of AGP 9.3's default build tools: tools/check/art7-loops.sh pins both
-        with: { ndk: 'true', openssl-cache: android, sdk-packages: 'platforms;android-35 build-tools;36.0.0' }
+        with: { gradle-deps: restore, ndk: 'true', openssl-cache: android, sdk-packages: 'platforms;android-35 build-tools;36.0.0' }
       - name: 'android: AAR'
         run: $G :kuicksilver-native:bundleAndroidMainAar
       - name: 'android: every compiled host and device test method can run'
@@ -918,8 +1002,22 @@ jobs:
           disk-size: ${{ matrix.api == 24 && '4096M' || '' }}
           # the action hides the emulator's own exit message; free space before the AVD is created is the first suspect
           pre-emulator-launch-script: df -h / | tail -1
-          # a test APK whose install stalls (ddmlib "Failed to install-write all apks" with ShellCommandUnresponsiveException,
-          # three runs on API 24) gets one more run, logged; any other failure fails at once (android-connected-check.sh).
+          # The API 24 install stall (ddmlib "Failed to install-write all apks" with ShellCommandUnresponsiveException; runs
+          # 46008475587 and 46038965099, ktor-network and http3) was ddmlib's own limit: UTP installs through the overload
+          # without a timeout, so ddmlib allows IDeviceSharedImpl.INSTALL_TIMEOUT_MINUTES without output, read from the
+          # environment variable ADB_INSTALL_TIMEOUT and 4 minutes when unset, the exact gap in every failed run (17:14:59 ->
+          # 17:19:01, 17:28:58 -> 17:33:00). android-connected-check.sh keeps ADB_INSTALL_TIMEOUT at that 4 and raises UTP's own
+          # limit for the whole install (android.experimental.testOptions.installApkTimeout, 360 s when unset) to 9
+          # minutes; the DSL installation.timeOutInMs reaches neither. A healthy install takes 2-8 s, and run 46051828817
+          # with 10 minutes showed the stall lasting all 10, so it is a hang: the script then prints the device's memory and package manager lines and
+          # runs the tasks again, at most twice, without the modules that passed, when every failed task is the connected
+          # test task of a module whose install stalled (Gradle calls the stall "There were failing tests" too) and no test
+          # case failed; any other failure fails at once.
+          # The emulator booted the API 24 image with 1024 MB ("Increasing RAM size to 1024MB": the image's default is
+          # below the emulator's floor) for test APKs of 11-14 MB and runs of 1300 tests in one process; 2 GiB for API 24,
+          # as the local gate's API 24 AVD has (tools/ci/avd-api24.sh, hw.ramSize=2048M); API 35 keeps its image's default
+          # (an empty ram-size leaves the AVD as it is).
+          ram-size: ${{ matrix.api == 24 && '2048M' || '' }}
           # the device's /data before the tests and, on failure, again with the logs: PackageManager's refusals are in the
           # system buffer, an instrumentation "Process crashed" in crash and main. Runs 2 of main c1cac36ca and b3e621916
           # (API 24, ServerH2FloodTest): ART's abort dump for "Tried to mark 0xebadde09" was cut by logd's pruning of the
@@ -949,11 +1047,11 @@ jobs:
           retention-days: 7
 
   jdk-compat:
-    if: ${{ (inputs.only == '' || contains(format(',{0},', inputs.only), ',jdk-compat,')) }}
+    if: ${{ !cancelled() && needs.linux.result == 'success' && (inputs.only == '' || contains(format(',{0},', inputs.only), ',jdk-compat,')) }}
     # Review I7: the libraries promise JVM 17. Compiled against the JDK 17 API (-Xjdk-release=17, always on in kuicksilver.kmp),
     # every JVM suite runs on Temurin 17; on JDK 25 the same suites run with restricted native access denied unless the
     # application enables it (JEP 472) — the library must never need more than --enable-native-access.
-    needs: linux
+    needs: [linux, gradle-deps]
     strategy:
       fail-fast: false
       matrix:
@@ -970,6 +1068,7 @@ jobs:
           distribution: temurin
           java-version: '${{ matrix.jdk }}'
       - uses: ./.github/actions/setup
+        with: { gradle-deps: restore }
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { name: jni-linux-x86_64, path: kuicksilver-native/build/jni }
       # the headers buildTestHooksJni compiles the kuicksilver-tls test hooks against, reused (kuicksilver.openssl.prebuilt) rather
@@ -1012,8 +1111,8 @@ jobs:
   interop-images:
     # Both interop endpoint images: JVM (kuicksilver-interop:local, with the manylinux libksl.so from the linux job)
     # and Kotlin/Native (kuicksilver-interop-native:local), built once and handed to the per-peer jobs.
-    if: (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.interop)) && (inputs.only == '' || contains(format(',{0},', inputs.only), ',interop-images,'))
-    needs: [openssl-docker, linux]
+    if: ${{ !cancelled() && needs.openssl-docker.result == 'success' && needs.linux.result == 'success' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.interop)) && (inputs.only == '' || contains(format(',{0},', inputs.only), ',interop-images,')) }}
+    needs: [openssl-docker, linux, gradle-deps]
     runs-on: ubuntu-24.04
     permissions: { contents: read }
     timeout-minutes: 120
@@ -1021,7 +1120,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
       - uses: ./.github/actions/setup
-        with: { ndk: 'true', konan: 'linux_x64 linux_arm64', openssl-cache: interop }
+        with: { gradle-deps: restore, ndk: 'true', konan: 'linux_x64 linux_arm64', openssl-cache: interop }
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { name: openssl-linux-x64, path: build/openssl/linux-x64 }
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -1038,7 +1137,7 @@ jobs:
         with: { name: interop-images, path: interop-images.tar.gz, if-no-files-found: error, retention-days: 3, compression-level: 0 }
 
   interop:
-    if: ${{ (inputs.only == '' || contains(format(',{0},', inputs.only), ',interop,')) }}
+    if: ${{ !cancelled() && needs.interop-images.result == 'success' && (inputs.only == '' || contains(format(',{0},', inputs.only), ',interop,')) }}
     # The QUIC Interop Runner (pinned in tools/interop/runner.lock) with kuicksilver as server and as client against each peer;
     # --check-required fails on any cell of tools/interop/required.json in this run's scope (its image, peer and cases).
     needs: interop-images
@@ -1158,11 +1257,11 @@ jobs:
           retention-days: 7
 
   jvm-jar:
-    if: ${{ (inputs.only == '' || contains(format(',{0},', inputs.only), ',jvm-jar,')) }}
+    if: ${{ !cancelled() && needs.openssl-docker.result == 'success' && needs.linux.result == 'success' && needs.apple.result == 'success' && (inputs.only == '' || contains(format(',{0},', inputs.only), ',jvm-jar,')) }}
     # The kuicksilver-native JVM jar as it is published: libksl for every JVM platform, each library built (and, except the
     # Windows dll and the Intel-Mac dylib, tested) by its own job and checked against that job's manifest.sha256.
     # buildJniHost is excluded: on this runner it would replace the manylinux .so with a host-gcc build.
-    needs: [openssl-docker, linux, apple]
+    needs: [openssl-docker, linux, apple, gradle-deps]
     runs-on: ubuntu-24.04
     permissions: { contents: read }
     timeout-minutes: 30
@@ -1170,6 +1269,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
       - uses: ./.github/actions/setup
+        with: { gradle-deps: restore }
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { pattern: 'jni-*', path: build/jni-artifacts }
       - name: 'jvm: collect JNI libraries'
@@ -1190,10 +1290,10 @@ jobs:
         with: { name: 'verify-jvm-jar-a${{ github.run_attempt }}', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
 
   consumer-smoke:
-    if: ${{ (inputs.only == '' || contains(format(',{0},', inputs.only), ',consumer-smoke,')) }}
+    if: ${{ !cancelled() && needs.openssl-docker.result == 'success' && needs.jvm-jar.result == 'success' && (inputs.only == '' || contains(format(',{0},', inputs.only), ',consumer-smoke,')) }}
     # The published artifacts consumed the way a user does: publishToMavenLocal (unsigned, the jar with all five JNI
     # libraries), then samples/realtime-telemetry built from mavenLocal() without includeBuild (tools/check/consumer-smoke.sh).
-    needs: [openssl-docker, jvm-jar]
+    needs: [openssl-docker, jvm-jar, gradle-deps]
     runs-on: xcode-27   # Xcode 27.0 (27A266a, gradle/toolchains.toml) is only on this preview image; macos-26 has 26.x
     permissions: { contents: read }
     timeout-minutes: 180
@@ -1201,7 +1301,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
       - uses: ./.github/actions/setup
-        with: { ndk: 'true', xcode: 'true', konan: 'linux_x64 linux_arm64 mingw_x64', openssl-cache: apple }
+        with: { gradle-deps: restore, ndk: 'true', xcode: 'true', konan: 'linux_x64 linux_arm64 mingw_x64', openssl-cache: apple }
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { name: openssl-mingw-x64, path: build/openssl/mingw-x64 }
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2

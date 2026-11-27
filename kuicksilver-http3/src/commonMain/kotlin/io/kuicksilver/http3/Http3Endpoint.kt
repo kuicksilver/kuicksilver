@@ -102,7 +102,7 @@ public class Http3Endpoint private constructor(
             )
         return try {
             if (c.isHandshakeComplete) requireH3(c)
-            Http3Connection.client(c, settings.withTransport(quic)).also { h ->
+            Http3Connection.client(earlyTransportForTest?.invoke(c) ?: c, settings.withTransport(quic)).also { h ->
                 // 0-RTT: the protocol is settled by the handshake (a resumed session offers its own, a rejected 0-RTT may end elsewhere)
                 if (!c.isHandshakeComplete) {
                     h.session.scope.launch {
@@ -291,6 +291,10 @@ public class Http3Endpoint private constructor(
             settings.requireWebTransportFits(this)
             return if (settings.webTransport && !resetStreamAt) toBuilder().apply { expert { resetStreamAt = true } }.build() else this
         }
+
+        /** Test hook: the transport [connectEarly]'s HTTP/3 session runs on, in place of the QUIC connection it made. */
+        @kotlin.concurrent.Volatile
+        internal var earlyTransportForTest: ((QuicConnection) -> QuicConnection)? = null
 
         /** Test hook: binds a server that breaks section 6.2 (its peer's critical streams), to test the peer's side of it. */
         @kotlin.concurrent.Volatile

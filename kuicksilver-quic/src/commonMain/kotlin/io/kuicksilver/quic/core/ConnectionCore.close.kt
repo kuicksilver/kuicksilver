@@ -15,8 +15,13 @@ import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.TransportError
+import io.kuicksilver.quic.recovery.SpaceId
 import io.kuicksilver.quic.wire.QuicWireException
+import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.CertificateCompression
+import io.kuicksilver.tls.QuicTlsSession
 import io.kuicksilver.tls.TlsException
+import io.kuicksilver.tls.sniSelectedFor
 import io.kuicksilver.tls.tlsAlertName
 
 // How a [ConnectionCore] ends: CONNECTION_CLOSE, draining, silent close, stateless reset, release of native resources and the glitch
@@ -40,12 +45,78 @@ internal fun utf8Prefix(
     return if (b[n].toInt() and 0xc0 == 0x80) max else n
 }
 
+/**
+ * Why something this side sent still waits for the peer, or null when nothing does ([sendsSettled]): an ack-eliciting
+ * packet in flight in a space whose keys are still held, a probe due, or CRYPTO data, a stream control frame
+ * (RESET_STREAM, STOP_SENDING, a RESET_STREAM_AT queued once its reliable bytes went out, the flow-control updates), a
+ * connection ID frame or stream data the stream may send now (new or queued again after a loss, also while the pacer
+ * holds it) waiting for a packet. A frame of a lost packet is queued again (RFC 9002 section 6), so it is in one of these
+ * until the peer acknowledged the packet that carried it. Stream data blocked on the peer's credit is not counted (the
+ * scheduler drops such a stream until credit comes): only the peer can release it, and its reliable bytes hold a
+ * RESET_STREAM_AT back with it. Null once the connection is closing, draining or closed: it sends nothing more but its
+ * CONNECTION_CLOSE.
+ */
+internal fun ConnectionCore.sendsUnsettled(): String? {
+    if (state == ConnectionState.Closing || state == ConnectionState.Draining || state == ConnectionState.Closed) return null
+    for (space in SpaceId.entries) {
+        if (spaceDiscarded[space.ordinal]) continue
+        val inFlight = loss.space(space).ackElicitingInFlight
+        if (inFlight > 0) return "${space.name}: $inFlight ack-eliciting packet(s) in flight"
+        if (probePending[space.ordinal] > 0) return "${space.name}: a probe is due"
+    }
+    if (!spaceDiscarded[SpaceId.Initial.ordinal] && cryptoStreams.send[0].hasPending) return "Initial CRYPTO data waits"
+    if (!spaceDiscarded[SpaceId.Handshake.ordinal] && cryptoStreams.send[2].hasPending) return "Handshake CRYPTO data waits"
+    if (cryptoStreams.send[3].hasPending) return "1-RTT CRYPTO data waits"
+    if (streams.hasControlFrames()) return "stream control frames wait"
+    if (cids.hasPendingFrames()) return "connection ID frames wait"
+    if (streams.hasStreamData()) return "stream data waits"
+    return null
+}
+
+/** [sendsUnsettled] is null: everything this side sent was acknowledged and nothing waits to be sent. */
+internal fun ConnectionCore.sendsSettled(): Boolean = sendsUnsettled() == null
+
+/**
+ * Before a close: every space's unacknowledged frames are queued again, to go now within the congestion window instead
+ * of at the next probe timeout, which a backoff may have put seconds away. No probe is owed: RFC 9002 section 7 lets a
+ * packet exceed the window only "on a PTO timer expiration (see Section 6.2) or when entering recovery", and this is
+ * neither (section 7.5 exempts the probes of an expiry, not this resend). With the window full nothing more goes, and the
+ * regular PTO probe is the fallback. The PTO backoff stays as it is (section 6.2.1: it grows only when the timer
+ * expires). Retransmitting unacknowledged data early is the content a probe may carry (section 6.2.4) and what
+ * `resendInFlightAtOnce` does when a handshake's active address comes back. No-op once closing.
+ */
+internal fun ConnectionCore.probeUnsettledNow() {
+    if (state == ConnectionState.Closing || state == ConnectionState.Draining || state == ConnectionState.Closed) return
+    for (space in SpaceId.entries) {
+        if (spaceDiscarded[space.ordinal] || loss.space(space).ackElicitingInFlight <= 0) continue
+        requeueForProbe(space, Int.MAX_VALUE)
+    }
+}
+
+/**
+ * A closing connection sends its CONNECTION_CLOSE once more at the next poll, whatever the rate limit of its answers
+ * (RFC 9000 section 10.2.1 lets the closing packet be sent again, and limits only the rate): true when it is closing (not
+ * draining: a peer that closed too wants nothing more).
+ */
+internal fun ConnectionCore.repeatCloseNow(): Boolean {
+    if (state != ConnectionState.Closing || closeFrame == null) return false
+    closeSent = false
+    return true
+}
+
+/** The closing or draining period starts now: it ends 3 x the current PTO from now (RFC 9000 section 10.2). */
+private fun ConnectionCore.startClosePeriod() {
+    val p = pto()
+    timers.closePto = p
+    timers.closeDeadline = now + p * 3
+}
+
 internal fun ConnectionCore.enterClosing(reason: QuicException.ConnectionLost) {
     state = ConnectionState.Closing
     closedReason = reason
     closeSent =
         false
-    timers.closeDeadline = now + pto() * 3
+    startClosePeriod()
     paths.dropAllResponses()
     streams.settleHeldUntilAnswer(false) // an answer that never comes stands for no acceptance
     events += ConnectionEvent.Closed(reason)
@@ -74,7 +145,10 @@ internal fun ConnectionCore.silentClose(reason: QuicException.ConnectionLost) {
     markClosed()
 }
 
-/** The terminal state: every native resource of this connection (TLS session, packet protectors) is freed here and only here. */
+/**
+ * The terminal state: every native resource of this connection (TLS session, packet protectors) still held is freed here; a
+ * draining connection gave them up already ([releaseCryptoIfDraining]).
+ */
 internal fun ConnectionCore.markClosed() {
     state = ConnectionState.Closed
     release()
@@ -83,6 +157,33 @@ internal fun ConnectionCore.markClosed() {
 internal fun ConnectionCore.release() {
     if (released) return
     released = true
+    releaseCrypto()
+    qlog?.close()
+}
+
+/**
+ * RFC 9000 section 10.2.2: "Retaining packet protection keys is unnecessary once a connection is in the draining state". A
+ * draining connection sends nothing and reads nothing ([ConnectionCore.handleDatagram] drops every datagram, [ConnectionCore.poll] builds none), so its
+ * packet protectors and TLS session are freed at once instead of 3 x PTO later (about 3 s before the first RTT sample);
+ * what the period needs, the connection IDs that route the peer's late packets to this connection so they are dropped
+ * without a Stateless Reset, stays until `markClosed`. Run from [ConnectionCore.poll], after the application side read what the session
+ * reported (the peer's certificates, the ALPN) with the events of the datagram that started draining; a TLS step still
+ * running when the CONNECTION_CLOSE was parsed has ended by then. The closing state keeps both: its CONNECTION_CLOSE is
+ * built anew each time it is repeated (§10.2.1), and the keys authenticate the packets it answers and find the peer's
+ * CONNECTION_CLOSE in them ("An endpoint MAY retain packet protection keys for incoming packets").
+ */
+internal fun ConnectionCore.releaseCryptoIfDraining() {
+    if (state == ConnectionState.Draining) releaseCrypto()
+}
+
+private fun ConnectionCore.releaseCrypto() {
+    if (cryptoReleased) return
+    cryptoReleased = true
+    beforeCryptoReleaseForTest?.invoke()
+    // what the session said stays readable through the core's getters (a draining connection's peer certificates, ALPN,
+    // 0-RTT outcome) once it is gone; a getter that fails here (a session that never got going) answers as nothing
+    tlsFacts = TlsFacts.of(handshake.session)
+    keyUpdatesAtRelease = keyPhase?.updates ?: 0L
     keyPhase?.close()
     keyPhase = null
     for (i in 0 until 4) {
@@ -94,7 +195,6 @@ internal fun ConnectionCore.release() {
     initialReadOriginal?.close()
     initialReadOriginal = null
     handshake.session.close()
-    qlog?.close()
 }
 
 internal fun ConnectionCore.fail(
@@ -118,7 +218,10 @@ internal fun ConnectionCore.peerClosed(
     if (state == ConnectionState.Draining || state == ConnectionState.Closed) return
     val closing = state == ConnectionState.Closing
     state = ConnectionState.Draining
-    timers.closeDeadline = now + pto() * 3
+    // RFC 9000 section 10.2.2: a closing endpoint MAY enter the draining state on the peer's CONNECTION_CLOSE, and "In this
+    // case, the draining state ends when the closing state would have ended"; only a connection that was not closing starts
+    // a period now
+    if (!closing) startClosePeriod()
     paths.dropAllResponses()
     streams.settleHeldUntilAnswer(false) // an answer that never comes stands for no acceptance
     // RFC 9000 section 10.2.2: a closing endpoint that receives CONNECTION_CLOSE may drain; the connection already ended with our
@@ -177,8 +280,11 @@ internal fun ConnectionCore.checkStatelessReset(
         return false
     }
     this.now = now
+    // a Stateless Reset that reaches a closing connection ends its closing period as draining at the end the closing state
+    // had: section 10.3.1 says only that the endpoint "MUST enter the draining period"; keeping the end is our reading, by
+    // analogy with section 10.2.2's draining after closing
+    if (state != ConnectionState.Closing) startClosePeriod()
     state = ConnectionState.Draining
-    timers.closeDeadline = now + pto() * 3
     paths.dropAllResponses()
     streams.settleHeldUntilAnswer(false) // an answer that never comes stands for no acceptance
     val reason = QuicException.ConnectionLost.StatelessReset()
@@ -218,4 +324,55 @@ private fun ConnectionCore.glitchSummary(): String {
         }
     }
     return sb.toString()
+}
+
+/** What a QUIC connection's TLS session says: [Live] while it exists, a [Snapshot] ([of]) taken as it is freed. */
+@OptIn(ExperimentalKuicksilverApi::class, io.kuicksilver.annotations.InternalKuicksilverApi::class)
+internal interface TlsFacts {
+    val peerCertificates: List<Certificate>
+    val localCertificates: List<Certificate>
+    val negotiatedAlpn: String?
+    val keyExchangeGroup: String?
+    val peerCertificateCompression: CertificateCompression?
+    val earlyDataAccepted: Boolean?
+    val sniSelectedFor: String?
+
+    /** The current session's own answers, read on each call (a version change replaces the session: [core] names it). */
+    class Live(
+        private val core: ConnectionCore,
+    ) : TlsFacts {
+        private val s: QuicTlsSession get() = core.handshake.session
+        override val peerCertificates: List<Certificate> get() = s.peerCertificates
+        override val localCertificates: List<Certificate> get() = s.localCertificates
+        override val negotiatedAlpn: String? get() = s.negotiatedAlpn
+        override val keyExchangeGroup: String? get() = s.keyExchangeGroup
+        override val peerCertificateCompression: CertificateCompression? get() = s.peerCertificateCompression
+        override val earlyDataAccepted: Boolean? get() = s.earlyDataAccepted
+        override val sniSelectedFor: String? get() = s.sniSelectedFor
+    }
+
+    /** The answers as they were when the session was freed. */
+    class Snapshot(
+        override val peerCertificates: List<Certificate>,
+        override val localCertificates: List<Certificate>,
+        override val negotiatedAlpn: String?,
+        override val keyExchangeGroup: String?,
+        override val peerCertificateCompression: CertificateCompression?,
+        override val earlyDataAccepted: Boolean?,
+        override val sniSelectedFor: String?,
+    ) : TlsFacts
+
+    companion object {
+        /** Each answer on its own: one getter that fails (a session that never got going) leaves the others. */
+        fun of(s: QuicTlsSession): TlsFacts =
+            Snapshot(
+                runCatching { s.peerCertificates }.getOrDefault(emptyList()),
+                runCatching { s.localCertificates }.getOrDefault(emptyList()),
+                runCatching { s.negotiatedAlpn }.getOrNull(),
+                runCatching { s.keyExchangeGroup }.getOrNull(),
+                runCatching { s.peerCertificateCompression }.getOrNull(),
+                runCatching { s.earlyDataAccepted }.getOrNull(),
+                runCatching { s.sniSelectedFor }.getOrNull(),
+            )
+    }
 }

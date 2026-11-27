@@ -10,6 +10,7 @@ import io.ktor.websocket.Frame
 import io.ktor.websocket.close
 import io.ktor.websocket.readBytes
 import io.ktor.websocket.readText
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
@@ -42,8 +43,14 @@ internal abstract class WebSocketPairSuite(
         client = ktorClient(clientEngine, http2 = false)
     }
 
+    /**
+     * The client first, and its end awaited (a client engine's cleanup waits for its sessions' closing handshakes) before
+     * the server stops: a server stopped under a closing session left it without the server's Close or FIN, and ours then
+     * waited out its close wait (the leak sentinel saw 4990 ms against Netty, whose event loop also refused the upgrade's
+     * close listener: "Failed to submit a listener notification task").
+     */
     @AfterAll fun stopPair() {
-        client.close()
+        runBlocking { closeAndJoin(client) }
         server.close()
     }
 
@@ -58,6 +65,8 @@ internal abstract class WebSocketPairSuite(
             return session.block()
         } finally {
             session.close()
+            // the closing handshake is over (the server's Close came) before the test goes on
+            withTimeout(10.seconds) { session.closeReason.await() }
         }
     }
 
@@ -149,13 +158,26 @@ internal abstract class WebSocketPairSuite(
     /**
      * The closing order between the two engines (RFC 6455 sections 5.5.1 and 7.1.1): the server closes the TCP connection
      * right after the closing handshake and the client follows it. A client that waits for the server's close (ours: T2,
-     * 5 s) finishes its close well within that wait only when the server closed first; `client.close()` waits for the
-     * session's transport to end. With the client's Close first and with the server's.
+     * 5 s) finishes its close well within that wait only when the server closed first. Ours stops waiting for the server
+     * once it is closed, so its connection's release (its listener's `connectionReleased`) is awaited with the client
+     * still open; `client.close()` waits for the session's transport to end. With the client's Close first and with the
+     * server's.
      */
     @Test fun closingEndsWithTheServerClosingFirst() =
         interopTest {
             for (clientFirst in listOf(true, false)) {
-                val c = ktorClient(clientEngine, http2 = false)
+                val released = kotlinx.coroutines.CompletableDeferred<Unit>()
+                val listener =
+                    object : io.kuicksilver.ktor.client.KuicksilverEventListener() {
+                        override fun connectionReleased(
+                            request: io.ktor.client.request.HttpRequestData,
+                            protocol: io.ktor.http.HttpProtocolVersion,
+                            kept: Boolean,
+                        ) {
+                            released.complete(Unit)
+                        }
+                    }
+                val c = ktorClient(clientEngine, http2 = false, listener = listener)
                 val started =
                     kotlin.time.TimeSource.Monotonic
                         .markNow()
@@ -166,6 +188,7 @@ internal abstract class WebSocketPairSuite(
                     val s = c.webSocketSession(server.wsUrl("/ws/close?code=1000&reason=bye"))
                     withTimeout(10.seconds) { s.closeReason.await() }
                 }
+                if (clientEngine == ClientEngine.Kuicksilver) withTimeout(10.seconds) { released.await() }
                 c.close()
                 withTimeout(10.seconds) { c.coroutineContext[kotlinx.coroutines.Job]!!.join() }
                 val took = started.elapsedNow()
@@ -183,7 +206,8 @@ internal abstract class WebSocketPairSuite(
         interopTest {
             if (!clientEngine.wsExtensions) return@interopTest
             startServer(serverEngine, tls = tls, deflate = true).use { s ->
-                ktorClient(clientEngine, http2 = false, deflate = true).use { c ->
+                val c = ktorClient(clientEngine, http2 = false, deflate = true)
+                try {
                     session("/ws/echo", c, s) {
                         val negotiated = call.response.headers["Sec-WebSocket-Extensions"]
                         assertNotNull(negotiated)
@@ -196,9 +220,17 @@ internal abstract class WebSocketPairSuite(
                             assertEquals("small $it", receiveMessage())
                         }
                     }
+                } finally {
+                    closeAndJoin(c) // before the server stops (stopPair)
                 }
             }
         }
+}
+
+/** Closes [c] and waits for its engine's end (Ktor closes it once the client's work is over; ours then cleans up). */
+internal suspend fun closeAndJoin(c: HttpClient) {
+    c.close()
+    withTimeout(10.seconds) { c.engine.coroutineContext[kotlinx.coroutines.Job]!!.join() }
 }
 
 /** Our client, Ktor Netty server, wss:// (HTTP/1.1 over TLS). */

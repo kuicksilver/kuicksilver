@@ -25,6 +25,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
@@ -346,6 +347,119 @@ class LifecycleTest {
             val sent = p.sentToClient
             silence(p, 2.seconds)
             assertEquals(sent, p.sentToClient)
+        }
+    }
+
+    /**
+     * The closing period's deadline ends the connection and records how late its timer ran (the leak sentinel allows a
+     * held-up loop that lateness), and the PTO the period was set from: 3 x it.
+     */
+    @Test fun closingPeriodRecordsItsPtoAndHowLateItsTimerRan() {
+        val p = CorePair()
+        p.use { _ ->
+            assertTrue(p.handshake())
+            p.runUntil { p.client.state == ConnectionState.Confirmed }
+            val start = p.now
+            p.client.close(1, "", p.now)
+            val pto = assertNotNull(p.client.timers.closePto)
+            val end = assertNotNull(p.client.timers.closeDeadline)
+            assertEquals(start + pto * 3, end, "3 x the PTO it reports")
+            assertNull(p.client.timers.closedLateBy)
+            p.filterToClient = { _, _ -> false } // no CONNECTION_CLOSE back: the deadline ends it
+            p.advance(end - p.now + 700.milliseconds) // a loop held up 700 ms past the deadline
+            p.client.onTimeout(p.now)
+            assertEquals(ConnectionState.Closed, p.client.state)
+            assertEquals(700.milliseconds, p.client.timers.closedLateBy)
+        }
+    }
+
+    /**
+     * The closing period after PTOs fired is 3 x the PTO without its backoff (RFC 9002 section 6.2.1's computation, the
+     * value the core reports with the period): two unanswered probes make the backed-off PTO 4 times it.
+     */
+    @Test fun closingAfterPtosUsesThePtoWithoutItsBackoff() {
+        val p = CorePair()
+        p.use { _ ->
+            assertTrue(p.handshake())
+            p.runUntil { p.client.state == ConnectionState.Confirmed }
+            p.filterToServer = { _, _ -> false } // nothing is acknowledged: the PTO fires and backs off
+            val id = p.client.openStream(true)
+            p.client.writeStream(id, ByteArray(2000), 0, 2000, false)
+            assertTrue(p.runUntil(10.seconds) { p.client.loss.ptoCount >= 2 }, "two PTOs fired")
+            val base = p.client.pto()
+            p.client.close(1, "", p.now)
+            assertEquals(base, p.client.timers.closePto, "the PTO without the backoff multiplier")
+            assertEquals(p.now + base * 3, p.client.timers.closeDeadline)
+        }
+    }
+
+    /**
+     * RFC 9000 section 10.2.2: a closing endpoint MAY enter the draining state on the peer's CONNECTION_CLOSE, and "In this case,
+     * the draining state ends when the closing state would have ended". Both sides close at once, so each gets the other's
+     * close while closing: the period keeps the end the close set (before, draining set a new 3 x PTO from the receipt).
+     */
+    @Test fun drainingAfterClosingKeepsTheClosingEndTime() {
+        val p = CorePair()
+        p.use { _ ->
+            assertTrue(p.handshake())
+            p.runUntil { p.client.state == ConnectionState.Confirmed }
+            val server = p.server!!
+            p.client.close(1, "", p.now)
+            server.close(2, "", p.now)
+            val clientEnd = p.client.timers.closeDeadline
+            val serverEnd = server.timers.closeDeadline
+            assertNotNull(clientEnd)
+            assertNotNull(serverEnd)
+            p.runUntil(limit = 500.milliseconds) {
+                p.client.state == ConnectionState.Draining && server.state == ConnectionState.Draining
+            }
+            assertEquals(clientEnd, p.client.timers.closeDeadline, "the client's period ends when its closing state would have")
+            assertEquals(serverEnd, server.timers.closeDeadline, "the server's period ends when its closing state would have")
+        }
+    }
+
+    /**
+     * RFC 9000 section 10.2.2, "Retaining packet protection keys is unnecessary once a connection is in the draining state":
+     * a draining connection frees its keys and TLS session at its next poll, long before its period ends; the closing peer
+     * keeps them (it repeats its CONNECTION_CLOSE, section 10.2.1) until it is closed.
+     */
+    @Test fun drainingFreesItsKeysAndClosingKeepsThem() {
+        val p = CorePair(crypto = StrictSessions(io.kuicksilver.tls.KslQuicCrypto)) // real TLS; a freed session answers nothing
+        p.use { _ ->
+            assertTrue(p.handshake())
+            p.runUntil { p.client.state == ConnectionState.Confirmed }
+            val server = p.server!!
+
+            // what each session said: the getters keep answering it once the session is gone
+            fun facts(c: io.kuicksilver.quic.ConnectionCore) =
+                listOf(
+                    c.peerCertificates,
+                    c.localCertificates,
+                    c.negotiatedAlpn,
+                    c.keyExchangeGroup,
+                    c.peerCertificateCompression,
+                    c.earlyDataAccepted,
+                )
+            val serverFacts = facts(server)
+            // the client's are not read before its close: the peer chain is fetched from the session on first use
+            p.client.close(1, "", p.now)
+            p.runUntil(limit = 200.milliseconds) { server.state == ConnectionState.Draining }
+            silence(p, 10.milliseconds) // the loop polls every connection after its input
+            assertEquals(serverFacts, facts(server), "a draining connection's getters answer as before")
+            assertEquals(ConnectionState.Draining, server.state)
+            assertTrue(server.cryptoReleasedForTest, "a draining connection holds no keys and no TLS session")
+            assertEquals(false, server.releasedForTest, "its period, and its qlog trace, go on until it is closed")
+            assertEquals(ConnectionState.Closing, p.client.state)
+            assertEquals(false, p.client.cryptoReleasedForTest, "a closing connection keeps its keys to repeat its CONNECTION_CLOSE")
+            silence(p, 3.seconds)
+            assertEquals(ConnectionState.Closed, server.state)
+            assertEquals(ConnectionState.Closed, p.client.state)
+            assertTrue(server.releasedForTest)
+            assertTrue(p.client.cryptoReleasedForTest && p.client.releasedForTest)
+            assertEquals(serverFacts, facts(server), "and once closed")
+            assertTrue(p.client.peerCertificates.isNotEmpty(), "a closed connection still names the chain its peer presented")
+            assertEquals(serverFacts[2], p.client.negotiatedAlpn, "and the ALPN both agreed")
+            assertTrue(p.client.keyExchangeGroup != null)
         }
     }
 
@@ -823,4 +937,39 @@ class LifecycleTest {
             assertTrue(p.client.releasedForTest)
         }
     }
+}
+
+/**
+ * Real TLS whose sessions refuse every getter once closed: a core that read a freed session (instead of what it said when
+ * freed) fails, whatever the session would have cached.
+ */
+@OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+private class StrictSessions(
+    private val inner: io.kuicksilver.tls.QuicCrypto,
+) : io.kuicksilver.tls.QuicCrypto by inner {
+    private fun strict(s: io.kuicksilver.tls.QuicTlsSession): io.kuicksilver.tls.QuicTlsSession {
+        var closed = false
+
+        fun open() = check(!closed) { "the session was closed" }
+        return object : io.kuicksilver.tls.QuicTlsSession by s {
+            override val peerCertificates get() = open().let { s.peerCertificates }
+            override val localCertificates get() = open().let { s.localCertificates }
+            override val negotiatedAlpn get() = open().let { s.negotiatedAlpn }
+            override val keyExchangeGroup get() = open().let { s.keyExchangeGroup }
+            override val peerCertificateCompression get() = open().let { s.peerCertificateCompression }
+            override val earlyDataAccepted get() = open().let { s.earlyDataAccepted }
+
+            override fun close() {
+                closed = true
+                s.close()
+            }
+        }
+    }
+
+    override fun newSession(config: io.kuicksilver.tls.TlsConfig): io.kuicksilver.tls.QuicTlsSession = strict(inner.newSession(config))
+
+    override fun newSession(
+        config: io.kuicksilver.tls.TlsConfig,
+        earlyData: Boolean,
+    ): io.kuicksilver.tls.QuicTlsSession = strict(inner.newSession(config, earlyData))
 }

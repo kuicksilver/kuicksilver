@@ -50,10 +50,33 @@ disable the signature check.
 Gradle checks every plugin and dependency it resolves against `gradle/verification-metadata.xml` (threat model 3.11): a
 PGP signature by a key trusted for that publisher's group (the keys are in `gradle/verification-keyring.keys`, so no key
 server is needed), or a SHA-256 for artifacts that are not signed or whose key no key server has. An artifact that
-matches neither fails the build, the release included. The same holds for every repository: Google's mirror of Maven
-Central, last in `settings.gradle.kts` and `build-logic/settings.gradle.kts` in CI (`kuicksilver.centralMirror=true`),
-is asked only for a module the others did not have (Central answers 404 for files it has now and then; the build has no
-version range, whose listing would ask every repository) and is held to the same file. When a dependency, a plugin or a toolchain pin changes (Renovate
+matches neither fails the build, the release included. The same holds for every repository: a checksum or signature
+belongs to the artifact (group, name, version, file), never to the repository that served it.
+
+In CI (`kuicksilver.centralMirror=true`, set by `.github/actions/setup` unless switched off, below) the builds ask
+Google's mirror of Maven Central (`https://maven-central.storage-download.googleapis.com/maven2/`, Google's official
+mirror of Maven Central, over HTTPS and without credentials) before Central itself, in `settings.gradle.kts`,
+`build-logic/settings.gradle.kts` and the samples. Central answers 429 Too Many Requests to GitHub's runners when many
+jobs resolve at once (runs 45958310638, 45987232788). Central stays the fallback: a module the mirror does not have
+(yet) is asked of Central next, and Central's occasional 404 for a file it has is no longer the first answer. Gradle
+asks the next repository only after a 404, so the mirror is never asked for what Central does not serve (plugin markers,
+the Plugin Portal's own plugins, Google's own groups): a 403, 429 or 5xx from the mirror would fail the resolution
+instead. The fallback covers a missing module only: a file of a module whose metadata the mirror served (its jar, say)
+is asked of the mirror alone, also with `--refresh-dependencies`, so a mirror that lags behind Central fails the build
+on that file (strict `ksResolveAll` in the `gradle-deps` job fails on it too, so no cache that misses it is saved). The
+remedy is the kill switch: the repository variable `KSL_CENTRAL_MIRROR` set to `off` (Settings, Secrets and variables,
+Actions, Variables) makes the setup action write `kuicksilver.centralMirror=false`, and every job asks Central alone
+from the next run on; deleting the variable turns the mirror back on. The `gradle-deps` cache key names the mode
+(`gradle-deps-v1-mirror-` or `gradle-deps-v1-central-`), since Gradle keeps cached metadata per repository. The mirror
+is held to the same verification file, so it changes no trust: a file it served that differs from Central's fails the
+build. Builds outside CI, the release included, leave the mirror out (a machine behind a filter may not reach it, and an
+unreachable repository fails the resolution); repositories in settings files are never published, so neither the POMs
+nor the Gradle module metadata name it. The build has no version range, whose listing would ask every repository. The
+`gradle-deps` job of `.github/workflows/build.yml` resolves every configuration once per run and hands its dependency
+cache to the other jobs as Gradle's read-only dependency cache, so the matrix does not download the same files at once;
+`tools/ci/gradlew-retry.sh` retries a refused download after randomly spread, growing pauses.
+
+When a dependency, a plugin or a toolchain pin changes (Renovate
 pull requests too), update the file in the same pull request and review its diff:
 
 ```sh

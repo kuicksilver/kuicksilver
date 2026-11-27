@@ -290,64 +290,129 @@ class ClientH3WebSocketTest {
         }
 
     /**
-     * `close(reason)` and then `client.close()` at once, the writer held at the server's flow control: the engine's
-     * cleanup (the HTTP/3 connections, the endpoint) waits for the session to write its Close and end. Before, the cleanup
-     * closed the connection under it and the server never saw the Close.
+     * `close(reason)` and then `client.close()` at once, the writer held at the server's flow control, which the server
+     * opens right after: the engine's cleanup (the HTTP/3 connections, the endpoint) waits for the session to write its
+     * Close and end. Before, the cleanup closed the connection under it and the server never saw the Close.
      */
-    @Test fun clientCloseWaitsForTheSessionsClose() =
-        h3Test {
-            val serverTls =
-                tlsConfig(TlsRole.Server) {
-                    alpn = listOf("h3")
-                    identity =
-                        TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())
-                }
-            val ep =
-                Http3Endpoint.bind(
-                    InetSocketAddress("127.0.0.1", 0),
-                    QuicEndpointConfig
-                        .Builder()
-                        .apply {
-                            this.server =
-                                QuicServerConfig.Builder(serverTls).build()
-                        }.build(),
-                    io.kuicksilver.http3.http3Settings { enableConnectProtocol = true },
-                )
-            val reading = CompletableDeferred<Unit>()
-            coroutineScope {
-                val served =
-                    async {
-                        val conn = ep.accept()
-                        val s = conn.acceptRequest().acceptConnect()
-                        reading.await() // nothing is read before the client's call is over: its writer waits for credit
-                        val frames = readClientFrames(s.input)
-                        // the server's Close and FIN end the session (and with it the engine's wait)
+    @Test fun clientCloseWaitsForTheSessionsClose() = clientCloseWithAHeldWriter(serverReads = true)
+
+    /**
+     * The same against a server that takes nothing (it gives no flow-control credit): the session
+     * has not written its Close, so the engine's close does not cut it short; it keeps its close wait (T1, 1 s here), and
+     * only then is it cut and the stream reset. The cleanup waits for that, not longer. Its Close never left: the
+     * server took none of the stream.
+     */
+    @Test fun negative_clientCloseLeavesAWriterTheServerTakesNothingFromItsCloseWait() =
+        clientCloseWithAHeldWriter(serverReads = false, closeWait = 1_000)
+
+    /**
+     * The same with `client.close()` late in T1 (1.5 s into a 2 s close wait): the session still ends at its T1, counted
+     * from its own Close, and the stream reset; the engine's close starts no close wait of its own.
+     */
+    @Test fun negative_aLateClientCloseEndsAWriterTheServerTakesNothingFromAtItsT1() =
+        clientCloseWithAHeldWriter(serverReads = false, closeWait = 2_000, closeAt = 1_500.milliseconds)
+
+    /**
+     * A server that reads slowly but steadily as the client is closed (256 KiB every 30 ms with a 16 MiB frame; 64 KiB
+     * every 200 or 50 ms with 1 MiB, where the stream's credit comes in coarse steps): the writer is not cut (the
+     * engine's close cuts no writer that has not written its Close; the close wait bounds it), so the frame arrives whole
+     * and the Close after it, with no reset.
+     */
+    @Test fun clientCloseLetsAServerReading256KiBPer30msTakeTheFrameAndTheClose() =
+        clientCloseWithAHeldWriter(serverReads = true, throttle = 256 * 1024 to 30.milliseconds)
+
+    @Test fun clientCloseLetsAServerReading64KiBPer200msTakeTheFrameAndTheClose() =
+        clientCloseWithAHeldWriter(serverReads = true, size = 1 shl 20, throttle = 64 * 1024 to 200.milliseconds)
+
+    @Test fun clientCloseLetsAServerReading64KiBPer50msTakeTheFrameAndTheClose() =
+        clientCloseWithAHeldWriter(serverReads = true, size = 1 shl 20, throttle = 64 * 1024 to 50.milliseconds)
+
+    private fun clientCloseWithAHeldWriter(
+        serverReads: Boolean,
+        size: Int = BIG,
+        throttle: Pair<Int, kotlin.time.Duration>? = null,
+        closeWait: Long = 60_000,
+        closeAt: kotlin.time.Duration? = null,
+    ) = h3Test {
+        val serverTls =
+            tlsConfig(TlsRole.Server) {
+                alpn = listOf("h3")
+                identity =
+                    TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())
+            }
+        val ep =
+            Http3Endpoint.bind(
+                InetSocketAddress("127.0.0.1", 0),
+                QuicEndpointConfig
+                    .Builder()
+                    .apply {
+                        this.server =
+                            QuicServerConfig.Builder(serverTls).build()
+                    }.build(),
+                io.kuicksilver.http3.http3Settings { enableConnectProtocol = true },
+            )
+        val reading = CompletableDeferred<Unit>()
+        coroutineScope {
+            val served =
+                async {
+                    val conn = ep.accept()
+                    val s = conn.acceptRequest().acceptConnect()
+                    reading.await() // nothing is read before the client's call is over: its writer waits for credit
+                    val frames = readClientFrames(throttle?.let { (n, p) -> throttled(s.input, n, p) } ?: s.input)
+                    // the server's Close and FIN end the session (and with it the engine's wait); a stream the client reset
+                    // takes neither
+                    runCatching {
                         s.output.writeFully(byteArrayOf(0x88.toByte(), 0x02, 0x03, 0xE8.toByte()))
                         s.output.flushAndClose()
-                        frames
                     }
-                try {
-                    testClient(Http3Discovery.H3Only, block = { install(WebSockets) }).let { c ->
-                        (c.engine as KuicksilverEngine).h3.webSocketCloseWaitMillis = 60_000
-                        val session = c.webSocketSession("wss://127.0.0.1:${ep.localAddress.port}/ws")
-                        session.outgoing.send(Frame.Binary(true, ByteArray(BIG)))
-                        launch { session.close(CloseReason(4002, "client bye")) } // close() also waits for the writer
-                        session.call.coroutineContext[Job]!!.join()
-                        c.close()
-                        // a cleanup that does not wait for the session is over well within this
-                        val cleanedFirst =
-                            kotlinx.coroutines.withTimeoutOrNull(1.seconds) { (c.engine as KuicksilverEngine).cleanup.join() } != null
-                        reading.complete(Unit)
-                        assertEquals(listOf("binary $BIG", "close 4002 client bye"), withTimeout(BIG_TRANSFER_WAIT) { served.await() })
-                        assertEquals(false, cleanedFirst, "the cleanup ran before the session wrote its Close")
-                        withTimeout(20.seconds) { (c.engine as KuicksilverEngine).cleanup.join() }
-                    }
-                } finally {
-                    served.cancel()
-                    ep.close()
+                    frames
                 }
+            try {
+                testClient(Http3Discovery.H3Only, block = { install(WebSockets) }).let { c ->
+                    (c.engine as KuicksilverEngine).h3.webSocketCloseWaitMillis = closeWait
+                    val session = c.webSocketSession("wss://127.0.0.1:${ep.localAddress.port}/ws")
+                    session.outgoing.send(Frame.Binary(true, ByteArray(size)))
+                    val started =
+                        kotlin.time.TimeSource.Monotonic
+                            .markNow()
+                    launch { session.close(CloseReason(4002, "client bye")) } // close() also waits for the writer
+                    session.call.coroutineContext[Job]!!.join()
+                    closeAt?.let { kotlinx.coroutines.delay(it) } // a close late in T1
+                    c.close()
+                    if (serverReads) {
+                        reading.complete(Unit)
+                        assertEquals(listOf("binary $size", "close 4002 client bye"), withTimeout(BIG_TRANSFER_WAIT) { served.await() })
+                        withTimeout(20.seconds) { (c.engine as KuicksilverEngine).cleanup.join() }
+                    } else {
+                        // not cut short by the engine's close: the session keeps its close wait
+                        kotlin.test.assertNull(
+                            kotlinx.coroutines.withTimeoutOrNull((if (closeAt == null) closeWait / 2 else 0L).milliseconds) {
+                                (c.engine as KuicksilverEngine).cleanup.join()
+                            },
+                        )
+                        withTimeout((closeWait + 10_000).milliseconds) { (c.engine as KuicksilverEngine).cleanup.join() }
+                        // a close late in T1 ends the session at its T1 all the same, not a close wait after the engine's close
+                        if (closeAt != null) {
+                            val took = started.elapsedNow()
+                            assertTrue(
+                                took < (closeWait + 1_000).milliseconds,
+                                "the cleanup ended $took after the own Close; T1 is $closeWait ms",
+                            )
+                        }
+                        reading.complete(Unit)
+                        val frames = runCatching { withTimeout(BIG_TRANSFER_WAIT) { served.await() } }
+                        assertTrue(
+                            frames.getOrNull()?.none { it.startsWith("close") } ?: true,
+                            "the Close of a cut writer left: $frames",
+                        )
+                    }
+                }
+            } finally {
+                served.cancel()
+                ep.close()
             }
         }
+    }
 
     /**
      * RFC 6455 section 5.3 over HTTP/3: the engine gives Ktor's session `masking = false` and masks every frame itself,

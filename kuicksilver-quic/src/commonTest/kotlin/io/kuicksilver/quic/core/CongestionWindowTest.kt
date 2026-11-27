@@ -150,6 +150,93 @@ class CongestionWindowTest {
         }
     }
 
+    /**
+     * RFC 9002 section 7: a packet may take bytes in flight above the window only "on a PTO timer expiration (see Section
+     * 6.2) or when entering recovery". The resend when a handshake's active address comes back used to owe a probe in each
+     * space, so its first datagram went out with the window full and no timer fired. Now what it queues again waits for
+     * room, and the regular PTO probe is the fallback.
+     */
+    @Test fun aResendAtOnceDoesNotBypassAFullWindow() {
+        val p = confirmedPair { FixedWindow(12_000) }
+        val batch = PacketBatch(64)
+        try {
+            val c = p.client
+            fillWindow(p, c, batch)
+            assertEquals(12_000L, c.cc.bytesInFlight, "the window is full")
+            c.resendInFlightAtOnce()
+            batch.clear()
+            assertEquals(0, c.poll(batch, p.now), "nothing goes outside the window without a PTO")
+            assertEquals(12_000L, c.cc.bytesInFlight)
+            for (space in SpaceId.entries) assertEquals(0, c.probePending[space.ordinal], "no probe owed in $space")
+            // the probe timeout is the legal way past the window (sections 6.2.4 and 7.5)
+            p.now = c.loss.timeout()
+            c.onTimeout(p.now)
+            batch.clear()
+            assertTrue(c.poll(batch, p.now) >= 1, "the PTO probe goes")
+        } finally {
+            batch.close()
+            p.close()
+        }
+    }
+
+    /**
+     * `probeUnsettledNow` (the HTTP/3 client's orderly close): a RESET_STREAM lost with every packet after it while the
+     * probe timeout backed off far away crosses within one RTT of the call, not at the next probe timeout, and the
+     * connection then has nothing unacknowledged, all before that timeout. It owes no probe (RFC 9002 section 7) and leaves
+     * the backoff as it is (section 6.2.1).
+     */
+    @Test fun probeUnsettledSendsTheLostFramesWithinOneRttWhileThePtoIsBackedOff() {
+        val p = confirmedPair { FixedWindow(1_000_000) }
+        try {
+            val c = p.client
+            val id = c.openStream(true)
+            c.writeStream(id, ByteArray(1000), 0, 1000, false)
+            assertTrue(p.runUntil(200.milliseconds) { c.stats.bytesInFlight == 0L }, "the data was acknowledged: the server has the stream")
+            p.filterToServer = { _, _ -> false } // the server's receive buffer is full: nothing of the client arrives
+            c.resetStream(id, 7)
+            assertTrue(p.runUntil(60.seconds) { c.stats.ptoCount >= 6 }, "the probe timeout backed off")
+            val ptoCount = c.stats.ptoCount
+            val nextPto = c.loss.timeout()
+            p.filterToServer = { _, _ -> true }
+            assertTrue(nextPto - p.now > 1.seconds, "the next probe timeout is ${nextPto - p.now} away")
+            p.serverEvents.clear()
+            c.probeUnsettledNow()
+            for (space in SpaceId.entries) assertEquals(0, c.probePending[space.ordinal], "no probe owed in $space")
+            assertEquals(ptoCount, c.stats.ptoCount, "the backoff stays")
+            // CorePair's RTT is two steps of one 5 ms tick each
+            assertTrue(
+                p.runUntil(10.milliseconds) { p.serverEvents.any { it is io.kuicksilver.quic.ConnectionEvent.StreamReset } },
+                "the reset crossed within one RTT",
+            )
+            assertTrue(p.runUntil(100.milliseconds) { c.sendsSettled() }, "settled: ${c.sendsUnsettled()}")
+            assertTrue(p.now < nextPto, "before the probe timeout")
+        } finally {
+            p.close()
+        }
+    }
+
+    /** `probeUnsettledNow` with the window full: nothing goes until the probe timeout, which then sends its probe (section 7). */
+    @Test fun probeUnsettledRespectsAFullWindow() {
+        val p = confirmedPair { FixedWindow(12_000) }
+        val batch = PacketBatch(64)
+        try {
+            val c = p.client
+            fillWindow(p, c, batch)
+            assertEquals(12_000L, c.cc.bytesInFlight, "the window is full")
+            c.probeUnsettledNow()
+            batch.clear()
+            assertEquals(0, c.poll(batch, p.now), "nothing goes above the window without a PTO")
+            assertEquals(12_000L, c.cc.bytesInFlight)
+            p.now = c.loss.timeout()
+            c.onTimeout(p.now)
+            batch.clear()
+            assertTrue(c.poll(batch, p.now) >= 1, "the PTO probe goes")
+        } finally {
+            batch.close()
+            p.close()
+        }
+    }
+
     /** RFC 9002 section 7.5: the pacer held a PTO probe back when its bucket was empty. */
     @Test fun thePacerDoesNotHoldAProbeBack() {
         val p = confirmedPair { FixedWindow(1_000_000, rate = 1_000_000, sendQuantum = 12_000) }

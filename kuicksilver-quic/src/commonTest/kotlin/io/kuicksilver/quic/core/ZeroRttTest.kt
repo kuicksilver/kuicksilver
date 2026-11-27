@@ -884,6 +884,127 @@ class ZeroRttTest {
         }
     }
 
+    /** A QUIC variable-length integer (RFC 9000 section 16), for frames a test injects. */
+    private fun vi(v: Long): ByteArray =
+        when {
+            v < 64 -> byteArrayOf(v.toByte())
+            v < 16384 -> byteArrayOf((0x40 or (v shr 8).toInt()).toByte(), v.toByte())
+            v < 1L shl 30 -> byteArrayOf((0x80 or (v shr 24).toInt()).toByte(), (v shr 16).toByte(), (v shr 8).toByte(), v.toByte())
+            else -> error("test values stay below 2^30")
+        }
+
+    /**
+     * A rejected 0-RTT whose server puts [frames] (made from the client once the server exists: it knows the client's 0-RTT
+     * packet numbers then) into its first 1-RTT packet, the 0.5-RTT flight the client reads in the same round as the server's
+     * Finished. Returns the pair after the handshake.
+     */
+    private fun rejectedWithHalfRttFrames(frames: (ConnectionCore) -> ByteArray): CorePair {
+        val (p, _) = resumed(ticket(), serverEarly = early(app = byteArrayOf(9)))
+        p.onServerCreated = { s -> s.testInjectFrames += 3 to frames(p.client) }
+        p.runUntil(
+            limit = 3.seconds,
+        ) { p.clientEvents.any { it is ConnectionEvent.HandshakeCompleted } || p.client.state.isClosedForTest() }
+        assertEquals(false, p.client.earlyDataAccepted)
+        return p
+    }
+
+    private fun ConnectionState.isClosedForTest() =
+        this == ConnectionState.Closing || this == ConnectionState.Draining || this == ConnectionState.Closed
+
+    /**
+     * RFC 9001 section 4.6.2, "The client therefore MUST reset the state of all streams": the client in 0-RTT holds the server's
+     * 1-RTT packets until the handshake's end settled the 0-RTT (as ngtcp2's client buffers them until its handshake completed),
+     * so a stream the server opened in its 0.5-RTT flight is reported after the rejection, never before it, where the
+     * application would read it while the rejected streams still looked alive. A pin, green before too: the core already
+     * queued stream events behind EarlyDataRejected and HandshakeCompleted (`nextEvent` drains stream events last).
+     */
+    @Test fun aServerStreamOfTheHalfRttFlightIsReportedAfterTheRejection() {
+        val p = rejectedWithHalfRttFrames { byteArrayOf(0x0b, 0x03, 0x02, 'h'.code.toByte(), 'i'.code.toByte()) }
+        p.use {
+            val events = p.clientEvents
+            val rejected = events.indexOfFirst { it === ConnectionEvent.EarlyDataRejected }
+            val completed = events.indexOfFirst { it is ConnectionEvent.HandshakeCompleted }
+            val opened = events.indexOfFirst { it is ConnectionEvent.StreamOpened && it.id == 3L }
+            assertTrue(rejected >= 0 && opened >= 0, events.toString())
+            assertTrue(rejected < completed && completed < opened, "rejection, handshake's end, then the server's stream: $events")
+            assertEquals("hi", streamText(p.client, 3))
+            assertNull(p.closedReason(p.clientEvents))
+        }
+    }
+
+    /**
+     * RFC 9000 section 7.4.1 with RFC 9001 section 4.6.2: a rejection replaces the remembered limits with the server's
+     * transport parameters, and the MAX_DATA and MAX_STREAMS of the server's 0.5-RTT flight raise them from there. Red
+     * before: those frames were read before the rejection, which then restarted the connection's credit and stream limits at
+     * the transport parameters and lost them.
+     */
+    @Test fun halfRttMaxDataAndMaxStreamsSurviveTheRejection() {
+        val window = QuicConfig.Default.initialConnectionWindow
+        val bidi = QuicConfig.Default.maxBidiStreams
+        val p =
+            rejectedWithHalfRttFrames {
+                byteArrayOf(0x10) + vi(window * 4) + byteArrayOf(0x12) + vi(bidi + 50) + byteArrayOf(0x13) +
+                    vi(QuicConfig.Default.maxUniStreams + 7)
+            }
+        p.use {
+            assertTrue(p.clientEvents.any { it === ConnectionEvent.EarlyDataRejected })
+            assertEquals(window * 4, p.client.connSend.maxLimit, "the server's MAX_DATA")
+            assertEquals(bidi + 50, p.client.streams.localMaxStreamsAllowed(bidi = true), "the server's MAX_STREAMS (bidirectional)")
+            assertEquals(
+                QuicConfig.Default.maxUniStreams + 7,
+                p.client.streams.localMaxStreamsAllowed(bidi = false),
+                "the server's MAX_STREAMS (unidirectional)",
+            )
+            assertNull(p.closedReason(p.clientEvents))
+        }
+    }
+
+    /**
+     * RFC 9001 section 4.6.2: after a rejection "a client SHOULD treat receipt of an acknowledgment for a 0-RTT packet as a
+     * connection error of type PROTOCOL_VIOLATION". The check comes before the acknowledgment is applied (FrameDispatcher),
+     * so the forged acknowledgment gives no RTT sample and frees no congestion window. Red before: the ACK in the server's
+     * 0.5-RTT flight was read before the rejection was known and taken as an acknowledgment of the 0-RTT packets.
+     */
+    @Test fun negative_aHalfRttAckOfARejectedZeroRttPacketIsProtocolViolation() {
+        val p =
+            rejectedWithHalfRttFrames { c ->
+                val first = c.zeroRttFirstPn
+                val last = c.zeroRttLastPn
+                assertTrue(first in 0..63 && last in first..63, "0-RTT went out: $first..$last")
+                byteArrayOf(0x02, last.toByte(), 0, 0, (last - first).toByte())
+            }
+        p.use {
+            assertTrue(p.runUntil(limit = 1.seconds) { p.closedReason(p.clientEvents) != null })
+            val r = assertIs<io.kuicksilver.quic.QuicException.ConnectionLost.TransportClosed>(p.closedReason(p.clientEvents))
+            assertEquals(io.kuicksilver.quic.TransportError.PROTOCOL_VIOLATION, r.code)
+        }
+    }
+
+    /**
+     * The accepted 0-RTT keeps its order: the client holds the server's 0.5-RTT flight until the handshake's end as after a
+     * rejection, reports EarlyDataAccepted and HandshakeCompleted first, then the server's stream, and takes its MAX_DATA.
+     */
+    @Test fun anAcceptedZeroRttReadsTheHalfRttFlightAfterTheAcceptance() {
+        val window = QuicConfig.Default.initialConnectionWindow
+        val (p, _) = resumed(ticket())
+        p.onServerCreated = { s ->
+            s.testInjectFrames +=
+                3 to (byteArrayOf(0x0b, 0x03, 0x02, 'h'.code.toByte(), 'i'.code.toByte()) + byteArrayOf(0x10) + vi(window * 4))
+        }
+        p.use {
+            assertTrue(p.runUntil(limit = 3.seconds) { p.clientEvents.any { it is ConnectionEvent.StreamOpened && it.id == 3L } })
+            assertEquals(true, p.client.earlyDataAccepted)
+            val events = p.clientEvents
+            val accepted = events.indexOfFirst { it === ConnectionEvent.EarlyDataAccepted }
+            val completed = events.indexOfFirst { it is ConnectionEvent.HandshakeCompleted }
+            val opened = events.indexOfFirst { it is ConnectionEvent.StreamOpened && it.id == 3L }
+            assertTrue(accepted in 0 until completed && completed < opened, events.toString())
+            assertEquals("hi", streamText(p.client, 3))
+            assertEquals(window * 4, p.client.connSend.maxLimit)
+            assertNull(p.closedReason(p.clientEvents))
+        }
+    }
+
     /**
      * RFC 9001 section 4.6.2: "When 0-RTT is rejected, all connection characteristics that the client assumed might be
      * incorrect ... The client therefore MUST reset the state of all streams". The stream opened in 0-RTT is gone (nothing

@@ -192,7 +192,7 @@ internal class ActivityInput(
  * most [step] at a time, so the sender comes back for more (and ticks) after every [step] bytes it took, and stops
  * ticking when it stops taking (flow control, a peer that does not read) or [delegate] stops giving.
  */
-@OptIn(InternalAPI::class)
+@OptIn(InternalAPI::class, ExperimentalAtomicApi::class)
 internal class ConsumedBody(
     private val delegate: ByteReadChannel,
     private val activity: Activity,
@@ -200,13 +200,24 @@ internal class ConsumedBody(
 ) : ByteReadChannel {
     private val buffer = Buffer()
 
-    override val closedCause: Throwable? get() = delegate.closedCause
-    override val isClosedForRead: Boolean get() = buffer.exhausted() && delegate.isClosedForRead
-    override val readBuffer: Source get() = buffer
+    /** Set once by [cancel], from any thread; the buffer stays the sender's (see [cancel]). */
+    private val cancelCause = kotlin.concurrent.atomics.AtomicReference<Throwable?>(null)
+    private val cancelled: Throwable? get() = cancelCause.load()
+
+    override val closedCause: Throwable? get() = cancelled ?: delegate.closedCause
+    override val isClosedForRead: Boolean get() = cancelled != null || (buffer.exhausted() && delegate.isClosedForRead)
+    override val readBuffer: Source get() {
+        cancelled?.let { throw it }
+        return buffer
+    }
 
     override suspend fun awaitContent(min: Int): Boolean {
         activity.tick() // the sender took what it had
-        while (buffer.size < min) {
+        while (buffer.size < min || cancelled != null) {
+            cancelled?.let {
+                buffer.clear() // on the sender's own thread
+                throw it
+            }
             val from = delegate.readBuffer
             if (from.exhausted() && !delegate.awaitContent()) return buffer.size >= min
             from.readAtMostTo(buffer, maxOf(step, min - buffer.size))
@@ -215,8 +226,13 @@ internal class ConsumedBody(
         return true
     }
 
+    /**
+     * Ends the body for its sender, from any thread: a cancel that emptied the buffer while the sender read it threw out
+     * of `Buffer.clear` and corrupted the read (as H2BodyChannel's did). The buffer is dropped by the sender, at its next
+     * [awaitContent]; a read under way keeps what it took. Idempotent: the first cause stays.
+     */
     override fun cancel(cause: Throwable?) {
-        buffer.clear()
+        cancelCause.compareAndSet(null, cause ?: kotlinx.io.IOException("the request body was cancelled"))
         delegate.cancel(cause)
     }
 

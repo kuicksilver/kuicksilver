@@ -8,17 +8,21 @@ import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.ConnectionState
 import io.kuicksilver.quic.CoreFixtures
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicClientConfig
+import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.TimeoutKind
 import io.kuicksilver.quic.quicConfig
+import io.kuicksilver.quic.runtime.ConnectionRuntime
 import io.kuicksilver.quic.runtime.KslRandom
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.test.BeforeTest
@@ -261,22 +265,80 @@ class QuicApiTest {
             }
         }
 
+    /**
+     * `QuicEndpoint.close()` is asynchronous (its KDoc): the loop sends each connection's CONNECTION_CLOSE first and ends the
+     * connection's application side right after (EndpointLoop.flushBody), so the peer may learn of the close before the
+     * server's own `closed` completes. The server side is awaited, not sampled; its reason is the close it sent.
+     */
     @Test fun endpointCloseSendsConnectionCloseToPeers() =
         runBlocking {
-            val p = ApiPair.open()
-            withTimeout(20.seconds) {
-                val (c, s) = p.connect()
-                p.server.close()
-                val r = c.closed.await()
-                assertIs<QuicException.ConnectionLost.ApplicationClosed>(
-                    r,
-                    "the peer learns about the close at once, not by idle timeout: $r",
-                )
-                assertEquals(Initiator.Peer, r.initiator)
-                assertTrue(s.closed.isCompleted)
-                p.client.close()
+            ApiPair.open().use { p ->
+                withTimeout(20.seconds) {
+                    val (c, s) = p.connect()
+                    p.server.close()
+                    val r = c.closed.await()
+                    assertIs<QuicException.ConnectionLost.ApplicationClosed>(
+                        r,
+                        "the peer learns about the close at once, not by idle timeout: $r",
+                    )
+                    assertEquals(Initiator.Peer, r.initiator)
+                    assertEquals(0L, r.code)
+                    assertServerClosedByEndpoint(s.closed.await())
+                }
             }
         }
+
+    /**
+     * The order the test above must allow, built deterministically (CI's API 24 emulator hit it by scheduling): the server's
+     * CONNECTION_CLOSE reaches the client and the client's `closed` completes while the server's loop is still inside the
+     * send, before it ends the server connection's application side. The server's `closed` completes after that, with
+     * the reason of the close it sent.
+     */
+    @Test fun peerMayLearnOfAnEndpointCloseBeforeTheServerApplicationDoes() =
+        runBlocking {
+            ApiPair.open().use { p ->
+                withTimeout(20.seconds) {
+                    val (c, s) = p.connect()
+                    val serverAddr = p.server.localAddress
+                    val clientAddr = p.client.localAddress
+                    // set and read on the server's loop only, inside its send (the address test below comes before any read)
+                    var held = false
+                    var clientClosedFirst: QuicException.ConnectionLost? = null
+                    var serverDoneThen = true
+                    p.net.lose = lose@{ from, to, bytes ->
+                        // the first datagram the closing server connection sends: delivered here, then the send is held until
+                        // the client has taken it and completed its `closed`
+                        if (from != serverAddr || to != clientAddr || held || s.core.state != ConnectionState.Closing) {
+                            return@lose false
+                        }
+                        held = true
+                        p.net.lose = null
+                        p.net.deliver(from, to, bytes)
+                        clientClosedFirst = runBlocking { withTimeoutOrNull(10.seconds) { c.closed.await() } }
+                        serverDoneThen = s.closed.isCompleted
+                        true // delivered above
+                    }
+                    p.server.close()
+                    val sr = s.closed.await()
+                    val r = assertIs<QuicException.ConnectionLost.ApplicationClosed>(c.closed.await())
+                    assertTrue(held, "the server's CONNECTION_CLOSE went through the hook")
+                    assertIs<QuicException.ConnectionLost.ApplicationClosed>(clientClosedFirst, "the client closed while the send was held")
+                    assertEquals(Initiator.Peer, r.initiator)
+                    assertFalse(serverDoneThen, "precondition: the server's `closed` was still open when the client's completed")
+                    assertServerClosedByEndpoint(sr)
+                }
+            }
+        }
+
+    /** Makes the server side of [s]'s connection throw out of its next datagram; set on the loop that reads it. */
+    private suspend fun armServerFailure(s: QuicConnection) =
+        withContext((s as ConnectionRuntime).loopDispatcherForTest) { s.core.testInjectFailure = IllegalStateException("boom") }
+
+    private fun assertServerClosedByEndpoint(sr: QuicException.ConnectionLost) {
+        assertIs<QuicException.ConnectionLost.ApplicationClosed>(sr, "the server connection ends with the close it sent: $sr")
+        assertEquals(Initiator.Local, sr.initiator)
+        assertEquals(0L, sr.code)
+    }
 
     @Test fun oneConnectionsInternalErrorLeavesTheOthersRunning() =
         runBlocking {
@@ -284,14 +346,20 @@ class QuicApiTest {
                 withTimeout(20.seconds) {
                     val (c1, s1) = p.connect()
                     val (c2, s2) = p.connect()
-                    // the server side of connection 1 throws out of its next datagram
-                    s1.core.testInjectFailure = IllegalStateException("boom")
+                    // the stream is opened before the failure is armed: once armed, any client packet fails connection 1, also the
+                    // client's late ACK of the server's post-handshake flight, and the reset a later one draws would make a later
+                    // openBidi throw (openAfterTheServerForgotTheConnectionThrowsTheReset)
                     val st = c1.openBidi()
-                    st.output.writeFully(byteArrayOf(1), 0, 1)
+                    // the server side of connection 1 throws out of its next datagram
+                    armServerFailure(s1)
                     // the server forgot connection 1 silently, so it answers the client's next packets with a Stateless Reset
-                    // (RFC 9000 section 10.3): this flush may already see connection 1 reset, which is connection 1's fate, not 2's
-                    runCatching { st.output.flush() }.exceptionOrNull()?.let {
-                        assertIs<QuicException.ConnectionLost.StatelessReset>(c1.closed.await(), "flush failed with $it")
+                    // (RFC 9000 section 10.3): the write (a stream already closed by it) or this flush may already see connection 1
+                    // reset, which is connection 1's fate, not 2's
+                    runCatching {
+                        st.output.writeFully(byteArrayOf(1), 0, 1)
+                        st.output.flush()
+                    }.exceptionOrNull()?.let {
+                        assertIs<QuicException.ConnectionLost.StatelessReset>(c1.closed.await(), "write or flush failed with $it")
                     }
                     val r = withTimeoutOrNull(10.seconds) { s1.closed.await() }
                     assertIs<QuicException.ConnectionLost.Internal>(r, "connection 1 failed internally: $r")
@@ -323,10 +391,15 @@ class QuicApiTest {
                 withTimeout(20.seconds) {
                     val (c1, s1) = p.connect()
                     val (c2, s2) = p.connect()
-                    s1.core.testInjectFailure = IllegalStateException("boom")
-                    val st = c1.openBidi()
-                    st.output.writeFully(byteArrayOf(1), 0, 1)
-                    runCatching { st.output.flush() } // the datagram that makes the server fail connection 1; may already see the reset
+                    val st = c1.openBidi() // before the arming, as in the test above
+                    armServerFailure(s1)
+                    // the datagram that makes the server fail connection 1; the write or the flush may already see the reset
+                    runCatching {
+                        st.output.writeFully(byteArrayOf(1), 0, 1)
+                        st.output.flush()
+                    }.exceptionOrNull()?.let {
+                        assertIs<QuicException.ConnectionLost.StatelessReset>(c1.closed.await(), "write or flush failed with $it")
+                    }
                     assertIs<QuicException.ConnectionLost.StatelessReset>(c1.closed.await())
                     // the write side reports the reset itself or a ClosedWriteChannelException caused (possibly through a copy) by it
                     val e =
@@ -336,6 +409,35 @@ class QuicApiTest {
                         }
                     val chain = generateSequence(e) { it.cause }.toList()
                     assertTrue(chain.any { it is QuicException.ConnectionLost.StatelessReset }, "$chain")
+                    assertFalse(c2.closed.isCompleted)
+                    assertFalse(s2.closed.isCompleted)
+                    c2.close()
+                }
+            }
+        }
+
+    /**
+     * The interleaving the two tests above avoid by opening their stream first, forced: with the failure armed, a client
+     * packet that is not ours to wait for (here a PING; on a slow runner the late ACK of the server's post-handshake flight)
+     * fails the server's connection 1, the next one draws a Stateless Reset (RFC 9000 section 10.3), and a stream asked for
+     * after it gets the connection's reason (QuicConnection.openBidi).
+     */
+    @Test fun openAfterTheServerForgotTheConnectionThrowsTheReset() =
+        runBlocking {
+            ApiPair.open().use { p ->
+                withTimeout(20.seconds) {
+                    val (c1, s1) = p.connect()
+                    val (c2, s2) = p.connect()
+                    armServerFailure(s1)
+                    c1.ping() // false when the late ACK already drew the reset
+                    assertIs<QuicException.ConnectionLost.Internal>(s1.closed.await())
+                    c1.ping()
+                    val r = c1.closed.await()
+                    assertIs<QuicException.ConnectionLost.StatelessReset>(r)
+                    for (e in listOf(assertFailsWith<QuicException.ConnectionLost> { c1.openBidi() }, assertFailsWith { c1.openUni() })) {
+                        assertIs<QuicException.ConnectionLost.StatelessReset>(e)
+                        assertEquals(r.message, e.message)
+                    }
                     assertFalse(c2.closed.isCompleted)
                     assertFalse(s2.closed.isCompleted)
                     c2.close()

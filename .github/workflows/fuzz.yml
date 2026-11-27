@@ -59,6 +59,10 @@ defaults:
   run:
     shell: bash
 
+env:
+  # the mirror kill switch the setup action reads (CONTRIBUTING.md, "Dependency verification")
+  KSL_CENTRAL_MIRROR: ${{ vars.KSL_CENTRAL_MIRROR }}
+
 jobs:
   prepare:
     runs-on: ubuntu-24.04
@@ -173,6 +177,7 @@ jobs:
       - name: 'fuzz: clang with libFuzzer (ksl harness)'
         if: startsWith(matrix.target, 'ksl.')
         run: |
+          { grep -lrs packages.microsoft.com /etc/apt/sources.list.d || true; } | xargs -r sudo rm -f   # not needed; a broken Microsoft source fails apt-get update
           sudo apt-get update -q
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends clang libclang-rt-18-dev
           clang --version | head -1

@@ -13,6 +13,7 @@ import io.kuicksilver.quic.DatagramSendResult
 import io.kuicksilver.quic.DatagramUnsupportedReason
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.core.MIN_WINDOW_DATAGRAM
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.quic.runtime.ConnectionRuntime
 import kotlinx.coroutines.CoroutineStart
@@ -52,22 +53,63 @@ class DatagramApiTest {
 
     private fun key(d: Datagram): Int = d.data[0].toInt() and 0xff
 
-    /** Cuts the server's address and fills the client's congestion window with stream data, so datagrams queue up instead of leaving at once; [ApiPair.net].uncut(...) reconnects. */
+    /**
+     * Holds the server's address and fills the client's congestion window with stream data, so datagrams queue up instead of
+     * leaving at once; [reopen] lets everything through. Held, not cut: the window does not stay shut for certain, and a
+     * datagram that leaves meanwhile waits on the path instead of vanishing (RFC 9221 section 5.2: a lost DATAGRAM is never
+     * resent), so a test counts its queue, not the network. A PTO probe leaves beyond the window (RFC 9002 section 6.2.4),
+     * and an ACK the server sent before the hold, read by the client only later, opens it: on a cut path the datagrams that
+     * then left were gone (linux-x64 CI, sendDatagramUnderRejectSuspendsUntilSpace). Those late ACKs come every time here:
+     * the client's address is held too, from before the server acknowledges the stream's first packets (an ACK at least
+     * every second ack-eliciting packet, RFC 9000 section 13.2.2) until [reopen] or [ApiPair.net].release(...).
+     */
     private suspend fun congest(
         p: ApiPair,
         c: QuicConnection,
     ): io.kuicksilver.quic.QuicStream {
-        p.net.cut(p.server.localAddress)
+        p.net.hold(p.clientIo.localAddress)
         val st = c.openBidi()
         val blob = ByteArray(300_000)
-        st.output.writeFully(blob, 0, blob.size)
+        st.output.writeFully(blob, 0, 6000)
         st.output.flush()
-        while (c.stats.bytesInFlight <
-            c.stats.cwnd
-        ) {
+        p.net.awaitHeld(p.clientIo.localAddress, 2)
+        p.net.hold(p.server.localAddress)
+        st.output.writeFully(blob, 6000, blob.size - 6000)
+        st.output.flush()
+        // full as the core counts it: less room than MIN_WINDOW_DATAGRAM left (not bytes_in_flight >= cwnd, which a window
+        // left with 974 bytes reached only at the next PTO, 16 s away in negative_datagramQueueCap)
+        while (c.stats.let { it.cwnd - it.bytesInFlight } >= MIN_WINDOW_DATAGRAM) {
             delay(5)
         }
         return st
+    }
+
+    /**
+     * [c]'s stats once [cond] holds of them, judged on its loop after each of its flushes (the tick a Reject sender waits on,
+     * [ConnectionRuntime.newTicker]): every datagram the loop delivers to the connection is followed by one, no sleep.
+     */
+    private suspend fun awaitStats(
+        c: ConnectionRuntime,
+        cond: (io.kuicksilver.quic.ConnectionStats) -> Boolean,
+    ): io.kuicksilver.quic.ConnectionStats =
+        withContext(c.loopDispatcherForTest) {
+            val ticker = c.newTicker()
+            try {
+                var st = c.stats
+                while (!cond(st)) {
+                    ticker.receive()
+                    st = c.stats
+                }
+                st
+            } finally {
+                c.removeTicker(ticker)
+            }
+        }
+
+    /** Ends [congest]: the server's late ACKs reach the client first (the window opens; what leaves waits in the hold), then the server gets everything held. */
+    private fun reopen(p: ApiPair) {
+        p.net.release(p.clientIo.localAddress)
+        p.net.release(p.server.localAddress)
     }
 
     @Test fun echoDatagrams() =
@@ -144,7 +186,7 @@ class DatagramApiTest {
                     repeat(1000) {
                         assertEquals(DatagramSendResult.Sent, c.trySendDatagram(payload(it, 1000), DatagramPolicy.DropOldest))
                     } // DropOldest never refuses (the queue itself stays at 32: DatagramSendQueueTest)
-                    p.net.uncut(p.server.localAddress)
+                    reopen(p)
                     // receive side: 1000 datagrams nobody collects → the newest 128 survive in the core's queue
                     repeat(1000) { s.sendDatagram(ByteArray(4) { b -> (it shr (8 * b)).toByte() }, DatagramPolicy.Reject) }
                     // settled: the server sent and saw acknowledged all 1000 (so the client received them) and the client evicted 872
@@ -209,7 +251,7 @@ class DatagramApiTest {
                     assertEquals(DatagramSendResult.Sent, c.trySendDatagram(byteArrayOf(1, 1), DatagramPolicy.LatestWins("A")))
                     assertEquals(DatagramSendResult.Sent, c.trySendDatagram(byteArrayOf(2, 1), DatagramPolicy.LatestWins("B")))
                     assertEquals(DatagramSendResult.Sent, c.trySendDatagram(byteArrayOf(1, 2), DatagramPolicy.LatestWins("A")))
-                    p.net.uncut(p.server.localAddress)
+                    reopen(p)
                     val got = ArrayList<List<Byte>>()
                     withTimeoutOrNull(5.seconds) {
                         s.datagrams
@@ -416,16 +458,21 @@ class DatagramApiTest {
             }
         }
 
+    /**
+     * Reject never drops a datagram of its own: a sender over the 32-datagram queue waits for room, and all 33 arrive. Room comes
+     * as a queued datagram leaves: in a PTO probe, which may leave before the server's late ACKs ([congest]) and beyond the window
+     * (RFC 9002 section 6.2.4; run 45958310638, JDK 25 Linux, the 33rd got in on a probe 30-330 ms after it began to wait), or on
+     * the window those ACKs open. What left waits in the server's hold either way; on a cut path it was lost and the server waited
+     * for 33 forever.
+     */
     @Test fun sendDatagramUnderRejectSuspendsUntilSpace() =
         runBlocking {
             ApiPair.open().use { p ->
                 withTimeout(20.seconds) {
                     val (c, s) = p.connect()
                     congest(p, c)
-                    // The 32 and the 33rd go from the connection's loop thread, so the loop sends nothing in between: with
-                    // the server cut, a PTO probe still leaves (RFC 9002 section 6.2.4, beyond the congestion window) and
-                    // takes queued datagrams along, which a slow scheduler let happen before the 33rd on mingwX64 CI.
-                    // UNDISPATCHED runs the 33rd up to its first suspension here, on the loop thread.
+                    // The 32 and the 33rd go from the connection's loop thread, so the loop sends nothing in between and the
+                    // 33rd finds the queue full. UNDISPATCHED runs the 33rd up to its first suspension here, on the loop thread.
                     val scope = this
                     val blocked =
                         withContext((c as ConnectionRuntime).loopDispatcherForTest) {
@@ -438,15 +485,28 @@ class DatagramApiTest {
                             assertFalse(thirtyThird.isCompleted, "the 33rd waits for room")
                             thirtyThird
                         }
-                    p.net.uncut(p.server.localAddress)
+                    // the window and the packet count as the loop sees them; nothing reaches the client before the release, so
+                    // neither moves meanwhile (a PTO probe adds to the bytes in flight, never to the window)
+                    val before = withContext(c.loopDispatcherForTest) { c.stats }
+                    // the server's ACKs reach the client while the server's address is still held: the window opens, datagrams
+                    // leave (into the hold) and the 33rd gets in, unless a PTO probe already took one out of the queue
+                    val late = p.net.release(p.clientIo.localAddress)
+                    assertTrue(late >= 2, "the server's ACKs were held: $late")
                     assertTrue(blocked.await(), "room came as datagrams left")
-                    assertEquals(
-                        33,
-                        s.datagrams
-                            .take(33)
-                            .toList()
-                            .size,
+                    // the late ACKs did come, before the server's release: they acknowledged the stream's first packets while the
+                    // window was full (cwnd-limited, section 7.8) and nothing was lost (no recovery period, section 7.3.2), so slow
+                    // start grows the window by what they acknowledged (RFC 9002 section 7.3.1). Judged once the client processed
+                    // all [late] of them: a packet is counted after its frames ran, on the loop, and the 33rd may have got in on a
+                    // probe before the first of them
+                    val after = awaitStats(c) { it.packetsReceived >= before.packetsReceived + late }
+                    assertEquals(before.lostPackets, after.lostPackets, "nothing was lost: no recovery period")
+                    assertTrue(
+                        after.cwnd > before.cwnd,
+                        "the late ACKs grew the window: ${after.cwnd} after ${before.cwnd} ($late held, ${after.ptoCount} PTOs)",
                     )
+                    p.net.release(p.server.localAddress)
+                    val got = s.datagrams.take(33).toList()
+                    assertEquals((0 until 33).toSet(), got.map { key(it) }.toSet(), "every datagram, the 33rd included")
                     c.close()
                     s.close()
                 }

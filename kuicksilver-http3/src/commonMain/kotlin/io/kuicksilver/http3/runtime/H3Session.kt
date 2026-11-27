@@ -376,7 +376,7 @@ internal class H3Session(
     internal var criticalReadsHookForTest: (suspend (Int) -> Unit)? = null
 
     /** Where an [openCriticalStreams] attempt is ([criticalAttemptHookForTest]). */
-    internal enum class AttemptStep { Started, Opened, ControlWritten }
+    internal enum class AttemptStep { Started, Opened, ControlWritten, Done }
 
     internal val controlLock = Mutex()
     internal val encoderLock = Mutex()
@@ -384,7 +384,7 @@ internal class H3Session(
     val qpack =
         QpackRuntime(
             settings,
-            { b -> writeCritical(encoderLock, { it.encoder }, b) },
+            { b -> writeCritical(encoderLock, { it.encoder }, b, mustArrive = true) },
             { b -> queueDecoderBytes(b) },
             qlog,
             // no encoder stream yet: no credit known, so no insert
@@ -584,7 +584,7 @@ internal class H3Session(
         // RFC 9114 section 10.5 (Rapid Reset, CVE-2023-44487): a request stream keeps its MAX_STREAMS credit until the
         // application is done with the request, not only until the client reset it; before the first stream is taken
         if (isServer) quic.holdPeerStreamCredit()
-        scope.launch { acceptLoop() }
+        acceptLoopJob = scope.launch { acceptLoop() }
         datagrams.start()
         if (isServer) return
         try {
@@ -751,6 +751,10 @@ internal class H3Session(
         }
     }
 
+    /** The coroutine of [acceptLoop] once the session started (a test checks that it ends with the connection). */
+    @kotlin.concurrent.Volatile
+    internal var acceptLoopJob: kotlinx.coroutines.Job? = null
+
     /** What [acceptNext] took; acceptLoop's coroutine only. */
     private var nextAccepted: QuicStream? = null
 
@@ -777,6 +781,7 @@ internal class H3Session(
                     return
                 }
             // nothing of the server is read before a rejected 0-RTT is noted: QPACK must have forgotten the early streams first
+            if (!awaitZeroRttAnswer()) return
             noteRejectedZeroRttHere()
             // the peer's streams are read to their end even when the connection is lost (drains)
             if (st.id and 2L != 0L) {

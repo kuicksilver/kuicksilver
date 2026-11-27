@@ -422,19 +422,19 @@ internal class KuicksilverEngine(
                             }
                         }
                         step { altSvcUpdate {} } // a snapshot no request took (an expiry dropped on lookup)
-                        step { h1.closeAll() }
                         step { migrationJob.cancel() } // the migrators end before their connections
+                        // at the same time (the waits do not add up): what the HTTP/3 connections sent last (a failed call's
+                        // reset) reaches the server before their close, within 1 s; a failure of that wait is its own (the
+                        // endpoints below close whatever happened)
+                        val h1Closed =
+                            coroutineScope {
+                                launch { runCatching { h3.closeOrderly() } }
+                                async { runCatching { h1.closeAll() } }.await()
+                            }
+                        step { h1Closed.getOrThrow() }
                         step { h3.closeAndJoin() }
                         step { h3.closeSessions() }
                         step { selector.close() }
-                    }
-                    failure?.let { f ->
-                        runCatching {
-                            if (events.logger.isEnabled(LogLevel.Warn)) {
-                                events.logger.log(LogLevel.Warn, "the engine's cleanup after close() failed; its other steps ran", f)
-                            }
-                        }
-                        throw f
                     }
                 }
             }
@@ -447,8 +447,14 @@ internal class KuicksilverEngine(
     @kotlin.concurrent.Volatile
     private var closed = false
 
+    /** The WebSocket sessions not ended yet: [close] ends their waits for the server at once (WebSocketLifetime.hurry). */
+    internal val webSockets = WebSocketSessions()
+
     override fun close() {
         closed = true
+        // a session waiting for the server's Close or its close of the transport would hold the cleanup for up to its close
+        // waits: they end now, the session's own Close and its clean end of the transport still go out (RFC 6455 5.5.1)
+        webSockets.hurryAll()
         h3.refuseWebTransport() // at once, so a WebTransport call after close() fails instead of binding an endpoint
         reaper.cancel()
         cancelLostSetups()
@@ -479,7 +485,7 @@ internal class KuicksilverEngine(
         }
         // a WebSocket session may outlive its call while it writes its own Close: it holds this call in flight until it
         // ended (WebSocketLifetime), so the cleanup after close() waits for it too
-        data.attributes.put(WebSocketCallTrackKey, WebSocketCallTrack(inFlight, events))
+        data.attributes.put(WebSocketCallTrackKey, WebSocketCallTrack(inFlight, events, webSockets))
         events.emit("callStart") { callStart(data) }
         // a new one per call, also when the request's attributes came with one (a redirect or a retry copies them): the
         // pools count their retries in it, and the response hands it out

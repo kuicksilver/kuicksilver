@@ -30,6 +30,15 @@ inputs:
   pin:
     description: the OpenSSL pin profile the cache key hashes (gradle/openssl-next.toml for the openssl-next job)
     default: gradle/openssl.toml
+  gradle-deps:
+    description: >-
+      restore: before the first Gradle run, restore build.yml's gradle-deps entry (the dependency cache that job resolved)
+      and hand it to Gradle as its read-only dependency cache (GRADLE_RO_DEP_CACHE); none (default): no such entry
+    default: none
+outputs:
+  gradle-deps-key:
+    description: the key of the gradle-deps entry for this commit's dependencies (build.yml's gradle-deps job saves under it)
+    value: ${{ steps.gradle-deps-key.outputs.key }}
 runs:
   using: composite
   steps:
@@ -40,6 +49,29 @@ runs:
       run: |
         # a misspelt value would otherwise fall through to the default and write a Gradle user home entry
         case "$MODE" in default|read-only|disabled) ;; *) echo "::error::gradle-cache '$MODE' is not one of default, read-only, disabled (.github/actions/setup/action.yml)"; exit 1 ;; esac
+    - name: gradle-deps input
+      shell: bash
+      env:
+        MODE: ${{ inputs.gradle-deps }}
+      run: |
+        case "$MODE" in none|restore) ;; *) echo "::error::gradle-deps '$MODE' is not one of none, restore (.github/actions/setup/action.yml)"; exit 1 ;; esac
+    - name: gradle-deps key
+      id: gradle-deps-key
+      shell: bash
+      env:
+        # what decides the dependency set and the cache layout: every dependency is in the verification metadata, the
+        # repositories in the settings and whether the mirror of Central is one of them (Gradle keeps cached metadata per
+        # repository), the layout follows the Gradle version
+        HASH: ${{ hashFiles('gradle/verification-metadata.xml', 'gradle/libs.versions.toml', 'gradle/wrapper/gradle-wrapper.properties', 'settings.gradle.kts', 'build-logic/settings.gradle.kts', 'build-logic/build.gradle.kts') }}
+        # the kill switch: the repository variable KSL_CENTRAL_MIRROR=off leaves Google's mirror of Central out of every
+        # job (CONTRIBUTING.md, "Dependency verification"); unset or any other value keeps it. Each workflow passes the
+        # variable in through its top-level env (the vars context is not promised inside a composite action)
+        KSL_CENTRAL_MIRROR: ${{ env.KSL_CENTRAL_MIRROR }}
+      run: |
+        if [ "${KSL_CENTRAL_MIRROR:-}" = off ]; then MIRROR=false; else MIRROR=true; fi
+        case "$MIRROR" in true) mode=mirror ;; false) mode=central ;; *) echo "::error::mirror switch '$MIRROR' is neither true nor false"; exit 1 ;; esac
+        echo "gradle-deps: Maven Central $([ "$mode" = mirror ] && echo "behind Google's mirror" || echo "alone (KSL_CENTRAL_MIRROR=off)")"
+        { echo "mirror=$MIRROR"; echo "prefix=gradle-deps-v1-$mode-"; echo "key=gradle-deps-v1-$mode-$HASH"; } >> "$GITHUB_OUTPUT"
     - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
       with:
         distribution: temurin
@@ -49,27 +81,63 @@ runs:
         # main writes the cache every branch reads; a manual run of a branch also writes its own (scoped to that branch)
         cache-read-only: ${{ inputs.gradle-cache == 'read-only' || (github.ref != 'refs/heads/main' && github.event_name != 'workflow_dispatch') }}
         cache-disabled: ${{ inputs.gradle-cache == 'disabled' }}
+    # build.yml's gradle-deps job resolved every configuration once and saved its dependency cache (modules-2, without lock
+    # files) under one key per dependency set, for every job of the run: restored here as Gradle's read-only dependency
+    # cache, so the matrix does not ask Maven Central for the same files at once (run 45958310638: android (35) refused with
+    # 429 on all three retries; run 45987232788 too). Gradle takes what it finds there and downloads the rest into this
+    # job's own user home, which setup-gradle restores and saves as before (the build cache and transforms are that home's).
+    # The path is one string for every runner OS (the cache version hashes it), at the same depth below the workspace on
+    # Linux and macOS; Windows (another drive) does not take part. An older entry (another dependency set, never the other
+    # mirror mode) is still worth restoring; no entry, or a cache service that fails, leaves the job resolving on its own.
+    # Every file still passes gradle/verification-metadata.xml when it is used.
+    - name: Gradle dependencies of the gradle-deps job (read-only)
+      id: gradle-deps
+      if: inputs.gradle-deps == 'restore' && runner.os != 'Windows'
+      continue-on-error: true
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/gradle-deps-ro
+        key: ${{ steps.gradle-deps-key.outputs.key }}
+        restore-keys: ${{ steps.gradle-deps-key.outputs.prefix }}
+    - name: Gradle read-only dependency cache
+      if: steps.gradle-deps.outputs.cache-matched-key != ''
+      shell: bash
+      env:
+        MATCHED: ${{ steps.gradle-deps.outputs.cache-matched-key }}
+        WANTED: ${{ steps.gradle-deps-key.outputs.key }}
+      run: |
+        if [ -d "$HOME/gradle-deps-ro/modules-2" ]; then
+          echo "GRADLE_RO_DEP_CACHE=$HOME/gradle-deps-ro" >> "$GITHUB_ENV"
+          [ "$MATCHED" = "$WANTED" ] && how="this commit's dependency set" || how="an older dependency set; the difference is downloaded"
+          echo "gradle-deps: read-only dependency cache $MATCHED ($how), $(du -sh "$HOME/gradle-deps-ro/modules-2" | cut -f1)"
+        else
+          echo "::warning::gradle-deps entry $MATCHED restored without modules-2: not used"
+        fi
     - name: Gradle properties for CI
       shell: bash
+      env:
+        MIRROR: ${{ steps.gradle-deps-key.outputs.mirror }}   # KSL_CENTRAL_MIRROR != off (the workflow's env)
       run: |
         # OpenSSL builds downloaded from another job (or restored from the cache) are reused, never rebuilt (kuicksilver-native/openssl.gradle.kts)
         mkdir -p "${GRADLE_USER_HOME:-$HOME/.gradle}"
-        # and the mirror of Maven Central as the last repository (settings.gradle.kts); a dependency verification failure
+        # and Google's mirror of Maven Central before Central (settings.gradle.kts) unless the repository variable
+        # KSL_CENTRAL_MIRROR is off (the "gradle-deps key" step); a dependency verification failure
         # names its reason for every artifact (a missing checksum, an untrusted key, a mismatch), so it can be told apart
         # in the log (gradlew-retry.sh never retries one)
-        printf 'kuicksilver.openssl.prebuilt=true\norg.gradle.java.installations.auto-download=false\nkuicksilver.centralMirror=true\norg.gradle.dependency.verification.console=verbose\n' >> "${GRADLE_USER_HOME:-$HOME/.gradle}/gradle.properties"
+        printf 'kuicksilver.openssl.prebuilt=true\norg.gradle.java.installations.auto-download=false\nkuicksilver.centralMirror=%s\norg.gradle.dependency.verification.console=verbose\n' "$MIRROR" >> "${GRADLE_USER_HOME:-$HOME/.gradle}/gradle.properties"
     - name: Gradle plugin class path (a dependency not found is asked for once more, a refused one after a pause)
       shell: bash
       run: |
         # Maven Central answers 404 for files it has now and then, also behind the Gradle Plugin Portal's redirect (runs
-        # 44630132347, 44657561143, 44674970605: four jobs). A module missing from every repository falls
-        # back to the mirror of Central (settings.gradle.kts); a missing file of a found module (jose4j-0.9.6.jar) is
+        # 44630132347, 44657561143, 44674970605: four jobs). A module the mirror of Central does not have falls back to
+        # Central itself (settings.gradle.kts); a missing file of a found module (jose4j-0.9.6.jar) is
         # recorded in the Gradle user home for 24 hours (DefaultCachePolicy), and setup-gradle saves that home after a
         # failed build too. `help` in the root build resolves what every Gradle step needs first: build-logic as the
         # included plugin build (its compile and runtime class paths, with the plugins' own dependencies) under the root's
         # gradle/verification-metadata.xml, in the daemon the later steps reuse. gradlew-retry.sh runs it once more with
-        # --refresh-dependencies after a dependency was not found, and up to three more times after doubling pauses when a
-        # repository answered 429 or 5xx (run 44892895905: four fuzz jobs refused here, also on the one retry it had then),
+        # --refresh-dependencies after a dependency was not found, and up to four more times after growing, randomly spread
+        # pauses when a repository answered 429 or 5xx (runs 44892895905: four fuzz jobs refused here, also on the one retry
+        # it had then; 45958310638: android (35), on all three; 45987232788),
         # never after a dependency verification failure, as $G does for every later Gradle step. Every job that uses this
         # action runs Gradle.
         KSL_GRADLE_RETRY_QUIET=1 bash tools/ci/gradlew-retry.sh --max-workers=2 -q help
