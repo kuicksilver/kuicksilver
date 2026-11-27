@@ -6,6 +6,8 @@ plugins {
     id("kuicksilver.publish")
 }
 kotlin {
+    // AsyncQlogSink's helpers stay functions of their own in an app's R8 build (proguard.txt in the AAR; ART 7.x)
+    android { optimization { consumerKeepRules.publish = true; consumerKeepRules.file("consumer-rules.pro") } }
     sourceSets {
         commonMain.dependencies {
             api(project(":kuicksilver-tls"))

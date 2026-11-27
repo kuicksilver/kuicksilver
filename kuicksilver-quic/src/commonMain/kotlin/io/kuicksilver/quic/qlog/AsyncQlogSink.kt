@@ -86,39 +86,56 @@ public class AsyncQlogSink(
     init {
         scope.launch {
             val live = HashSet<Trace>() // the writer's own: traces still open in the delegate
-            for (op in ops) {
-                when (op) {
-                    is Open -> {
-                        op.trace.target = guard { delegate.open(op.odcidHex, op.role) }
-                        if (op.trace.target != null) live += op.trace
-                    }
+            for (op in ops) perform(op, live)
+            for (t in live) closeLive(t) // close(): what live connections traced so far is kept
+        }
+    }
 
-                    is Write -> {
-                        queued.decrementAndFetch()
-                        op.trace.target?.let { t ->
-                            if (guard { t.write(op.record) } == null) {
-                                op.trace.target = null
-                                live -= op.trace
-                                guard { t.close() }
-                            }
-                        }
-                    }
+    /**
+     * Applies [op] to `delegate` on the writer. A function of its own, as [closeLive]: `delegate` and its traces are the
+     * application's classes, and ART 7.x (API 24/25) compiles a call on them in the writer's loop for the classes it saw
+     * and deoptimizes the loop when another comes, which a debug build's dex turns into a GC abort on 0xEBADDE09
+     * (KuicksilverEngine.learnAltSvcFrames says how). Its try block ([guard]) keeps ART 7's inliner out, and the module's
+     * consumer rules keep an app's R8 from inlining it back.
+     */
+    private fun perform(
+        op: Op,
+        live: HashSet<Trace>,
+    ) {
+        when (op) {
+            is Open -> {
+                op.trace.target = guard { delegate.open(op.odcidHex, op.role) }
+                if (op.trace.target != null) live += op.trace
+            }
 
-                    is Close -> {
-                        op.trace.target?.let { t ->
-                            op.trace.target = null
-                            live -= op.trace
-                            guard { t.close() }
-                        }
-                    }
-
-                    is Barrier -> {
-                        op.done.complete(Unit)
+            is Write -> {
+                queued.decrementAndFetch()
+                op.trace.target?.let { t ->
+                    if (guard { t.write(op.record) } == null) {
+                        op.trace.target = null
+                        live -= op.trace
+                        guard { t.close() }
                     }
                 }
             }
-            for (t in live) t.target?.let { guard { it.close() } } // close(): what live connections traced so far is kept
+
+            is Close -> {
+                op.trace.target?.let { t ->
+                    op.trace.target = null
+                    live -= op.trace
+                    guard { t.close() }
+                }
+            }
+
+            is Barrier -> {
+                op.done.complete(Unit)
+            }
         }
+    }
+
+    /** Closes the delegate's trace of [t] when the writer ends (see [perform] for why a function of its own). */
+    private fun closeLive(t: Trace) {
+        t.target?.let { guard { it.close() } }
     }
 
     /** Runs [block] on the writer; an exception closes nothing here, it is counted and answered with null. */

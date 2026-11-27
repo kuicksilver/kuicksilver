@@ -2111,6 +2111,23 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Android 7.0/7.1 (API 24/25): fewer loops that ART 7's JIT can deoptimize into a GC abort ("Tried to mark
+  0xebadde09", the crash class of the ALTSVC frame learner). The engine's event listener and logger, which differ from
+  engine to engine, are called in `EngineEvents.deliver` instead of in the H1 and H3 pools' retry loops (with a
+  listener, each event now allocates the small object that carries the call); `H3Pool.execute`'s retry loop reads a
+  failure's causes (ECH rejection, server SCID change, a named stall, a peer's shutdown) from one call of
+  `h3FailureFacts` instead of walking them itself, and reads the request's attributes before the loop or through
+  `h3RequestMark`; `AsyncQlogSink`'s writer calls the application's sink in a function of its own, not in its loop;
+  the HTTP/3 body pump reads the tunnel state as a field instead of through the client's and the server's lambdas; an
+  HTTP/3 pool entry tells its pool of a release directly instead of through a lambda; the set of connections that
+  offered the ECH retry configurations is a `LinkedHashSet` from the start. The consumer rules of
+  `kuicksilver-ktor-client` and (new) `kuicksilver-quic` keep an app's R8 from inlining those helpers back. Behaviour
+  is otherwise unchanged. `tools/check/art7-loops.sh` finds every such loop in the dex an app gets (R8 and D8, release
+  and debug, built with an app that installs a listener, a logger and a qlog sink) and fails on one that is not judged
+  (`tools/check/art7-loops.allow`: no release site is left open) or, for the debug dex, not listed
+  (`tools/check/art7-loops.debug.lock`); `docs/spec/art7-deopt-loops.md`. The local gate has one more step (83 by
+  default, 88 for a release).
+
 - WebSocket (both Ktor engines): the engine answers a Ping itself, as soon as it reads it, with a Pong carrying the
   Ping's data (RFC 6455 sections 5.5.2 and 5.5.3). The Pong goes out at once when nothing else is being sent,
   otherwise right after the frame on the wire, so also between the fragments of a message. Ktor's session's own Pong

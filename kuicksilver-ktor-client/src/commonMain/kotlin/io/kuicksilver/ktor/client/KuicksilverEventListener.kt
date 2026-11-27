@@ -277,11 +277,35 @@ internal class EngineEvents(
     /** The DNS events of [request]'s lookups ([DnsObserver]); null without a listener. */
     fun dnsObserver(request: io.ktor.client.request.HttpRequestData): DnsObserver? = if (enabled) DnsObserver(this, request) else null
 
+    /**
+     * Calls [call] on the listener, if there is one: nothing is allocated or called without one; with one, each event
+     * allocates the small object that carries [call] to [deliver].
+     *
+     * The listener's and the logger's methods are called in [deliver], never in the caller's frame. Callers emit from
+     * coroutine loops (the H1 and H3 pools' retry loops), and the listener (an application's subclass) and the logger (an
+     * application's implementation) differ between engines: ART 7.x (API 24/25) compiled such a call in a loop for the one
+     * class it had seen and deoptimized the loop when another came, and the GC then aborted on the 0xEBADDE09 the
+     * deoptimization left in the frame (KuicksilverEngine.learnAltSvcFrames says how).
+     */
     inline fun emit(
         what: String,
-        call: KuicksilverEventListener.() -> Unit,
+        crossinline call: KuicksilverEventListener.() -> Unit,
     ) {
         val l = listener ?: return
+        deliver(what, l) { call() }
+    }
+
+    /**
+     * Calls [call] on [l], logging what it throws. A function of its own (its try block keeps ART 7's inliner out, and
+     * consumer-rules.pro keeps an app's R8 from inlining it): the listener's and the logger's classes change from engine to
+     * engine, so their calls must not be made in a caller's coroutine loop ([emit]). Internal for [emit] only.
+     */
+    @PublishedApi
+    internal fun deliver(
+        what: String,
+        l: KuicksilverEventListener,
+        call: KuicksilverEventListener.() -> Unit,
+    ) {
         try {
             l.call()
         } catch (e: Throwable) {

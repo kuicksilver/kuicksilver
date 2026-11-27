@@ -376,7 +376,6 @@ private suspend fun H3Session.handleArmedRequestStream(
             req.bodyChannel,
             req.trailersDeferred,
             bodyLimit,
-            tunnel = { req.tunnel },
             responseComplete = { req.respondedInFull },
             abandoned = req,
         ) { f ->

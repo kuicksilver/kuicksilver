@@ -8,6 +8,7 @@ import java.util.concurrent.TimeUnit
 plugins {
     id("kuicksilver.kmp")
     id("kuicksilver.publish")
+    id("kuicksilver.android-runtime-jars")
 }
 kotlin {
     // the device tests' network security config (src/androidDeviceTest/res/xml) needs Android resources; the library has none
@@ -68,20 +69,6 @@ kotlin { jvm { val main = compilations.getByName("main"); compilations.create("f
 tasks.named("jvmTest") { dependsOn("compileFirstScreenTestKotlinJvm") }
 // the same rule for a JVM application that shrinks: R8 reads META-INF/proguard/ of a jar on its own, ProGuard users add the file
 tasks.named<ProcessResources>("jvmProcessResources") { from("consumer-rules.pro") { into("META-INF/proguard"); rename { "kuicksilver-ktor-client.pro" } } }
-// the class jars an Android app links with this library, one path per line: tools/check/r8-inlining.sh shrinks them with the
-// AAR as an app's R8 would (`./gradlew -q :kuicksilver-ktor-client:ksAndroidRuntimeJars`)
-val androidRuntimeJars: FileCollection =
-    files(
-        provider {
-            configurations.getByName("androidRuntimeClasspath").incoming.artifactView {
-                attributes { attribute(Attribute.of("artifactType", String::class.java), "android-classes-jar") }
-            }.files
-        },
-    )
-tasks.register("ksAndroidRuntimeJars") {
-    inputs.files(androidRuntimeJars)
-    doLast { androidRuntimeJars.forEach { println(it.absolutePath) } }
-}
 
 // ---- Simulator host-interop harness (docs/guide/ios.md): `iosHostInteropTest` starts a host peer (HostPeerMain, jvmTest)
 // before the simulator tests and stops it after; its control port reaches the simulator process as KSL_PEER_PORT, since simctl
