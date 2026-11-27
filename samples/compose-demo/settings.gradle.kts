@@ -12,7 +12,20 @@ pluginManagement {
         if (providers.gradleProperty("kuicksilver.centralMirror").orNull == "true") {
             maven("https://maven-central.storage-download.googleapis.com/maven2/") {
                 name = "MavenCentralMirror"
-                mavenContent { releasesOnly() }
+                // never a plugin marker (Central has some, the Plugin Portal all), the Plugin Portal's own
+                // plugins or Google's own groups: Gradle asks the next repository only after a 404, so a 403,
+                // 429 or 5xx the mirror answered for a module it does not have would fail the resolution
+                mavenContent {
+                    releasesOnly()
+                    excludeModuleByRegex(".*", ".*\\.gradle\\.plugin")
+                    excludeModule("org.jmailen.gradle", "kotlinter-gradle")
+                    excludeModule("org.jetbrains.kotlinx", "kotlinx-benchmark-plugin")
+                    excludeGroupByRegex("org\\.gradle\\.kotlin(\\..*)?")
+                    excludeGroupByRegex("androidx\\..*")
+                    excludeGroupByRegex("com\\.android(\\..*)?")
+                    excludeGroupByRegex("com\\.google\\.android(\\..*)?")
+                    excludeGroupByRegex("com\\.google\\.testing\\.platform(\\..*)?")
+                }
             }
         }
         gradlePluginPortal()
@@ -27,7 +40,20 @@ dependencyResolutionManagement {
         if (providers.gradleProperty("kuicksilver.centralMirror").orNull == "true") {
             maven("https://maven-central.storage-download.googleapis.com/maven2/") {
                 name = "MavenCentralMirror"
-                mavenContent { releasesOnly() }
+                // never a plugin marker (Central has some, the Plugin Portal all), the Plugin Portal's own
+                // plugins or Google's own groups: Gradle asks the next repository only after a 404, so a 403,
+                // 429 or 5xx the mirror answered for a module it does not have would fail the resolution
+                mavenContent {
+                    releasesOnly()
+                    excludeModuleByRegex(".*", ".*\\.gradle\\.plugin")
+                    excludeModule("org.jmailen.gradle", "kotlinter-gradle")
+                    excludeModule("org.jetbrains.kotlinx", "kotlinx-benchmark-plugin")
+                    excludeGroupByRegex("org\\.gradle\\.kotlin(\\..*)?")
+                    excludeGroupByRegex("androidx\\..*")
+                    excludeGroupByRegex("com\\.android(\\..*)?")
+                    excludeGroupByRegex("com\\.google\\.android(\\..*)?")
+                    excludeGroupByRegex("com\\.google\\.testing\\.platform(\\..*)?")
+                }
             }
         }
         mavenCentral()
