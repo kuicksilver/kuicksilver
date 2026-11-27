@@ -942,8 +942,9 @@ jobs:
           # the action hides the emulator's own exit message; free space before the AVD is created is the first suspect
           pre-emulator-launch-script: df -h / | tail -1
           # a test APK whose install stalls (ddmlib "Failed to install-write all apks" with ShellCommandUnresponsiveException,
-          # four runs on API 24) gets one more run, logged, when no test case failed (Gradle calls the stall "There were
-          # failing tests" too, run 46008475587); any other failure fails at once (android-connected-check.sh).
+          # four runs on API 24) gets one more run, logged, when every failed task is the connected test task of a module
+          # whose install stalled (Gradle calls the stall "There were failing tests" too, run 46008475587) and no test case
+          # failed; any other failure fails at once (android-connected-check.sh).
           # the device's /data before the tests and, on failure, again with the logs: PackageManager's refusals are in the
           # system buffer, an instrumentation "Process crashed" in crash and main. Runs 2 of main c1cac36ca and b3e621916
           # (API 24, ServerH2FloodTest): ART's abort dump for "Tried to mark 0xebadde09" was cut by logd's pruning of the
