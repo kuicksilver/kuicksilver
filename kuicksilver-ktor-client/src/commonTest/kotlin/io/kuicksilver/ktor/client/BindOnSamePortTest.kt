@@ -131,9 +131,9 @@ class BindOnSamePortTest {
 
     /**
      * Real sockets: the UDP-first attempt finds its TCP twin taken (by a listener of ours) and the second attempt binds TCP
-     * on a free port and UDP on that number ([udpOn] honours the port it is given). That UDP twin may be taken too (by
-     * another socket of this run: Windows hands out the free ports of both kinds one after the other, as on the Windows CI
-     * of 2026-11-27), so the pair may come from any later attempt, of either order ([pairPastTakenTwins]).
+     * on a free port and UDP on that number ([udpOn] honours the port it is given). That UDP twin may be taken or refused
+     * too (another socket of the run, or a reserved port range: Windows excludes ranges for TCP and UDP apart), as on the
+     * Windows CI of 2026-11-27, so the pair may come from any later attempt, of either order ([pairPastTakenTwins]).
      */
     @Test fun aTakenTwinGoesToTheOtherOrder() = clientTest { pairPastTakenTwins(1) }
 
@@ -191,11 +191,11 @@ class BindOnSamePortTest {
                 assertEquals(port, (u.localAddress as InetSocketAddress).port)
                 assertEquals(port, (t.localAddress as InetSocketAddress).port)
                 val attempts = attempts(calls)
-                attempts.forEachIndexed { i, (free, twin) ->
+                attempts.forEachIndexed { i, (free, _) ->
                     assertEquals(if (i % 2 == 0) "udp0" else "tcp0", free, "attempt $i of $calls")
-                    assertTrue(twin != null || i < attempts.lastIndex, "attempt $i of $calls has no twin")
                 }
-                assertEquals(if (attempts.lastIndex % 2 == 0) "tcp$port" else "udp$port", attempts.last().second, "$calls")
+                val twin = if (attempts.lastIndex % 2 == 0) "tcp$port" else "udp$port"
+                assertEquals(twin, attempts.last().second, "the pairing attempt has no twin, or not on the port: $calls")
                 for ((i, _) in blockers) assertTrue(i < attempts.lastIndex, "attempt $i paired on a twin we held: $calls")
             } finally {
                 u.close()
