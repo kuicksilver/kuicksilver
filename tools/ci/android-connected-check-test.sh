@@ -26,11 +26,19 @@ what=$(sed -n "${n}p" plan)
 dev='test(AVD) - 7.0' t=io.kuicksilver.quic.api.QuicApiTest m=endpointCloseSendsConnectionCloseToPeers
 net=kuicksilver-ktor-network quic=kuicksilver-quic
 apk() { echo "[/home/runner/work/kuicksilver/kuicksilver/$1/build/outputs/apk/androidTest/$1-androidTest.apk]"; }
-stall_errors() {   # the lines of a stalled install of module $1 (run 46008475587) that are not lifecycle or WARN output
+stall_errors() {   # the lines of a stalled install of module $1 (run 46008475587, in its order) that are not lifecycle
+  # or WARN output: ddmlib's trace, UTP's exception and its cause, the task's failure
   echo "com.android.ddmlib.ShellCommandUnresponsiveException"
+  echo "	at com.android.ddmlib.SplitApkInstaller.uploadApk(SplitApkInstaller.java:131)"
+  echo "Test execution failed with fatal error!"; echo "Message: Failed to install split APK(s): $(apk "$1")"
   echo "Caused by: com.android.ddmlib.InstallException: Failed to install-write all apks"
-  echo "Message: Failed to install split APK(s): $(apk "$1")"; echo "Failed to install split APK(s): $(apk "$1")"
+  echo "Failed to install split APK(s): $(apk "$1")"
   echo "Failed to install-write all apks"; echo "com.android.ddmlib.InstallException: Failed to install-write all apks"
+}
+refused() {   # module $1's install refused with $2 (no stall): UTP's exception, its cause, the task's failure
+  echo "> Task :$1:connectedAndroidDeviceTest"; echo "Message: Failed to install split APK(s): $(apk "$1")"
+  echo "Caused by: com.android.ddmlib.InstallException: $2"; echo "> Task :$1:connectedAndroidDeviceTest FAILED"
+  echo "Failed to install split APK(s): $(apk "$1")"; echo "com.android.ddmlib.InstallException: $2"
 }
 stall() {   # all the lines of a stalled install of module $1
   echo "> Task :$1:connectedAndroidDeviceTest"; echo "02:02:11 E/662332423: null"; stall_errors "$1"
@@ -71,6 +79,13 @@ case $what in
     failn ":$net:connectedAndroidDeviceTest" ":$quic:connectedAndroidDeviceTest"; exit 1 ;;
   # under -q: a stall and a test that failed at the same time, ERROR lines only (no marker, no task line)
   quietconcurrent) stall_errors $net; failn ":$net:connectedAndroidDeviceTest" ":$quic:connectedAndroidDeviceTest"; exit 1 ;;
+  # module server's install failed otherwise, next to module net's stall
+  stallstorage) stall $net; refused kuicksilver-ktor-server "INSTALL_FAILED_INSUFFICIENT_STORAGE"
+    failn ":$net:connectedAndroidDeviceTest" ":kuicksilver-ktor-server:connectedAndroidDeviceTest"; exit 1 ;;
+  stallupload) stall $net; refused kuicksilver-ktor-server "Failed to install-write all apks"
+    failn ":$net:connectedAndroidDeviceTest" ":kuicksilver-ktor-server:connectedAndroidDeviceTest"; exit 1 ;;
+  stallmixed) stall $net; echo "com.android.ddmlib.InstallException: INSTALL_FAILED_INSUFFICIENT_STORAGE"
+    fail1 ":$net:connectedAndroidDeviceTest"; exit 1 ;;
   stallothertask) stall $net; failn ":$net:connectedAndroidDeviceTest" ":$quic:compileAndroidDeviceTest"; exit 1 ;;
   stallnontask) stall $net; failn ":$net:connectedAndroidDeviceTest" "Could not resolve all files for configuration ':$quic:androidDeviceTestRuntimeClasspath'."; exit 1 ;;
   # one marker of a failed test case each, next to a stall whose task is the only one that failed
@@ -95,7 +110,8 @@ G
   local runs bad_args=""
   runs=$(cat "$dir/runs")
   [ -z "${want_args:-}" ] || ! grep -qvxF -- "$want_args" "$dir/args" || bad_args=$(grep -vxF -- "$want_args" "$dir/args" | head -1)
-  [ -n "$bad_args" ] || ! grep -qE '(^| )(-q|--quiet)( |$)' "$dir/args" || bad_args=$(grep -E '(^| )(-q|--quiet)( |$)' "$dir/args" | head -1)
+  local quiet_re='(^| )(--quiet|-[qwidsSmauvt]*q[qwidsSmauvt]*|[^ ]*org[.]gradle[.]logging[.]level=(quiet|lifecycle))( |$)'
+  [ -n "$bad_args" ] || ! grep -qiE "$quiet_re" "$dir/args" || bad_args=$(grep -iE "$quiet_re" "$dir/args" | head -1)
   if [ "$rc" -ne "$want_rc" ] || [ "$runs" -ne "$want_runs" ] || [ -n "$bad_args" ]; then
     echo "FAIL $name: exit $rc (want $want_rc), runs $runs (want $want_runs)${bad_args:+, arguments '$bad_args' (want '${want_args:-no -q}')}"; fails=$((fails + 1))
   else
@@ -117,6 +133,9 @@ case_run "negative_a stall of one module while another one's task failed is not 
 case_run "negative_a stall next to an instrumentation that crashed before its first test is not repeated" 1 1 stallcrash ok
 script_args="-q" case_run "negative_under -q a stall next to a test that failed is not repeated" 1 1 quietconcurrent ok
 case_run "negative_a stall next to another failed task is not repeated" 1 1 stallothertask ok
+case_run "negative_a stall next to another module's INSTALL_FAILED_INSUFFICIENT_STORAGE is not repeated" 1 1 stallstorage ok
+case_run "negative_a stall next to another module's upload failure without a stall of its own is not repeated" 1 1 stallupload ok
+case_run "negative_a stalled module whose install also failed otherwise is not repeated" 1 1 stallmixed ok
 case_run "negative_a stall next to a failure of no task is not repeated" 1 1 stallnontask ok
 case_run "negative_a stalled install with a FAILED test case is not repeated" 1 1 stallpertest ok
 case_run "negative_a stalled install with a count of failures is not repeated" 1 1 stallcount ok
@@ -125,6 +144,19 @@ case_run "negative_a stalled install with an Execute ... FAILED is not repeated"
 script_args="--max-workers=2 -q -Pkotlin.incremental=false" want_args="--stacktrace androidConnectedCheck --max-workers=2 -w -Pkotlin.incremental=false" \
   case_run "-q (the local gate's) reaches Gradle as -w, on the retry too" 0 2 stall ok
 script_args="--quiet" want_args="--stacktrace androidConnectedCheck -w" case_run "--quiet reaches Gradle as -w" 1 1 test
+script_args="-qS" want_args="--stacktrace androidConnectedCheck -w -S" case_run "-qS reaches Gradle as -w -S" 1 1 test
+script_args="-Sq" want_args="--stacktrace androidConnectedCheck -w -S" case_run "-Sq reaches Gradle as -w -S" 1 1 test
+script_args="-qq --info" want_args="--stacktrace androidConnectedCheck -w --info" case_run "-qq is dropped, -w once" 1 1 test
+script_args="-Dorg.gradle.logging.level=quiet -q" want_args="--stacktrace androidConnectedCheck -w" \
+  case_run "-Dorg.gradle.logging.level=quiet and -q reach Gradle as one -w" 1 1 test
+script_args="-D org.gradle.logging.level=LIFECYCLE -s" want_args="--stacktrace androidConnectedCheck -w -s" \
+  case_run "-D org.gradle.logging.level=LIFECYCLE reaches Gradle as -w" 1 1 test
+script_args="--system-prop=org.gradle.logging.level=quiet" want_args="--stacktrace androidConnectedCheck -w" \
+  case_run "--system-prop=org.gradle.logging.level=quiet reaches Gradle as -w" 1 1 test
+script_args="--system-prop org.gradle.logging.level=quiet" want_args="--stacktrace androidConnectedCheck -w" \
+  case_run "--system-prop org.gradle.logging.level=quiet reaches Gradle as -w" 1 1 test
+script_args="-Dorg.gradle.logging.level=info -Pq=1 -Dx=quiet" want_args="--stacktrace androidConnectedCheck -Dorg.gradle.logging.level=info -Pq=1 -Dx=quiet" \
+  case_run "other levels and properties pass unchanged" 1 1 test
 case_run "the root task by default, on the retry too" 0 2 stall ok
 KSL_CONNECTED_TASKS=":a:androidConnectedCheck :b:androidConnectedCheck" want_args="--stacktrace :a:androidConnectedCheck :b:androidConnectedCheck" \
   case_run "KSL_CONNECTED_TASKS replaces the root task, on the retry too" 0 2 stall ok
