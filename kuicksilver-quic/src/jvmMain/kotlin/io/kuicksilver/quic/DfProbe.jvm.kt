@@ -17,3 +17,6 @@ internal actual fun dfModeOf(
 ): Int = KslSocketDf.mode(ch, family)
 
 internal actual fun localizedEmsgsizeText(): String? = KslSocketDf.emsgsizeText()
+
+/** Through `ksl` ([KslSocketDf.v6Only]); false without the library. */
+internal actual fun setV6Only(ch: DatagramChannel): Boolean = KslSocketDf.v6Only(ch)

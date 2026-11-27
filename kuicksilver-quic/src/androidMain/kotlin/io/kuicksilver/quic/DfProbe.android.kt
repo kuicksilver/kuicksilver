@@ -106,3 +106,19 @@ private fun set(
 
 /** Null: Android's `SocketException` names the errno ("sendto failed: EMSGSIZE (Message too long)"). */
 internal actual fun localizedEmsgsizeText(): String? = null
+
+/** Through `android.system.Os` on the channel's descriptor, as [dfProbe] reaches it. */
+internal actual fun setV6Only(ch: DatagramChannel): Boolean =
+    try {
+        if (Build.VERSION.SDK_INT >= FROM_DATAGRAM_SOCKET_DUPS) {
+            ParcelFileDescriptor
+                .fromDatagramSocket(
+                    ch.socket(),
+                )?.use { set(it.fileDescriptor, OsConstants.IPPROTO_IPV6, OsConstants.IPV6_V6ONLY, 1) }
+                ?: false
+        } else {
+            borrowedDescriptor(ch.socket())?.let { set(it, OsConstants.IPPROTO_IPV6, OsConstants.IPV6_V6ONLY, 1) } ?: false
+        }
+    } catch (_: Exception) {
+        false
+    }

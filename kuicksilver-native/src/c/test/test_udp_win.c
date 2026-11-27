@@ -91,6 +91,23 @@ static int wfd(ksl_udp *u) {
         return -1;
     return (int)rd32(fd8);
 }
+/* the AF_INET socket of a split u (KSL_UDP_GET_FD2), -1 when it has none */
+static int wfd2(ksl_udp *u) {
+    uint8_t fd8[4];
+    size_t n = 0;
+    if (ksl_udp_get(u, KSL_UDP_GET_FD2, fd8, 4, &n) != KSL_OK || n != 4)
+        return -2;
+    uint32_t v = rd32(fd8);
+    return v == 0xffffffffu ? -1 : (int)v;
+}
+/* IPV6_V6ONLY of socket fd: 1, 0, -1 when unreadable */
+static int wv6only(int fd) {
+    DWORD v = 0;
+    int l = (int)sizeof v;
+    if (fd < 0 || getsockopt((SOCKET)(UINT_PTR)(uint32_t)fd, IPPROTO_IPV6, IPV6_V6ONLY, (char *)&v, &l) != 0)
+        return -1;
+    return v ? 1 : 0;
+}
 /* the address family of socket fd (AF_INET or AF_INET6) through SO_PROTOCOL_INFOW, as win_fd_family reads it; -1 when unreadable */
 static int wfamily(int fd) {
     WSAPROTOCOL_INFOW pi;
@@ -937,7 +954,8 @@ void run_udp_win(void) {
             to6[1] = lw[1];
             to6[2] = lw[2];
             uint32_t c = wcaps(w, NULL);
-            CHECK((c & KSL_UDP_DF), "DF granted on the dual-stack socket");
+            CHECK((c & KSL_UDP_DF) && !(c & KSL_UDP_V4_ONLY),
+                  "DF granted on the dual-stack socket, not KSL_UDP_V4_ONLY");
             /* on an AF_INET6 socket this read-back may reflect IPV6_DONTFRAG (udp_win_loopback6_df), so it does not prove
                the v4-mapped half on its own; set_df's setsockopt result does */
             CHECK(ksl_udp_df_bit_for_test(wfd(w)) == 1,
@@ -1043,116 +1061,217 @@ void run_udp_win(void) {
             size_t n = 0;
             ksl_udp_get(w, KSL_UDP_GET_LOCAL, lw, KSL_UDP_ADDR_LEN, &n);
             w4(to4, wport(lw));
-            CHECK(lw[0] == 4 && (wcaps(w, NULL) & KSL_UDP_DF), "the fallback reports family 4 and keeps DF");
+            CHECK(lw[0] == 4 && (wcaps(w, NULL) & KSL_UDP_DF) && !(wcaps(w, NULL) & KSL_UDP_V4_ONLY),
+                  "the fallback reports family 4 and keeps DF; no IPv6 at all is not KSL_UDP_V4_ONLY");
             CHECK(wping(a, w, to4, 1, 100, 0, NULL, NULL, rl) == 1, "the fallback receives IPv4");
             ksl_udp_close(w);
         }
         if (w6)
             ksl_udp_close(w6);
     }
-    /* udp_win_dual_stack_without_df_takes_af_inet: a 0.0.0.0 socket whose dual-stack IPv4 half refuses DF for good (the seam)
-       is an AF_INET socket with DF instead, as NioDatagramIo's AF_INET channel, so IPv4 QUIC still works; on an explicit port too,
-       which the dual-stack socket gives up first. Without the seam the same open stays dual-stack (positive control above) */
-    for (int explicit_port = 0; explicit_port <= 1; explicit_port++) {
-        uint8_t any4[KSL_UDP_ADDR_LEN], lw[KSL_UDP_ADDR_LEN], to4[KSL_UDP_ADDR_LEN];
-        w4(any4, 0);
-        memset(any4 + 3, 0, 4);
-        if (explicit_port) { /* a port free on both families: the one a dual-stack socket was just given */
-            ksl_udp *t = wopen(any4, 0, lw);
-            if (!t) {
-                printf("udp(win): no 0.0.0.0 socket to take a port from, explicit-port case skipped\n");
-                break;
+    /* udp_win_df_fallback_*: as test_udp.c's udp_df_fallback_*, a wildcard whose dual-stack socket gets no DF on a half for a
+       lasting reason (KSL_TEST seams): two sockets on one port, IPV6_V6ONLY and AF_INET, each with DF (KSL_UDP_SPLIT); the IPv6
+       one alone (KSL_UDP_V6_ONLY), AF_INET alone (KSL_UDP_V4_ONLY), or the dual-stack socket without DF where only one or neither
+       family gets DF; a transient refusal or a resource running out fails the open. Seams (bit): 1 the v4-mapped half, 2 the
+       IPv6 half, 4 AF_INET without DF, 8 AF_INET refused transiently, 16 WSASocketW(AF_INET) failing (WSAEAFNOSUPPORT, or the
+       error in bits 5 and up). Each on port 0 and on an explicit port; another process may take an explicit port between the
+       close of the dual-stack socket and a bind, which the open reports as KSL_E_BIND and the case tries again on another */
+    {
+        uint8_t l6[KSL_UDP_ADDR_LEN] = {6}, lp6[KSL_UDP_ADDR_LEN];
+        l6[18] = 1;
+        ksl_udp *p6 = wopen(l6, 0, lp6); /* an IPv6 peer on ::1; NULL without IPv6 loopback */
+        struct {
+            int seams, fam,
+                expect; /* expect: 1 split, 2 V6_ONLY, 3 V4_ONLY, 4 dual-stack without DF, 5 fails KSL_E_NO_MEMORY */
+            const char *what;
+        } cases[] = {
+            {1, 4, 1, "udp_win_df_fallback_splits (0.0.0.0)"},
+            {1, 6, 1, "udp_win_df_fallback_splits (::)"},
+            {1 | 4, 6, 2, "udp_win_df_fallback_v6_only (AF_INET without DF)"},
+            {1 | 16, 4, 2, "udp_win_df_fallback_v6_only (no IPv4)"},
+            {1 | 2, 4, 3, "udp_win_df_fallback_v4_only (0.0.0.0)"},
+            {1 | 2, 6, 3, "udp_win_df_fallback_v4_only (::)"},
+            {1 | 2 | 4, 4, 4, "udp_win_df_fallback_none"},
+            {1 | 8, 4, 5, "negative_udp_win_df_fallback_transient"},
+            {1 | 16 | (10024 << 5), 6, 5, "negative_udp_win_df_fallback_socket_resources (WSAEMFILE)"},
+        };
+        for (size_t ci = 0; ci < sizeof cases / sizeof cases[0]; ci++)
+            for (int explicit_port = 0; explicit_port <= 1; explicit_port++) {
+                const char *what = cases[ci].what;
+                uint8_t at[KSL_UDP_ADDR_LEN], lw[KSL_UDP_ADDR_LEN];
+                uint32_t err = 0, rl[4];
+                char msg[128] = {0};
+                ksl_udp *w = NULL;
+                for (int attempt = 0; attempt < 8; attempt++) {
+                    memset(at, 0, sizeof at);
+                    at[0] = (uint8_t)cases[ci].fam;
+                    if (explicit_port) { /* a port free on both families: the one a dual-stack socket was just given */
+                        uint8_t any4[KSL_UDP_ADDR_LEN] = {4}, lt[KSL_UDP_ADDR_LEN];
+                        ksl_udp *t = wopen(any4, 0, lt);
+                        if (!t)
+                            break;
+                        at[1] = lt[1];
+                        at[2] = lt[2];
+                        ksl_udp_close(t);
+                    }
+                    int sm = cases[ci].seams;
+                    ksl_udp_no_df_v4_mapped_for_test(sm & 1);
+                    ksl_udp_no_df_v6_for_test((sm >> 1) & 1);
+                    ksl_udp_no_df_inet_for_test((sm >> 2) & 1);
+                    ksl_udp_transient_df_inet_for_test((sm >> 3) & 1);
+                    ksl_udp_no_inet_for_test((sm >> 4) & 1 ? ((sm >> 5) ? (sm >> 5) : 1) : 0);
+                    w = ksl_udp_open(at, KSL_UDP_DF | KSL_UDP_ECN | KSL_UDP_PKTINFO, &err, msg, sizeof msg);
+                    ksl_udp_no_df_v4_mapped_for_test(0);
+                    ksl_udp_no_df_v6_for_test(0);
+                    ksl_udp_no_df_inet_for_test(0);
+                    ksl_udp_transient_df_inet_for_test(0);
+                    ksl_udp_no_inet_for_test(0);
+                    if (w || err != KSL_E_BIND || !explicit_port)
+                        break;
+                }
+                if (cases[ci].expect == 5) {
+                    CHECK(w == NULL && err == KSL_E_NO_MEMORY, what);
+                    if (w)
+                        ksl_udp_close(w);
+                    continue;
+                }
+                if (!w)
+                    printf("udp(win): %s: open: %u %s\n", what, err, msg);
+                CHECK(w != NULL, what);
+                if (!w)
+                    continue;
+                size_t n = 0;
+                CHECK(ksl_udp_get(w, KSL_UDP_GET_LOCAL, lw, KSL_UDP_ADDR_LEN, &n) == KSL_OK && lw[0] == cases[ci].fam &&
+                          wport(lw) != 0 && (!explicit_port || wport(lw) == wport(at)),
+                      "the wildcard asked for reported, on the port asked for");
+                uint32_t c = wcaps(w, NULL);
+                int f = wfd(w), f2 = wfd2(w);
+                uint8_t to4[KSL_UDP_ADDR_LEN], to6[KSL_UDP_ADDR_LEN];
+                w4(to4, wport(lw));
+                memcpy(to6, l6, KSL_UDP_ADDR_LEN);
+                to6[1] = lw[1];
+                to6[2] = lw[2];
+                switch (cases[ci].expect) {
+                case 1:
+                    CHECK((c & KSL_UDP_DF) && (c & KSL_UDP_SPLIT) && !(c & (KSL_UDP_V4_ONLY | KSL_UDP_V6_ONLY)),
+                          "split: DF and KSL_UDP_SPLIT");
+                    CHECK(wfamily(f) == AF_INET6 && wv6only(f) == 1 && wfamily(f2) == AF_INET,
+                          "split: IPV6_V6ONLY and AF_INET (KSL_UDP_GET_FD2)");
+                    CHECK(ksl_udp_df6_bit_for_test(f) == 1 && ksl_udp_df_bit_for_test(f2) == 1, "split: DF on both");
+                    CHECK(wping(a, w, to4, 1, 1200, 0, NULL, NULL, rl) == 1 && rl[0] == 1200, "split: IPv4 arrives");
+                    if (p6) {
+                        uint8_t ra[KSL_UDP_ADDR_LEN];
+                        CHECK(wping(p6, w, to6, 1, 1200, 0, NULL, ra, rl) == 1 && ra[0] == 6, "split: IPv6 arrives");
+                        CHECK(wping(w, p6, lp6, 1, 100, 0, NULL, ra, rl) == 1 && wport(ra) == wport(lw),
+                              "split: a reply to IPv6 from the port");
+                    }
+                    CHECK(wping(w, a, la, 1, 100, 0, NULL, NULL, rl) == 1, "split: a reply to IPv4");
+                    break;
+                case 2:
+                    CHECK((c & KSL_UDP_DF) && (c & KSL_UDP_V6_ONLY) && !(c & (KSL_UDP_SPLIT | KSL_UDP_V4_ONLY)) &&
+                              f2 == -1 && wv6only(f) == 1,
+                          "IPv6-only alone: DF and KSL_UDP_V6_ONLY");
+                    if (p6)
+                        CHECK(wping(p6, w, to6, 1, 100, 0, NULL, NULL, rl) == 1, "IPv6-only alone: IPv6 arrives");
+                    break;
+                case 3:
+                    CHECK((c & KSL_UDP_DF) && (c & KSL_UDP_V4_ONLY) && !(c & (KSL_UDP_SPLIT | KSL_UDP_V6_ONLY)) &&
+                              wfamily(f) == AF_INET && ksl_udp_df_bit_for_test(f) == 1,
+                          "AF_INET alone: DF and KSL_UDP_V4_ONLY");
+                    CHECK(wping(a, w, to4, 1, 100, 0, NULL, NULL, rl) == 1, "AF_INET alone: IPv4 arrives");
+                    break;
+                default:
+                    CHECK(!(c & (KSL_UDP_DF | KSL_UDP_V4_ONLY | KSL_UDP_V6_ONLY | KSL_UDP_SPLIT)) &&
+                              wfamily(f) == AF_INET6 && wv6only(f) == 0,
+                          "neither: the dual-stack socket again, without DF");
+                    CHECK(wping(a, w, to4, 1, 100, 0, NULL, NULL, rl) == 1, "neither: IPv4 still arrives");
+                }
+                ksl_udp_close(w);
             }
-            any4[1] = lw[1];
-            any4[2] = lw[2];
-            ksl_udp_close(t);
-        }
-        uint32_t err = 0, rl[4];
-        char msg[128] = {0};
-        ksl_udp_no_df_v4_mapped_for_test(1);
-        ksl_udp *w = ksl_udp_open(any4, KSL_UDP_DF, &err, msg, sizeof msg);
-        ksl_udp_no_df_v4_mapped_for_test(0);
-        CHECK(w != NULL, "0.0.0.0 whose dual-stack IPv4 half has no DF: opens");
-        if (!w) {
-            printf("udp(win): open: %u %s\n", err, msg);
-            continue;
-        }
-        size_t n = 0;
-        CHECK(ksl_udp_get(w, KSL_UDP_GET_LOCAL, lw, KSL_UDP_ADDR_LEN, &n) == KSL_OK && n == KSL_UDP_ADDR_LEN,
-              "local address");
-        CHECK(wcaps(w, NULL) & KSL_UDP_DF, "the AF_INET socket has DF");
-        CHECK(ksl_udp_df_bit_for_test(wfd(w)) == 1, "the AF_INET socket reads back IP_DONTFRAGMENT set");
-        CHECK(wfamily(wfd(w)) == AF_INET, "an AF_INET socket");
-        CHECK(lw[0] == 4 && (!explicit_port || wport(lw) == wport(any4)), "0.0.0.0 reported, on the port asked for");
-        w4(to4, wport(lw));
-        CHECK(wping(a, w, to4, 1, 1200, 0, NULL, NULL, rl) == 1 && rl[0] == 1200, "IPv4 datagrams arrive");
-        ksl_udp_close(w);
-    }
-    /* udp_win_dual_stack_without_df_reopens_dual: the dual-stack socket refuses DF on its IPv4 half for good and the AF_INET socket
-       that would replace it either opens without DF (no_df_inet) or does not open (no_inet): the dual-stack socket is opened again,
-       so IPv6 stays reachable, on the port asked for, and reported without DF (RFC 9000 section 14: the caller does not use it);
-       IPv4 datagrams still reach it. A transient refusal on the AF_INET socket (WSAENOBUFS) fails the open as that error and
-       reopens nothing: the explicit port is free afterwards. Each on port 0 and on an explicit port. Not covered: another process
-       taking an explicit port between the close of the dual-stack socket and a bind (the open then fails with KSL_E_BIND), a race
-       no test can time */
-    for (int c = 0; c < 6; c++) {
-        int mode = c / 2,
-            explicit_port = c % 2; /* mode 0: AF_INET without DF, 1: AF_INET not opening, 2: transient refusal */
-        const char *why = mode == 0   ? "the AF_INET socket has no DF either"
-                          : mode == 1 ? "the AF_INET socket does not open"
-                                      : "the AF_INET socket's DF is refused transiently";
-        uint8_t any4[KSL_UDP_ADDR_LEN], lw[KSL_UDP_ADDR_LEN], to4[KSL_UDP_ADDR_LEN];
-        w4(any4, 0);
-        memset(any4 + 3, 0, 4);
-        if (explicit_port) { /* a port free on both families: the one a dual-stack socket was just given */
-            ksl_udp *t = wopen(any4, 0, lw);
-            if (!t) {
-                printf("udp(win): no 0.0.0.0 socket to take a port from, explicit-port case skipped (%s)\n", why);
+        /* udp_win_df_fallback_split_port_retry: the first try takes a port a plain AF_INET socket holds on 0.0.0.0 (seam: its IPv6
+           half binds it, as IPV6_V6ONLY lets it), which the AF_INET half cannot have: given up, another taken. Twice: a holder
+           without SO_EXCLUSIVEADDRUSE (WSAEADDRINUSE) and one with it (WSAEACCES on some builds) */
+        for (int exclusive = 0; exclusive <= 1; exclusive++) {
+            SOCKET h = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+            struct sockaddr_in hs;
+            memset(&hs, 0, sizeof hs);
+            hs.sin_family = AF_INET;
+            int hl = (int)sizeof hs;
+            BOOL yes = TRUE;
+            if (h == INVALID_SOCKET ||
+                (exclusive && setsockopt(h, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *)&yes, sizeof yes) != 0) ||
+                bind(h, (struct sockaddr *)&hs, sizeof hs) != 0 || getsockname(h, (struct sockaddr *)&hs, &hl) != 0) {
+                printf("udp(win): no holder socket (%d), port-retry case skipped\n", WSAGetLastError());
+                if (h != INVALID_SOCKET)
+                    closesocket(h);
                 continue;
             }
-            any4[1] = lw[1];
-            any4[2] = lw[2];
-            ksl_udp_close(t);
-        }
-        uint32_t err = 0, rl[4];
-        char msg[128] = {0};
-        ksl_udp_no_df_v4_mapped_for_test(1);
-        ksl_udp_no_df_inet_for_test(mode == 0);
-        ksl_udp_no_inet_for_test(mode == 1);
-        ksl_udp_transient_df_inet_for_test(mode == 2);
-        ksl_udp *w = ksl_udp_open(any4, KSL_UDP_DF, &err, msg, sizeof msg);
-        ksl_udp_no_df_v4_mapped_for_test(0);
-        ksl_udp_no_df_inet_for_test(0);
-        ksl_udp_no_inet_for_test(0);
-        ksl_udp_transient_df_inet_for_test(0);
-        if (mode == 2) {
-            CHECK(w == NULL && err == KSL_E_NO_MEMORY && strncmp(msg, "Don't Fragment", 14) == 0,
-                  "a transient DF refusal on the AF_INET socket fails the open as that error");
+            uint16_t held = ntohs(hs.sin_port);
+            uint32_t r0 = ksl_udp_split_retries_for_test(), err = 0;
+            char msg[128] = {0};
+            uint8_t any6[KSL_UDP_ADDR_LEN] = {6}, lw[KSL_UDP_ADDR_LEN];
+            ksl_udp_split_port_for_test(held);
+            ksl_udp *w = ksl_udp_open(any6, KSL_UDP_SPLIT | KSL_UDP_DF, &err, msg, sizeof msg);
+            ksl_udp_split_port_for_test(0);
+            if (!w)
+                printf("udp(win): port retry (exclusive holder %d): %u %s\n", exclusive, err, msg);
+            size_t n = 0;
+            CHECK(w && ksl_udp_get(w, KSL_UDP_GET_LOCAL, lw, KSL_UDP_ADDR_LEN, &n) == KSL_OK && wport(lw) != held &&
+                      ksl_udp_split_retries_for_test() == r0 + 1 && wfd2(w) >= 0,
+                  exclusive ? "udp_win_df_fallback_split_port_retry: held exclusively, given up once, another taken"
+                            : "udp_win_df_fallback_split_port_retry: held, given up once, another taken");
             if (w)
                 ksl_udp_close(w);
-            if (explicit_port) { /* nothing was reopened on it */
-                ksl_udp *f = wopen(any4, 0, lw);
-                CHECK(f != NULL, "the explicit port is free after the failed open");
-                if (f)
-                    ksl_udp_close(f);
+            closesocket(h);
+        }
+        /* udp_win_df_fallback_split_fair: a flood on one socket and one datagram on the other, each way twice (whichever socket the
+           first read prefers): the lone datagram is among the first two read, as each read prefers the other socket */
+        if (p6) {
+            uint8_t any6[KSL_UDP_ADDR_LEN] = {6}, lw[KSL_UDP_ADDR_LEN];
+            ksl_udp *w = wopen(any6, KSL_UDP_SPLIT | KSL_UDP_DF, lw);
+            if (w) {
+                uint8_t to4[KSL_UDP_ADDR_LEN], to6[KSL_UDP_ADDR_LEN];
+                w4(to4, wport(lw));
+                memcpy(to6, l6, KSL_UDP_ADDR_LEN);
+                to6[1] = lw[1];
+                to6[2] = lw[2];
+                for (int round = 0; round < 4; round++) {
+                    int flood4 = round < 2;
+                    uint8_t b[100] = {0}, *bb[1] = {b}, e0[1] = {0};
+                    uint32_t bl[1] = {100}, sent = 0;
+                    for (int i = 0; i < 32; i++)
+                        ksl_udp_send(flood4 ? a : p6, bb, bl, flood4 ? to4 : to6, e0, 1, &sent);
+                    ksl_udp_send(flood4 ? p6 : a, bb, bl, flood4 ? to6 : to4, e0, 1, &sent);
+                    /* both sockets hold a datagram before the reads: the order of the reads is the subject */
+                    WSAPOLLFD rp[2];
+                    memset(rp, 0, sizeof rp);
+                    rp[0].fd = (SOCKET)(UINT_PTR)(uint32_t)wfd(w);
+                    rp[1].fd = (SOCKET)(UINT_PTR)(uint32_t)wfd2(w);
+                    rp[0].events = rp[1].events = POLLRDNORM;
+                    for (int t = 0; t < 40 && !((rp[0].revents & POLLRDNORM) && (rp[1].revents & POLLRDNORM)); t++) {
+                        rp[0].revents = rp[1].revents = 0;
+                        WSAPoll(rp, 2, 50);
+                    }
+                    uint8_t *rb[2], r0b[128], r1b[128], ra[2 * KSL_UDP_ADDR_LEN], re[2];
+                    uint32_t rc[2] = {128, 128}, rl[2], got = 0;
+                    rb[0] = r0b;
+                    rb[1] = r1b;
+                    int seen = 0;
+                    for (int call = 0; call < 2; call++) {
+                        got = 0;
+                        ksl_udp_recv(w, rb, rc, rl, ra, re, 1, &got, 0);
+                        seen |= got && ra[0] == (flood4 ? 6 : 4);
+                    }
+                    CHECK(seen, flood4 ? "udp_win_df_fallback_split_fair: the IPv6 datagram among the first two read"
+                                       : "udp_win_df_fallback_split_fair: the IPv4 datagram among the first two read");
+                    while (ksl_udp_recv(w, rb, rc, rl, ra, re, 2, &got, 50) == KSL_OK && got) {
+                    } /* the rest of the flood */
+                }
+                ksl_udp_close(w);
             }
-            continue;
         }
-        CHECK(w != NULL, "0.0.0.0 without DF on either socket: the dual-stack socket opens again");
-        if (!w) {
-            printf("udp(win): %s: open: %u %s\n", why, err, msg);
-            continue;
-        }
-        size_t n = 0;
-        CHECK(ksl_udp_get(w, KSL_UDP_GET_LOCAL, lw, KSL_UDP_ADDR_LEN, &n) == KSL_OK && n == KSL_UDP_ADDR_LEN,
-              "local address");
-        CHECK(wfamily(wfd(w)) == AF_INET6, "the dual-stack socket again (AF_INET6)");
-        CHECK(!(wcaps(w, NULL) & KSL_UDP_DF), "reported without DF");
-        CHECK(lw[0] == 4 && wport(lw) != 0 && (!explicit_port || wport(lw) == wport(any4)),
-              "0.0.0.0 reported, on the port asked for");
-        w4(to4, wport(lw));
-        CHECK(wping(a, w, to4, 1, 100, 0, NULL, NULL, rl) == 1 && rl[0] == 100, "IPv4 datagrams still arrive");
-        ksl_udp_close(w);
+        if (p6)
+            ksl_udp_close(p6);
     }
     /* udp_win_exclusive_bind: a second socket on a bound port is refused (SO_EXCLUSIVEADDRUSE), REUSEPORT or not */
     {

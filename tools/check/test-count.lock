@@ -3548,6 +3548,7 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerEchTest.
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerEchTest.negative_aPublicNameCertificateThatDoesNotCoverItFailsTheRejection
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerEveryInterfaceTest.connectorWithoutHostReportsTheWildcard
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerEveryInterfaceTest.hostlessConnectorsFallBackToIpv4WithoutIpv6
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerEveryInterfaceTest.http3ServesBothFamiliesOnTwoSocketsWithoutDfOnTheIpv4Half
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerEveryInterfaceTest.ipv4ClientOfAHostlessConnectorIsSeenAsIpv4
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerEveryInterfaceTest.ipv4ClientOfAHostlessPlainConnectorIsSeenAsIpv4
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerEveryInterfaceTest.plainConnectorWithoutHostServesIpv4AndIpv6
@@ -6364,6 +6365,8 @@ kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.GuideSamplesTest.qlogSample
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.GuideSamplesTest.tokenStoreSample
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.GuideSamplesTest.wireguardSample
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.GuideSamplesTest.zeroRttSample
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.KslDatagramIoTest.aSplitWildcardReachesBothFamiliesWithDf
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.KslDatagramIoTest.anAfInetSocketOpenedForDfReportsIpv6WithoutDf
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.KslDatagramIoTest.capabilitiesReportAccelerated
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.KslDatagramIoTest.closeUnblocksReceive
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.KslDatagramIoTest.ecnSurvivesLoopback
@@ -6372,6 +6375,7 @@ kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.KslDatagramIoTest.failedProbeIs
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.KslDatagramIoTest.gsoCoalescesSameDestination
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.KslDatagramIoTest.gsoFallbackCounterStartsAtZero
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.KslDatagramIoTest.loopbackBatchSendReceive
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.KslDatagramIoTest.negative_aDualStackSocketWithDfReportsNoFamilyWithoutDf
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.KslDatagramIoTest.negative_icmpPortUnreachableDoesNotKillTheSocket
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.KslDatagramIoTest.oneClientBleachingEcnLeavesOthersCapable
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.KslDatagramIoTest.openPrefersAcceleratedWhereItExists
@@ -6392,7 +6396,10 @@ kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NetworkMigratorConcurrencyTest.
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NetworkMigratorConcurrencyTest.concurrentStartRunsOnce
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.aFailedProbeIsNotAPermanentLackOfDf
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.aRefusalFailsThePathOnlyWhenTheRetryIsRefusedToo
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.aSplitSocketTakesOnePortForBothChannels
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.aWildcardWithoutDfOnTheDualStackIpv4HalfIsTwoChannels
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.anIpv4BindTakesAfInetOnlyWithDf
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.appleJdkOptionCoversV4MappedTrafficFromMacOs15Only
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.closeUnblocksReceive
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.dfChoicePerProbeOutcome
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.dfProbeAnswersOnAnUnboundChannel
@@ -6408,6 +6415,7 @@ kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.negative_aFai
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.negative_aFailureAfterRegisteringClosesChannelAndSelector
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.negative_aRuntimeWithoutTheDescriptorSaysSoAndIsPermanent
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.negative_aSocketWithoutDfDoesNotOpen
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.negative_noSplitWhereItCannotBeHad
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.nioClearsTosAfterValidationFailure
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.nioSetsDontFragmentWherePossible
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.nioSetsIpTosEct0

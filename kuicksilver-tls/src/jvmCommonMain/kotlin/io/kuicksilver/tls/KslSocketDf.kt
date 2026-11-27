@@ -39,6 +39,9 @@ public object KslSocketDf {
      */
     public fun apply(channel: DatagramChannel): Int = withFd(channel) { fd -> KslFdSocket.dfProbe(fd) }
 
+    /** `IPV6_V6ONLY` on the open, unbound AF_INET6 [channel] (the JDK has no option for it); false without `ksl`. Never throws. */
+    public fun v6Only(channel: DatagramChannel): Boolean = withFd(channel) { fd -> if (KslFdSocket.v6Only(fd)) 1 else 0 } == 1
+
     /** `strerror(EMSGSIZE)` in the process's locale (the JDK's text for it on Linux and Apple); null without `ksl` or on Windows. */
     public fun emsgsizeText(): String? =
         try {

@@ -39,7 +39,7 @@ static int icmp_errno(int e) {
 /* Reads at most ERRQUEUE_BATCH messages of the error queue (MSG_ERRQUEUE never blocks). Packet Too Big from an ICMP or ICMPv6 sender
    goes to the ring with the quoted start of our datagram and its destination; every other entry (port unreachable, our own local
    EMSGSIZE, other ICMP) is only taken off the queue. Without this a queued error kept POLLERR raised and the receive loop spinning. */
-static void drain_errqueue(ksl_udp *u) {
+static void drain_errqueue(ksl_udp *u, int fd) {
     for (int i = 0; i < ERRQUEUE_BATCH; i++) {
         uint8_t data[KSL_UDP_PTB_QUOTE];
         struct sockaddr_storage ss;
@@ -54,7 +54,7 @@ static void drain_errqueue(ksl_udp *u) {
         m.msg_iovlen = 1;
         m.msg_control = cbuf;
         m.msg_controllen = sizeof cbuf;
-        ssize_t r = recvmsg(u->fd, &m, MSG_ERRQUEUE | MSG_DONTWAIT);
+        ssize_t r = recvmsg(fd, &m, MSG_ERRQUEUE | MSG_DONTWAIT);
         KSL_COUNT(u->errqueue_reads);
         if (r < 0) {
             if (errno == EINTR)
@@ -94,8 +94,9 @@ static void drain_errqueue(ksl_udp *u) {
     }
 }
 #else
-static void drain_errqueue(ksl_udp *u) {
+static void drain_errqueue(ksl_udp *u, int fd) {
     (void)u;
+    (void)fd;
 } /* Apple: no error queue; an unconnected socket gets no ICMP */
 #endif
 /* nanoseconds since an arbitrary fixed point, never going back */
@@ -242,6 +243,12 @@ int ksl_udp_recv_dst(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uin
     /* the timeout is one deadline for the whole call, as in ksl_udp_win.c: a datagram dropped below does not restart the wait, else
        a trickle of empty datagrams (any off-path sender, spoofed or not) keeps the call from ever answering KSL_WANT_READ */
     const int64_t deadline = timeout_ms > 0 ? now_ns() + (int64_t)timeout_ms * 1000000 : 0;
+    /* a split socket (KSL_UDP_SPLIT) reads both descriptors: the one it is on until it is empty (EAGAIN), then the other, and polls
+       only when both are; each call starts on the other one than the last ended on, so a flood on one family delays the other by
+       one call at most */
+    const int fds[2] = {u->fd, u->fd4};
+    const int nfd = u->fd4 >= 0 ? 2 : 1;
+    int cur = nfd == 2 ? u->rx_next : 0, empty = 0;
     /* recvmsg first, poll only when the queue is empty and nothing was taken yet: one system call per datagram, not two (a sender
        whose datagrams arrive one by one, without GSO, cost a poll and a recvmsg each) */
     while (filled < n) {
@@ -275,11 +282,16 @@ int ksl_udp_recv_dst(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uin
         m.msg_iovlen = 1;
         m.msg_control = cbuf;
         m.msg_controllen = sizeof cb.b;
-        ssize_t r = recvmsg(u->fd, &m, MSG_DONTWAIT);
+        ssize_t r = recvmsg(fds[cur], &m, MSG_DONTWAIT);
         KSL_COUNT(u->recvs);
         if (r < 0 && errno == EINTR)
             continue;
         if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            empty |= 1 << cur;
+            if (nfd == 2 && !(empty & (1 << (cur ^ 1)))) {
+                cur ^= 1; /* the other descriptor may hold some */
+                continue;
+            }
             if (filled || timeout_ms == 0) {
                 if (!filled)
                     rc = KSL_WANT_READ;
@@ -295,9 +307,10 @@ int ksl_udp_recv_dst(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uin
                 }
                 wait = (int)((left + 999999) / 1000000);
             }
-            struct pollfd pf[2] = {{u->fd, POLLIN, 0}, {u->wake[0], POLLIN, 0}};
+            /* a negative descriptor (no second socket, no wake pipe) is skipped by poll */
+            struct pollfd pf[3] = {{u->fd, POLLIN, 0}, {u->fd4, POLLIN, 0}, {u->wake[0], POLLIN, 0}};
             KSL_COUNT(u->waits);
-            int pr = poll(pf, u->wake[0] >= 0 ? 2 : 1, wait);
+            int pr = poll(pf, 3, wait);
             KSL_COUNT(u->polls);
             if (pr == 0) {
                 rc = KSL_WANT_READ;
@@ -310,21 +323,25 @@ int ksl_udp_recv_dst(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uin
                 rc = KSL_ERROR;
                 break;
             }
-            if (pf[1].revents) {
+            if (pf[2].revents) {
                 rc = KSL_ERROR;
                 break;
             } /* closed from another thread */
             /* POLLERR: the error queue holds something; draining it is progress, and it counts toward the drop bound so a flood of
                ICMP still ends the call at its deadline */
-            if (pf[0].revents & POLLERR) {
-                drain_errqueue(u);
-                dropped++;
-            }
+            empty = 0;
+            for (int k = 0; k < nfd; k++)
+                if (pf[k].revents & POLLERR) {
+                    drain_errqueue(u, fds[k]);
+                    dropped++;
+                }
+            if (nfd == 2 && !(pf[cur].revents & POLLIN) && (pf[cur ^ 1].revents & POLLIN))
+                cur ^= 1;
             continue;
         }
         /* an ICMP error about an earlier datagram (sk_err), not a broken socket: drain the queue it came with and go on */
         if (r < 0 && icmp_errno(errno)) {
-            drain_errqueue(u);
+            drain_errqueue(u, fds[cur]);
             dropped++;
             continue;
         }
@@ -388,6 +405,8 @@ int ksl_udp_recv_dst(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uin
         else
             dropped++; /* a datagram whose every segment was larger than its slot: one drop */
     }
+    if (nfd == 2)
+        u->rx_next = cur ^ 1;
     *received = filled;
     __atomic_sub_fetch(&u->in_recv, 1, __ATOMIC_SEQ_CST);
     return rc;

@@ -33,6 +33,9 @@ public class KslUdpSocket private constructor(
 
     /** The kernel's file descriptor (for a poller). */
     public val fd: Int = Ksl.udpGet(handle, KslConst.UDP_GET_FD).let { be32(it, 0) }
+
+    /** The AF_INET descriptor of a [SPLIT] socket (IPv4 goes through it, IPv6 through [fd]), or -1. */
+    public val fd2: Int = Ksl.udpGet(handle, KslConst.UDP_GET_FD2).let { be32(it, 0) }
     private var lastCaps: ByteArray = Ksl.udpGet(handle, KslConst.UDP_GET_CAPS)
 
     /** The capability bytes, re-read while the socket is open; the last reading after [shutdown] (the native object may be gone). */
@@ -299,6 +302,26 @@ public class KslUdpSocket private constructor(
          * sends to a peer (counted by [emsgsize]; the caller fails the path).
          */
         public const val DF_DO: Int = KslConst.UDP_DF_DO
+
+        /**
+         * Granted only, with [DF]: a wildcard was asked with [DF], its dual-stack socket got no DF for a lasting reason (RFC 9000
+         * section 14) and an IPv6-only one got none either, so the socket is AF_INET with DF: it reaches no IPv6 destination (IPv6
+         * is the family without DF).
+         */
+        public const val V4_ONLY: Int = KslConst.UDP_V4_ONLY
+
+        /**
+         * Asked with a wildcard: two sockets on one port, IPV6_V6ONLY on `::` and AF_INET on 0.0.0.0 ([fd], [fd2]). Granted, also
+         * unasked, where a wildcard asked with [DF] got no DF on the IPv4 half of its dual-stack socket for a lasting reason:
+         * both families keep DF. Linux, Android and Apple.
+         */
+        public const val SPLIT: Int = KslConst.UDP_SPLIT
+
+        /**
+         * Granted only, with [DF]: as [SPLIT], but the AF_INET socket got no DF or did not open, so the socket is IPv6-only: it
+         * reaches no IPv4 destination (IPv4 is the family without DF).
+         */
+        public const val V6_ONLY: Int = KslConst.UDP_V6_ONLY
         public const val ADDR_LEN: Int = KslConst.UDP_ADDR_LEN
         public const val MAX_BATCH: Int = KslConst.UDP_MAX_BATCH
         public const val PTB_QUOTE: Int = KslConst.UDP_PTB_QUOTE

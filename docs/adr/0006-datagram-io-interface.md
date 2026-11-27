@@ -149,8 +149,81 @@ IPv4 socket holds, and both refuse `::` beside `0.0.0.0:P`; the same tests guard
 ECN and DF cover both halves: the outgoing mark's cmsg follows the destination (`IP_TOS` for IPv4: Linux ignores
 `IPV6_TCLASS` for a v4-mapped peer); Linux sets `IP_RECVTOS` and `IP_MTU_DISCOVER = PROBE` on the `AF_INET6` socket for the
 v4-mapped half beside `IPV6_RECVTCLASS`/`IPV6_MTU_DISCOVER`; Darwin refuses `IP_RECVTOS` and `IP_DONTFRAG` there (`EINVAL`),
-but `IPV6_RECVTCLASS` reports v4-mapped marks and `IPV6_DONTFRAG` sets DF on v4-mapped datagrams (a 20000-byte datagram to
-`127.0.0.1` over `lo0`, MTU 16384, fails with `EMSGSIZE`).
+but `IPV6_RECVTCLASS` reports v4-mapped marks and `IPV6_DONTFRAG` sets DF on v4-mapped datagrams from Darwin 24 (macOS 15,
+iOS 18) on (a 20000-byte datagram to `127.0.0.1` over `lo0`, MTU 16384, fails with `EMSGSIZE`, while the same socket without
+the option sends it fragmented; both sockets need `SO_SNDBUF` above `net.inet.udp.maxdgram`, 9216, which refuses a larger send
+as `EMSGSIZE` whatever DF says).
+
+**No DF on the IPv4 half: two sockets on one port (0.3.0).** RFC 9000 section 14: "In IPv4, the Don't Fragment (DF) bit
+MUST be set if possible". Owner decision on bind defaults: every interface, IPv6 and IPv4; two sockets where one dual-stack
+socket is impossible. DF is set before `bind` on every platform, on the halves the socket carries (the IPv4 one on `AF_INET`
+or a dual-stack socket; `::1` carries IPv6 alone). On Linux and Apple a wildcard (`0.0.0.0` or `::`; the Ktor server's
+host-less connectors bind `::`) asked with `KSL_UDP_DF` whose dual-stack socket gets no DF for a lasting reason is two
+sockets on one port in one `ksl_udp` (`KSL_UDP_SPLIT`, `open_split`): `IPV6_V6ONLY` on `::`, bound first, then `AF_INET`
+on `0.0.0.0` on the port it got, each with DF. Port 0 gives up a port an IPv4 socket holds (an `IPV6_V6ONLY` bind does not
+look at IPv4 sockets, on Darwin nor Linux) and takes another, up to 16 times; an explicit port an IPv4 socket holds fails
+with `KSL_E_BIND`, leaving nothing open. A send goes through the socket of its destination's family, a receive takes from
+both (the one it is on until it is empty, then the other; each call starts on the other one than the last ended on, so a
+flood on one family delays the other by one call at most), a shutdown wakes a receive blocked on both, and the error queue
+of each is drained (`KSL_UDP_GET_FD2` is the `AF_INET` descriptor; Android binds both to its network). It is one socket
+above `ksl`: `KslDatagramIo` sees one `DatagramIo`, so a peer stays on the socket of its family, paths, migration (RFC 9000
+section 9) and the preferred-address sockets work as on the dual-stack socket, and `KslDatagramIo.open` (and
+`NioDatagramIo.open` for its two channels) says so at Info the first time in the process, at Debug after
+(`SplitSocketLog`; "UDP on [::]:P uses two sockets (IPv6-only and IPv4) on one port: the IPv4 half of a dual-stack socket
+has no Don't Fragment here"). Where the `AF_INET` socket gets no DF for good or does not open, the IPv6-only one alone
+(`KSL_UDP_V6_ONLY`: IPv4 is the family without DF); where the IPv6-only one gets none, `AF_INET` alone with DF
+(`KSL_UDP_V4_ONLY`: IPv6 is the family without DF, as `NioDatagramIo`'s AF_INET channel); where neither, the dual-stack
+socket again, reported without DF and not used. `KslDatagramIo` reports the family without DF as `noDontFragmentFamily`,
+reports its slots as refused for want of DF and lets C lose them. A transient refusal (`ENOBUFS`/`ENOMEM`) fails the open
+as `KSL_E_NO_MEMORY` and reopens nothing. A socket of a specific address is never split. `KSL_UDP_SPLIT` can also be asked
+for (as if the dual-stack socket had no DF; the Kotlin test hook `datagramIoSplitForTest` asks for it). The JVM's portable
+socket does the same with two channels (`NioDatagramIo`: `IPV6_V6ONLY` through `ksl_udp_fd_v6only` on the JVM, which the
+JDK cannot set, and `android.system.Os` on Android; without either, an IPv4 bind takes its AF_INET channel and `::` keeps
+the dual-stack one with IPv4 refused). Windows splits the same way (see the Windows section). A `socket()` refused for want
+of a resource (`EMFILE`, `ENFILE`, `ENOBUFS`, `ENOMEM`; `WSAEMFILE`, `WSAENOBUFS`) is no missing family: the open fails
+(`KSL_E_NO_MEMORY`; the Darwin wake pipe out of descriptors too) instead of serving one family, or none, for good. Every
+other refusal of `socket()` lasts and that family is done without, as before 0.3.0: the family missing (`EAFNOSUPPORT`), a
+policy denying it (`EACCES`/`EPERM` from AppArmor, SELinux or seccomp), a Winsock provider missing or failing
+(`WSAEINVALIDPROVIDER`, `WSAEPROVIDERFAILEDINIT`) (`socket_lasting`; `udp_df_fallback_split_socket_resources` checks EMFILE
+and EACCES on either family). With `KSL_UDP_REUSEPORT` (loops > 1, Linux) a port-0 split first checks with a throwaway `AF_INET` bind
+without `SO_REUSEPORT` that the port its IPv6 half got is free for IPv4 (`inet_port_free`): its `AF_INET` half carries
+`SO_REUSEPORT` for the loops' twins, and binding a port another socket of this user holds with `SO_REUSEPORT` would join
+that reuse group and take part of its datagrams; binding the half without `SO_REUSEPORT` instead would keep the twins off
+it. A socket bound to the port that very moment with `SO_REUSEPORT` still races the check. When each platform refuses DF
+on the IPv4 half, and for how long:
+
+- **Linux.** `IP_MTU_DISCOVER` at `SOL_IP` on an `AF_INET6` UDP socket reaches `do_ip_setsockopt` through
+  `ipv6_setsockopt` (`level == SOL_IP`), which refuses only a value it does not know (`EINVAL`: `PROBE` before 2.6.22,
+  where `DO` is taken instead) and allocates nothing; the v4-mapped send path (`udp_sendmsg`) reads that setting. So a
+  stock kernel never refuses it; a refusal of both modes comes from a policy (a seccomp filter's errno, an LSM's `EACCES`)
+  or a kernel that is not Linux's (gVisor), and lasts for the process. `ENOBUFS`/`ENOMEM` would be transient; the kernel
+  does not return them here. Reasoned from the kernel's documented behaviour and the call path above (no kernel source
+  in the reference set).
+- **Apple.** `IP_DONTFRAG` exists from macOS 11 (`ENOPROTOOPT` before) and is `EINVAL` on an `AF_INET6` socket, so the
+  v4-mapped half has only `IPV6_DONTFRAG`, which takes on a dual-stack socket on every supported release but leaves
+  v4-mapped datagrams without DF (fragmented) before Darwin 24: a silent, lasting refusal on macOS 12–14 and iOS 15–17,
+  which `ksl` supports (quic-go `sys_conn_df_darwin.go` sets no DF on a dual-stack socket before macOS 15 for this reason;
+  no XNU source in the reference set). `ksl_udp.c` learns it once per process on the loopback (`mapped_df_check`: 20000
+  bytes to `::ffff:127.0.0.1` sent fragmented by a control socket without DF, refused with `EMSGSIZE` with
+  `IPV6_DONTFRAG`, while 100 bytes still go), and only when the loopback cannot tell from the Darwin release (24 or
+  later). `ENOBUFS`/`ENOMEM` (`IPV6_DONTFRAG` allocates the socket's IPv6 options) are transient. `ksl_udp_fd_df_probe`
+  reports no DF on the v4-mapped half of the JDK's dual-stack socket by the same check, and without `ksl` `NioDatagramIo`
+  runs it through the JDK's option (`appleMapsDfCheck`; macOS 15 or later by `os.version` where it cannot tell), so the
+  portable socket splits, or takes its AF_INET channel, there too.
+- **Windows.** See the Windows section: `IP_DONTFRAGMENT` refused on the v4-mapped half for good, `WSAENOBUFS` and
+  `WSAENETDOWN` transient.
+
+The C tests reach every branch through `KSL_TEST` seams on port 0 and on an explicit port (`udp_df_fallback_*` on Linux and
+Apple, `udp_win_df_fallback_*` on Windows): DF refused on the v4-mapped half, on the IPv6 half, on `AF_INET` for good or
+transiently, `socket(AF_INET)` failing for want of the family or of a descriptor (`EMFILE`), a port-0 first try on a port
+IPv4 holds (given up, counted), 2000 IPv4 ports held beside port 0 (the soft `RLIMIT_NOFILE` raised and the count capped
+below it), an explicit port held, a reuse group not joined (Linux), the `AF_INET` socket's error queue drained (Linux),
+one receive call taking both families, a flood on either socket not delaying the other past two calls, a shutdown waking a
+receive on both, and the wake pipe failing after the two sockets opened; no host available refuses DF on its own. Above them `KslDatagramIoTest.aSplitWildcardReachesBothFamiliesWithDf`, `NioDatagramIoTest`
+(`.aWildcardWithoutDfOnTheDualStackIpv4HalfIsTwoChannels`, `.aSplitSocketTakesOnePortForBothChannels`,
+`.negative_noSplitWhereItCannotBeHad`, `.appleJdkOptionCoversV4MappedTrafficFromMacOs15Only`) and the Ktor server's
+`ServerEveryInterfaceTest.http3ServesBothFamiliesOnTwoSocketsWithoutDfOnTheIpv4Half` (HTTP/3 over `127.0.0.1` and `::1`
+on one port, JVM and Kotlin/Native).
 
 Windows differs in one point: every IPv6 socket is dual-stack (`IPV6_V6ONLY = 0`, also for a specific IPv6 address), with
 v4 peers reported and addressed as family 4 (v4-mapped inside C). A wildcard `0.0.0.0` opens the dual-stack socket on `::`
@@ -246,7 +319,8 @@ sockets on every OS).
   crossing is batched); `KSL_UDP_GET_CAPS` never grants GSO/GRO and `IoCapabilities` reports `gsoMaxSegments = 0`,
   `gro = false`. The private `sendmsg_x`/`recvmsg_x` are not used (undocumented; quic-go does not use them either).
 - **DF.** Darwin has no `IP_MTU_DISCOVER` modes: DF is `IP_DONTFRAG` on an `AF_INET` socket and `IPV6_DONTFRAG` on an
-  `AF_INET6` one (which also covers the v4-mapped half of a dual-stack socket), as in quic-go `sys_conn_df_darwin.go`.
+  `AF_INET6` one (which also covers the v4-mapped half of a dual-stack socket from Darwin 24 on; before, a wildcard is two
+  sockets: "Dual-stack binds"), as in quic-go `sys_conn_df_darwin.go`.
   There is no `_PROBE` equivalent: Darwin caches a path MTU from an ICMPv6 Packet Too Big, clamped to at least 1280. After
   a forged PTB a datagram above the cached size fails with `EMSGSIZE`, which loses only that slot, and the PMTUD
   black-hole rule falls back to 1200; QUIC's IPv6 floor (1200 bytes of payload, 1248 with headers) stays below the clamp,
@@ -308,7 +382,15 @@ order were cross-checked with msquic `src/platform/datapath_winuser.c`.
   nothing. The tests reach these cases, on port 0 and on an explicit port, through `KSL_TEST` seams (DF refused on the
   v4-mapped half, DF refused on `AF_INET` for good or transiently, `AF_INET` sockets failing). Another process can take
   an explicit port between the close and a bind: that open then fails with `KSL_E_BIND` instead of reporting no DF.
-  Windows only for now: `ksl_udp.c` keeps a dual-stack socket without DF on Linux and Apple.
+  Since 0.3.0 a wildcard (`0.0.0.0` or `::`) asked with DF whose dual-stack socket has no DF for a lasting reason is two
+  sockets on one port instead, as on Linux and Apple ("Dual-stack binds"; `open_split` in `ksl_udp_win.c`): `IPV6_V6ONLY`
+  on `::` and `AF_INET` on `0.0.0.0`, both `SO_EXCLUSIVEADDRUSE`; port 0 gives up a port held for IPv4 (`WSAEADDRINUSE`,
+  or `WSAEACCES` under another socket's exclusive use); a send goes through the socket of its family, a receive polls both
+  (`WSAPoll`, with the wake socket) and each read prefers the other socket than the last; `KSL_UDP_V6_ONLY`,
+  `KSL_UDP_V4_ONLY` or the dual-stack socket without DF where only one family or neither can have DF
+  (`udp_win_df_fallback_*`, through the same seams). Windows decides after the dual-stack socket's bind, so another
+  process can take an explicit port between its close and the next bind: that open fails with `KSL_E_BIND`. Built with
+  `-Werror` for mingw-x64 here; run on Windows only (CI's Windows lanes, the local Windows VM).
 - **Binding** — `SO_EXCLUSIVEADDRUSE`; addresses as in "Dual-stack binds" (a wildcard `0.0.0.0` is dual-stack, as on Linux
   and Apple: `udp_win_wildcard_dual_stack`, `udp_win_wildcard_without_ipv6_falls_back`); one loop per port.
 - **Winsock start.** `WSAStartup(2.2)` once per process, never `WSACleanup`. ktor-network starts Winsock only when it

@@ -112,7 +112,7 @@ internal suspend fun openDatagramIo(
     if (prefer == IoPreference.Accelerated) {
         KslDatagramIo.open(local, logger = logger, refused = { refused = it })?.let { return it }
     }
-    return openPortableDatagramIo(local, refused)
+    return openPortableDatagramIo(local, refused, logger)
 }
 
 /**
@@ -123,7 +123,75 @@ internal suspend fun openDatagramIo(
 internal expect suspend fun openPortableDatagramIo(
     local: InetSocketAddress,
     acceleratedRefusal: Throwable?,
+    logger: KuicksilverLogger = KuicksilverLogger.Default,
 ): DatagramIo
+
+/**
+ * The line a socket opened as two on one port logs ([emit]): IPv6-only and IPv4, because the IPv4 half of a dual-stack socket
+ * has no Don't Fragment here (RFC 9000 section 14). [LogLevel.Info] the first time in the process, [LogLevel.Debug] after: a
+ * host's DF support does not change while it runs, so one line says it (loops, clients and tunnels open such sockets too).
+ */
+internal object SplitSocketLog {
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private val logged = kotlin.concurrent.atomics.AtomicBoolean(false)
+
+    /** The line for a split socket on [host] (numeric text, as the socket reports it) and [port]. */
+    fun line(
+        host: String,
+        port: Int,
+    ): String =
+        "UDP on ${if (':' in host) "[$host]" else host}:$port uses two sockets (IPv6-only and IPv4) on one port: the IPv4 half " +
+            "of a dual-stack socket has no Don't Fragment here (RFC 9000 section 14)"
+
+    /** Logs [line] to [logger]: at Info once per process, at Debug after. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    fun emit(
+        logger: KuicksilverLogger,
+        host: String,
+        port: Int,
+    ) {
+        val level = if (logged.compareAndSet(false, true)) LogLevel.Info else LogLevel.Debug
+        logger.emit(level, message = { line(host, port) })
+    }
+
+    /** Tests: the next split socket logs at Info again. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    fun resetForTest() {
+        logged.store(false)
+    }
+}
 
 /** One line to standard error: what [KuicksilverLogger.Stderr] writes. */
 internal expect fun printWarning(line: String)
+
+/**
+ * Test hook: while true, every wildcard socket of the accelerated transport is opened as two sockets on one port (`ksl`'s
+ * KSL_UDP_SPLIT: IPV6_V6ONLY on `::` and AF_INET on 0.0.0.0), the path a host takes whose dual-stack socket gets no Don't
+ * Fragment on its IPv4 half (RFC 9000 section 14), and the first such socket after it is set logs its line at Info again
+ * ([SplitSocketLog]). No host here refuses that DF; the C tests force the refusal itself. Every platform of the accelerated
+ * socket (Linux, Android, Apple, Windows); [datagramIoSplitSupportedForTest] says whether this one has it.
+ */
+@io.kuicksilver.annotations.InternalKuicksilverApi
+@kotlin.concurrent.Volatile
+public var datagramIoSplitForTest: Boolean = false
+    set(value) {
+        if (value) SplitSocketLog.resetForTest()
+        field = value
+    }
+
+/** Test hook: whether this platform's accelerated transport can open a wildcard as two sockets ([datagramIoSplitForTest]). */
+@io.kuicksilver.annotations.InternalKuicksilverApi
+public fun datagramIoSplitSupportedForTest(): Boolean {
+    if (!io.kuicksilver.tls.KslUdpSocket.supported) return false
+    val s =
+        io.kuicksilver.tls.KslUdpSocket.openOrNull(
+            io.kuicksilver.tls.KslUdpSocket
+                .encodeAddress(ByteArray(4), 0),
+            io.kuicksilver.tls.KslUdpSocket.SPLIT or io.kuicksilver.tls.KslUdpSocket.DF,
+        ) ?: return false
+    return try {
+        s.grantedFlags and io.kuicksilver.tls.KslUdpSocket.SPLIT != 0
+    } finally {
+        s.close()
+    }
+}

@@ -279,8 +279,12 @@ internal class LoopGroup private constructor(
                 EndpointLoop.checkPayloadSize(config.server.quic)
                 return bindDispatched(config, callerIo(local)) { at -> callerIo(at) }
             }
+            // the first socket logs through the endpoint's logger (a split socket's Info line, once per endpoint); its twins quietly
+            var first = true
             return bindWith(local, config) { at ->
-                KslDatagramIo.open(at, reusePort = true)?.let { SharedPortSocket(it, it.reusePortGranted) }
+                val logger = if (first) config.logger else io.kuicksilver.quic.KuicksilverLogger.None
+                first = false
+                KslDatagramIo.open(at, reusePort = true, logger = logger)?.let { SharedPortSocket(it, it.reusePortGranted) }
             }
         }
 

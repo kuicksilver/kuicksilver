@@ -68,6 +68,11 @@
 
 struct ksl_udp {
     int fd;
+    /* KSL_UDP_SPLIT: the AF_INET socket on 0.0.0.0 beside the IPV6_V6ONLY one (fd) on the same port, which IPv4 traffic uses;
+       -1 otherwise */
+    int fd4;
+    int rx_next; /* receiver thread only, a split socket: the descriptor its next read tries first (0 fd, 1 fd4), in turn */
+    int v6only_needed; /* ksl_udp_open only: the IPv6 socket bind_socket makes is a split's IPv6 half, IPV6_V6ONLY must take */
     int family;
     int dual;
     int wake[2]; /* dual: AF_INET6 on :: with IPV6_V6ONLY off, IPv4 peers as v4-mapped addresses */

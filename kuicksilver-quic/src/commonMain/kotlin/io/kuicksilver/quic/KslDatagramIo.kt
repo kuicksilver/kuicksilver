@@ -27,17 +27,42 @@ import kotlinx.coroutines.withContext
  * wildcard address, the socket reports the address each datagram arrived at ([PacketBatch.localAddress]) and sends a slot from
  * the local address it names (IP_PKTINFO / IPV6_PKTINFO): a reply on a multi-address host, a VIP or behind IPVS-DR leaves from the
  * address the client sent to, not from the one the route picks (RFC 9000 section 9).
+ *
+ * Bound to a wildcard (0.0.0.0 or `::`) where the dual-stack socket's IPv4 half gets no DF for a lasting reason (RFC 9000 section
+ * 14), the socket is two in `ksl` on one port ([KslUdpSocket.SPLIT]: IPV6_V6ONLY on `::` and AF_INET on 0.0.0.0), and both
+ * families keep DF; it is still one socket here, so a peer stays on the one of its family and paths, migration and the
+ * preferred address work as on the dual-stack socket. Where only one family can have DF ([KslUdpSocket.V4_ONLY],
+ * [KslUdpSocket.V6_ONLY]), the other is the family without DF ([noDfFamily]), whose slots are reported ([takeDfRefusals])
+ * and lost.
  */
 internal class KslDatagramIo private constructor(
     private val socket: KslUdpSocket,
+    granted: Int = socket.grantedFlags,
 ) : DatagramIo,
     UnreachableReports,
     DirectReceive,
     QueuedReceive,
     NonSuspendingSend,
     EmsgsizeReports,
-    PacketTooBigSource {
+    PacketTooBigSource,
+    DfFamilyRestricted {
     override val localAddress: InetSocketAddress = inetOf(socket.localAddress, 0)
+
+    /** IPv6 where the socket is AF_INET for want of DF on the dual-stack socket's IPv4 half ([KslUdpSocket.V4_ONLY]), else null. */
+    override val noDfFamily: IpFamily? = noDfFamilyOf(granted)
+
+    override val noDontFragmentFamily: IpFamily? get() = noDfFamily
+
+    /** Destinations a send skipped for want of DF ([trySend]), taken by the endpoint loop after each batch. */
+    private val dfRefused = ArrayList<InetSocketAddress>(2)
+
+    override fun takeDfRefusals(): List<InetSocketAddress> {
+        if (dfRefused.isEmpty()) return emptyList()
+        val out = dfRefused.toList()
+        dfRefused.clear()
+        return out
+    }
+
     private val caps = MutableStateFlow(capsOf())
     override val capabilities: StateFlow<IoCapabilities> get() = caps
 
@@ -320,9 +345,14 @@ internal class KslDatagramIo private constructor(
         if (n == 0) return 0
         val s = txSlots(batch)
         var anyLocal = false
+        val noDf = noDfFamily
         for (i in 0 until n) {
             s.lens[i] = batch.length(i)
-            encodeInto(batch.address(i) ?: throw IllegalArgumentException("slot $i has no address"), s.addrs, i * KslUdpSocket.ADDR_LEN)
+            val to = batch.address(i) ?: throw IllegalArgumentException("slot $i has no address")
+            // no DF towards that family (an AF_INET socket: IPv6): reported, and lost in C (a family the socket cannot reach is a
+            // lost slot there), the rest of the batch goes on
+            if (noDf != null && ipFamilyOf(to) == noDf) dfRefused += to
+            encodeInto(to, s.addrs, i * KslUdpSocket.ADDR_LEN)
             s.ecn[i] =
                 batch.ecn(i).ordinalCode().toByte()
             if (pktinfo) {
@@ -381,6 +411,26 @@ internal class KslDatagramIo private constructor(
         private const val LOCALS = 8
         private const val REFRESH = 256
 
+        /**
+         * The family without DF of a socket granted [flags]: IPv6 on an AF_INET socket opened for want of DF
+         * ([KslUdpSocket.V4_ONLY]), IPv4 on an IPv6-only one ([KslUdpSocket.V6_ONLY]); none on a split socket.
+         */
+        internal fun noDfFamilyOf(flags: Int): IpFamily? =
+            when {
+                flags and KslUdpSocket.V4_ONLY != 0 -> IpFamily.V6
+                flags and KslUdpSocket.V6_ONLY != 0 -> IpFamily.V4
+                else -> null
+            }
+
+        /**
+         * Tests: [socket] read as if granted [granted]: [KslUdpSocket.V4_ONLY] on a real AF_INET socket, which is what the DF
+         * fallback opens, since no host here refuses DF on a dual-stack socket's IPv4 half (the C tests reach that through seams).
+         */
+        internal fun wrapForTest(
+            socket: KslUdpSocket,
+            granted: Int,
+        ): KslDatagramIo = KslDatagramIo(socket, granted)
+
         /** Packet Too Big messages taken per [drainPacketTooBig]: the ring in ksl holds 16. */
         internal const val PTB_PER_DRAIN = 16
 
@@ -434,7 +484,7 @@ internal class KslDatagramIo private constructor(
                 }
             val flags =
                 KslUdpSocket.ECN or KslUdpSocket.GSO or KslUdpSocket.GRO or KslUdpSocket.DF or KslUdpSocket.PKTINFO or
-                    (if (reusePort) KslUdpSocket.REUSEPORT else 0)
+                    (if (reusePort) KslUdpSocket.REUSEPORT else 0) or (if (datagramIoSplitForTest) KslUdpSocket.SPLIT else 0)
             val addr = KslUdpSocket.encodeAddress(ip, local.port)
             val socket =
                 if (reusePort) {
@@ -469,9 +519,25 @@ internal class KslDatagramIo private constructor(
             // can then make the system refuse sends, which the EMSGSIZE count reports and the endpoint loop turns into a failed path
             try {
                 configure(socket.fd)
+                if (socket.fd2 >= 0) configure(socket.fd2) // a split socket's AF_INET descriptor (Android binds both to its network)
             } catch (e: Throwable) {
                 socket.close()
                 throw e
+            }
+            // a split socket (KSL_UDP_SPLIT) says so ([SplitSocketLog]), with the numeric text of its address as ksl reports it
+            if (socket.grantedFlags and KslUdpSocket.SPLIT != 0) {
+                val a = socket.localAddress
+                SplitSocketLog.emit(
+                    logger,
+                    if (a[0].toInt() ==
+                        4
+                    ) {
+                        ipv4Text(a, 3)
+                    } else {
+                        ipv6Text(a, 3)
+                    },
+                    ((a[1].toInt() and 0xff) shl 8) or (a[2].toInt() and 0xff),
+                )
             }
             return KslDatagramIo(socket)
         }

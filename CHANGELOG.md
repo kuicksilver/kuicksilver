@@ -2191,6 +2191,27 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   section 8, unchanged in -17 per the project's notes; a chosen deviation from RFC 9218 section 10's stream-id order
   between sessions), and in the datagram send path each session's datagrams are a flow of their own from admission on:
   the flows take turns by bytes, and one session's burst, however fast, evicts only its own datagrams.
+- QUIC: a wildcard UDP bind (`0.0.0.0` or `::`, which a Ktor server connector without a host binds) whose dual-stack socket
+  gets no Don't Fragment on its IPv4 half for a lasting reason is now two sockets on one port, IPv6-only on `::` and IPv4 on
+  `0.0.0.0`, each with DF, so HTTP/3 and QUIC keep both families (RFC 9000 section 14: "In IPv4, the Don't Fragment (DF) bit
+  MUST be set if possible"; owner decision: every interface of both families, two sockets where one dual-stack socket
+  cannot be had). The endpoint still sees one socket: a peer stays on the one of its family, and paths, migration and the
+  preferred address work as before. One Info line per process says so ("UDP on [::]:P uses two sockets (IPv6-only and
+  IPv4) on one port ..."; later sockets at Debug). Before, Linux, Android and Apple reported the whole socket without DF and QUIC was not used on it at all (a
+  Ktor server served no HTTP/3), and the JVM's portable socket refused IPv4 on `::`. Where only one family can have DF, the
+  socket serves that one and reports the other as the family without DF (`QuicEndpoint.noDontFragmentFamily`,
+  `DatagramIo.noDontFragmentFamily`), so a connection to it fails at once with `QuicException.DontFragmentUnavailable` (the
+  Ktor client falls back to TCP) and a Ktor server says which family it serves HTTP/3 to. Windows splits the same way
+  (before, its `0.0.0.0` took an IPv4 socket that looked dual-stack, and `::` lost QUIC). A transient refusal (no memory
+  for the option) or a resource running out (no descriptor left) fails the open instead of passing for a lasting lack of
+  DF or of a family; any other refusal of a family's socket (missing, or denied by a policy) still serves the other one.
+  On Linux DF is lacking only where a policy refuses it (a seccomp filter, an LSM) or under gVisor. On macOS 12 to 14 and iOS 15 to 17 `IPV6_DONTFRAG` on a
+  dual-stack socket does not set DF on its IPv4 datagrams, which went out fragmentable: `ksl` now learns that once per
+  process with a loopback check, and the JVM without `ksl` with the same check through the JDK's option (macOS 15 or later
+  by version where it cannot tell). The portable socket sets `IPV6_V6ONLY` through `ksl` (the JDK has no option for it) or
+  `android.system.Os`. The native layer reports `KSL_UDP_SPLIT`, `KSL_UDP_V6_ONLY` and `KSL_UDP_V4_ONLY`, gives the second
+  descriptor through `KSL_UDP_GET_FD2` and adds `ksl_udp_fd_v6only` (all additive in ABI 7).
+
 - WebSocket (both Ktor engines): the engine answers a Ping itself, as soon as it reads it, with a Pong carrying the
   Ping's data (RFC 6455 sections 5.5.2 and 5.5.3). The Pong goes out at once when nothing else is being sent,
   otherwise right after the frame on the wire, so also between the fragments of a message. Ktor's session's own Pong

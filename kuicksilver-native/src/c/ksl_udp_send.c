@@ -103,7 +103,8 @@ static int send_one(ksl_udp *u, const uint8_t *buf, uint32_t len, const uint8_t 
         return -1;
     }
 #endif
-    ssize_t r = sendmsg(u->fd, &m, 0);
+    /* a split socket (KSL_UDP_SPLIT): IPv4 through its AF_INET descriptor, IPv6 through the IPV6_V6ONLY one */
+    ssize_t r = sendmsg(u->fd4 >= 0 && addr[0] == 4 ? u->fd4 : u->fd, &m, 0);
     if (r < 0) {
         *errnum = errno;
         return -1;
