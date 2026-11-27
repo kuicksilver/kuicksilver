@@ -287,6 +287,11 @@ kuicksilver-http2/src/commonTest	io.kuicksilver.http2.message.HttpFieldVectorsTe
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.message.HttpFieldVectorsTest.responses
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.message.HttpFieldVectorsTest.trailers
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.message.HttpFieldVectorsTest.values
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2BodyCancelTest.cancelAfterTheEndChangesNothing
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2BodyCancelTest.cancelDuringAReadLeavesTheReadersBytes
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2BodyCancelTest.cancelTwiceKeepsTheFirstCause
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2BodyCancelTest.cancelWakesAWaitingReaderWithItsCause
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2BodyCancelTest.cancelWithoutACauseFailsTheBody
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2ExtendedConnectTest.contentLengthOfASuccessfulConnectResponseIsIgnored
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2ExtendedConnectTest.negative_contentLengthInASuccessfulConnectResponseIsNeverSent
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2ExtendedConnectTest.negative_headersOnAConnectedStreamAreAStreamError
@@ -374,6 +379,7 @@ kuicksilver-http2/src/jvmTest	io.kuicksilver.http2.fuzz.H2FuzzReachTest.seedsAnd
 kuicksilver-http2/src/jvmTest	io.kuicksilver.http2.fuzz.H2SeedCorpusTest.corpusMatchesGenerator
 kuicksilver-http2/src/jvmTest	io.kuicksilver.http2.fuzz.HpackDecodeFuzzTest.hpackDecode
 kuicksilver-http2/src/jvmTest	io.kuicksilver.http2.fuzz.HpackRoundTripFuzzTest.hpackRoundTrip
+kuicksilver-http2/src/jvmTest	io.kuicksilver.http2.runtime.H2BodyCancelRaceTest.cancelsRacingAReaderAndArrivingDataNeverThrow
 kuicksilver-http2/src/jvmTest	io.kuicksilver.http2.runtime.H2HealthDeadlineRaceTest.negative_aPingAnsweredAsTheBoundFiresIsALiveConnection
 kuicksilver-http2/src/jvmTest	io.kuicksilver.http2.runtime.H2SendStallRaceTest.negative_aWindowTakenAsTheStallBoundFiresIsProgress
 kuicksilver-http2/src/jvmTest	io.kuicksilver.http2.runtime.PriorityConcurrencyTest.updatesNeverOverrideTheResponsesChoice
@@ -1367,6 +1373,7 @@ kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.QpackDecodeFuzzTest.qpac
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.WaitingRequestBodyTest.requestRefusedByGoAwayWhileWaitingKeepsItsBody
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.WaitingRequestBodyTest.requestWaitingForStreamCreditReleasesItsBodyWhenItsCallerGivesUp
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.WaitingRequestBodyTest.requestWaitingForStreamCreditReleasesItsBodyWhenTheConnectionEnds
+kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.runtime.BodyReadChannelCancelRaceTest.cancelsRacingAReaderAndThePumpNeverThrow
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.runtime.SectionDeadlineRaceTest.negative_aSectionReadAsItsDeadlineFiresIsTheSection
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.webtransport.WebTransportRetentionTest.aClosedSessionIsNotHeldByItsConnection
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.webtransport.WtCloseDeadlineRaceTest.negative_aCloseWrittenAsTheDeadlineFiresIsNotReset
@@ -1521,6 +1528,9 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.BrokenAltSvcTe
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.BrokenAltSvcTest.stallBackoffSurvivesAWorkingHandshake
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.BrokenAltSvcTest.stallBackoffWalksBackDown
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.BrokenAltSvcTest.workingResetsBackoff
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.BufferedCancelTest.cancelWithoutACauseFailsTheReads
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.BufferedCancelTest.consumedBodyCancelDuringAReadLeavesTheReadersBytes
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.BufferedCancelTest.headLimitedInputCancelDuringAReadLeavesTheReadersBytes
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.CleartextPolicyHostTest.aMappedIpv4AddressIsAskedAboutAsItsDottedQuad
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.CleartextPolicyHostTest.leadingZerosAreDropped
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.CleartextPolicyHostTest.namesAndDottedQuadsStayAsTheyAre
