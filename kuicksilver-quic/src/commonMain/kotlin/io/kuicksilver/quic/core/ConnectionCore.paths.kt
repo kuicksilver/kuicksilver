@@ -1561,12 +1561,17 @@ private fun clearValidation(p: Path) {
     p.challengeRetries = 0
 }
 
-/** The active address changed back to where the client is: what went to the other address goes here now, not after the PTO backoff (RFC 9002 section 6.2.4 probes). */
-private fun ConnectionCore.resendInFlightAtOnce() {
+/**
+ * The active address changed back to where the client is: what went to the other address is queued again here now, not
+ * after the PTO backoff. It goes within the congestion window like any other data: RFC 9002 section 7 lets a packet
+ * exceed the window only "on a PTO timer expiration (see Section 6.2) or when entering recovery", and this is neither, so
+ * no probe is owed here (a probe owed exempts its datagram from the window, section 7.5). With the window full, the
+ * regular PTO probe is the fallback. Until 0.3.0 it owed one probe per space, whose datagram went outside the window.
+ */
+internal fun ConnectionCore.resendInFlightAtOnce() {
     handshakeResendsAtOnceForTest++
     for (space in SpaceId.entries) {
         if (spaceDiscarded[space.ordinal] || loss.space(space).ackElicitingInFlight <= 0) continue
-        if (probePending[space.ordinal] < 1) probePending[space.ordinal] = 1
         requeueForProbe(space, Int.MAX_VALUE)
     }
 }

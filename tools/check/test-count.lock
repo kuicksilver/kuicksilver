@@ -4513,6 +4513,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.CongestionWindowTest.aL
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.CongestionWindowTest.aPmtuProbeCountsInFlightAndWaitsForTheWindow
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.CongestionWindowTest.aProbeDeclaredLostAndThenAcknowledgedRaisesTheMtu
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.CongestionWindowTest.aProbeLeftInADiscardedSpaceDoesNotLiftTheWindow
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.CongestionWindowTest.aResendAtOnceDoesNotBypassAFullWindow
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.CongestionWindowTest.aWindowSmallerThanTheMtuStillCarriesData
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.CongestionWindowTest.noDatagramTakesBytesInFlightAboveTheWindow
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.CongestionWindowTest.thePacerDoesNotHoldAProbeBack

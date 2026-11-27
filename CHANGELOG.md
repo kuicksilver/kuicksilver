@@ -1799,6 +1799,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC: when a handshake's active address came back to where the client is, the resend of what had gone to the other
+  address owed a PTO probe in each space, so its first datagram went out above the congestion window although no
+  probe timer had expired (RFC 9002 section 7: only "on a PTO timer expiration ... or when entering recovery"). The
+  frames are now queued again within the window; with the window full, the regular probe timeout is the fallback.
 - HTTP/3 client, `client.close()` right after a call failed during its upload (a socket timeout, a cancellation): the
   server could keep the request and its connection open until its idle timeout (30 s). The failed call resets its
   stream with H3_REQUEST_CANCELLED (RFC 9114 section 4.1.1), and the engine's close then sent CONNECTION_CLOSE once and

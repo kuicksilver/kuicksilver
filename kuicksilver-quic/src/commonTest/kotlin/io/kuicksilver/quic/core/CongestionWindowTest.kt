@@ -150,6 +150,35 @@ class CongestionWindowTest {
         }
     }
 
+    /**
+     * RFC 9002 section 7: a packet may take bytes in flight above the window only "on a PTO timer expiration (see Section
+     * 6.2) or when entering recovery". The resend when a handshake's active address comes back used to owe a probe in each
+     * space, so its first datagram went out with the window full and no timer fired. Now what it queues again waits for
+     * room, and the regular PTO probe is the fallback.
+     */
+    @Test fun aResendAtOnceDoesNotBypassAFullWindow() {
+        val p = confirmedPair { FixedWindow(12_000) }
+        val batch = PacketBatch(64)
+        try {
+            val c = p.client
+            fillWindow(p, c, batch)
+            assertEquals(12_000L, c.cc.bytesInFlight, "the window is full")
+            c.resendInFlightAtOnce()
+            batch.clear()
+            assertEquals(0, c.poll(batch, p.now), "nothing goes outside the window without a PTO")
+            assertEquals(12_000L, c.cc.bytesInFlight)
+            for (space in SpaceId.entries) assertEquals(0, c.probePending[space.ordinal], "no probe owed in $space")
+            // the probe timeout is the legal way past the window (sections 6.2.4 and 7.5)
+            p.now = c.loss.timeout()
+            c.onTimeout(p.now)
+            batch.clear()
+            assertTrue(c.poll(batch, p.now) >= 1, "the PTO probe goes")
+        } finally {
+            batch.close()
+            p.close()
+        }
+    }
+
     /** RFC 9002 section 7.5: the pacer held a PTO probe back when its bucket was empty. */
     @Test fun thePacerDoesNotHoldAProbeBack() {
         val p = confirmedPair { FixedWindow(1_000_000, rate = 1_000_000, sendQuantum = 12_000) }
