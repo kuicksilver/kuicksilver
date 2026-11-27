@@ -38,6 +38,7 @@
 # another wrapper, KSL_GRADLE_RETRY_DELAY the shortest pause before a retry in seconds, default 30 (0: no pauses);
 # KSL_GRADLE_RETRY_CAP the longest, default 300; KSL_GRADLE_RETRY_MAX the retries of an overloaded repository, default 4;
 # KSL_GRADLE_RETRY_SEED a number that makes the random pauses repeatable (the self-test; unset, every run draws its own);
+# each a whole decimal number of at most 18 digits, leading zeros allowed (08 is 8), anything else exits 2;
 # KSL_GRADLE_RETRY_QUIET=1 shows a run's output only when it failed; KSL_GRADLE_RETRY_LOG a file every run's output is
 # appended to)
 set -uo pipefail
@@ -45,8 +46,13 @@ gradlew=${KSL_GRADLEW:-./gradlew}
 delay=${KSL_GRADLE_RETRY_DELAY:-30}
 cap=${KSL_GRADLE_RETRY_CAP:-300}
 max=${KSL_GRADLE_RETRY_MAX:-4}
+# whole numbers of at most 18 digits (64-bit arithmetic), read as decimal: bash takes a leading 0 for octal ("08": value
+# too great for base), so 08 is normalised to 8 once it passed
 for v in delay cap max; do
-  case ${!v} in ''|*[!0-9]*) echo "gradlew-retry.sh: $v '${!v}' is not a whole number of seconds or retries" >&2; exit 2 ;; esac
+  val=${!v}
+  case $val in ''|*[!0-9]*) echo "gradlew-retry.sh: $v '$val' is not a whole number of seconds or retries" >&2; exit 2 ;; esac
+  [ "${#val}" -le 18 ] || { echo "gradlew-retry.sh: $v '$val' has more than 18 digits" >&2; exit 2; }
+  printf -v "$v" %s "$(( 10#$val ))"
 done
 log=$(mktemp)
 trap 'rm -f "$log" "$log.tmp"' EXIT
@@ -56,7 +62,8 @@ trap 'rm -f "$log" "$log.tmp"' EXIT
 # the jobs of a matrix that start in the same second still draw apart.
 rng=${KSL_GRADLE_RETRY_SEED:-$(( (RANDOM << 16) ^ (RANDOM << 1) ^ $$ ))}
 case $rng in ''|*[!0-9]*) echo "gradlew-retry.sh: KSL_GRADLE_RETRY_SEED '$rng' is not a whole number" >&2; exit 2 ;; esac
-rng=$(( rng % 2147483648 ))
+[ "${#rng}" -le 18 ] || { echo "gradlew-retry.sh: KSL_GRADLE_RETRY_SEED '$rng' has more than 18 digits" >&2; exit 2; }
+rng=$(( 10#$rng % 2147483648 ))
 draw() { # draw <lo> <hi>: sets pause to a whole number in [lo, hi], uniform up to the generator's 15 bits per draw
   rng=$(( (rng * 1103515245 + 12345) % 2147483648 ))
   local span=$(( $2 - $1 + 1 ))

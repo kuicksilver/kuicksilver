@@ -167,6 +167,32 @@ for knob in KSL_GRADLE_RETRY_DELAY=x KSL_GRADLE_RETRY_CAP=-5 KSL_GRADLE_RETRY_MA
   if [ "$rc" -eq 2 ] && [ ! -e "$d/runs" ]; then echo "ok negative_$knob refuses"; else echo "FAIL $knob: exit $rc, ran: $([ -e "$d/runs" ] && echo yes || echo no)"; fails=$((fails + 1)); fi
   rm -rf "$d"
 done
+# knobs with more than 18 digits do not fit bash's 64-bit arithmetic: refused, the seed included (18 digits still run)
+for knob in KSL_GRADLE_RETRY_SEED=1234567890123456789 KSL_GRADLE_RETRY_DELAY=0000000000000000001 KSL_GRADLE_RETRY_MAX=99999999999999999999; do
+  d=$(mktemp -d); printf '#!/usr/bin/env bash\necho ran >> runs; exit 1\n' > "$d/gradlew"; chmod +x "$d/gradlew"
+  rc=0; (cd "$d" && env "$knob" bash "$here/gradlew-retry.sh" help > out.log 2>&1) || rc=$?
+  if [ "$rc" -eq 2 ] && [ ! -e "$d/runs" ] && grep -q "more than 18 digits" "$d/out.log"; then echo "ok negative_$knob (too long) refuses"
+  else echo "FAIL $knob: exit $rc, ran: $([ -e "$d/runs" ] && echo yes || echo no), $(cat "$d/out.log")"; fails=$((fails + 1)); fi
+  rm -rf "$d"
+done
+# leading zeros are decimal, not octal (bash's $((08)) is an error): 08 seconds is 8, seed 0001 is seed 1; an 18-digit
+# seed runs. A fake gradlew answers 429 then passes, the fake sleep records the pauses
+lz() { # lz <name> <expected pauses> <env...>: four 429s then a pass, KSL_GRADLE_RETRY_* from the arguments
+  local name=$1 want=$2 d rc=0; shift 2
+  d=$(mktemp -d); mkdir -p "$d/bin"
+  printf '#!/usr/bin/env bash\nn=$(( $(cat runs 2>/dev/null || echo 0) + 1 )); echo $n > runs\n[ $n -ge 5 ] && exit 0\necho "> Could not GET '"'"'https://repo.maven.apache.org/maven2/a/b/1/b-1.pom'"'"'. Received status code 429 from server: Too Many Requests"; exit 1\n' > "$d/gradlew"
+  # shellcheck disable=SC2016 # the stub expands its own variables
+  printf '#!/usr/bin/env bash\necho "$1" >> "%s/sleeps"\n' "$d" > "$d/bin/sleep"
+  chmod +x "$d/gradlew" "$d/bin/sleep"
+  (cd "$d" && env PATH="$d/bin:$PATH" "$@" bash "$here/gradlew-retry.sh" help > out.log 2>&1) || rc=$?
+  local got; got=$(tr '\n' ' ' < "$d/sleeps" 2>/dev/null || true)
+  if [ "$rc" -eq 0 ] && [ "$(cat "$d/runs")" = 5 ] && [[ "$got" =~ $want ]]; then echo "ok $name: $got"
+  else echo "FAIL $name: exit $rc, runs $(cat "$d/runs" 2>/dev/null), pauses '$got' (want /$want/)"; sed 's/^/    /' "$d/out.log"; fails=$((fails + 1)); fi
+  rm -rf "$d"
+}
+lz "seed 0001 is seed 1" '^35 55 226 201 $' KSL_GRADLE_RETRY_SEED=0001 KSL_GRADLE_RETRY_DELAY=030 KSL_GRADLE_RETRY_CAP=0300 KSL_GRADLE_RETRY_MAX=04
+lz "delay 08 is 8 seconds" '^(8|9|1[0-6]) ([89]|[1-3][0-9]) ([89]|[1-5][0-9]|6[0-4]) ([89]|[1-9][0-9]|1[0-2][0-9]) $' KSL_GRADLE_RETRY_SEED=7 KSL_GRADLE_RETRY_DELAY=08 KSL_GRADLE_RETRY_CAP=09999
+lz "an 18-digit seed runs" '^' KSL_GRADLE_RETRY_SEED=999999999999999999 KSL_GRADLE_RETRY_DELAY=0
 # dependency verification: never retried, whatever 429 or 5xx the log shows (with Gradle's default console a tampered file
 # whose signature request was refused looks like an overloaded server)
 case_run "negative_aVerificationFailureWhosePomsWereRefusedIsNeverRetried" 1 - v429 ok
