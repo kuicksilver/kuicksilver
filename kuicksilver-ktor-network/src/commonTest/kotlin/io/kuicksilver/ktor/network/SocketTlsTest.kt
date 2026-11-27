@@ -526,6 +526,37 @@ class SocketTlsTest {
             }
         }
 
+    /**
+     * The socket's context cancelled between an attach's checks and its publication: the session's pumps are cancelled
+     * with the socket, and the relay or the write pump that starts then may meet their cancellation before the link to
+     * the socket's cancellation ends it. Either way the channel fails with the LocalClose, never a cancellation. Run for
+     * the read and the write side; the interleaving is not forced, so this covers both orders over runs.
+     */
+    @Test fun negative_aContextCancelledDuringTheAttachIsALocalClose(): Unit =
+        runBlocking {
+            for (write in listOf(false, true)) {
+                val srv = LoopbackServer.start { s -> runCatching { s.openReadChannel().readAvailable(ByteArray(1), 0, 1) } }
+                val scope = Job()
+                try {
+                    val c = withTimeout(20.seconds) { srv.client(context = scope) }
+                    try {
+                        if (write) {
+                            c.beforeWriteAttachForTest = { scope.cancel() }
+                            assertWriteLocalClose(c.openWriteChannel(autoFlush = true))
+                        } else {
+                            c.beforeReadAttachForTest = { scope.cancel() }
+                            assertLocalClose(c.openReadChannel())
+                        }
+                    } finally {
+                        c.abort()
+                    }
+                    srv.awaitHandler(true)
+                } finally {
+                    srv.close()
+                }
+            }
+        }
+
     /** A write on [w] fails with the write side's LocalClose, never a cancellation. */
     private suspend fun assertWriteLocalClose(w: ByteWriteChannel) {
         val e =

@@ -109,6 +109,10 @@ public suspend fun Socket.tlsServer(
  * @property tls the TLS session underneath, for what [Socket] cannot express: the protocol version, the exporter
  *   (RFC 9846 section 7.5), the `tls-exporter` channel binding (RFC 9266) and key updates. Read and write through the
  *   socket's channels, not through `tls.input`/`tls.output` as well.
+ *
+ * Cancelling the socket's coroutine context (the scope it was opened in) ends its read relay and write pump, whose
+ * channels then fail with [ConnectionEndedException.LocalClose], but does not release the socket: its descriptor and the
+ * native session stay until [close] or `abort` (whoever owns the socket calls one of them).
  */
 public class TlsSocket private constructor(
     private val raw: Socket,
@@ -231,9 +235,17 @@ public class TlsSocket private constructor(
      * Runs [action] with the cause once the socket's job is cancelled or fails (at once when it is already), not when it
      * completes normally; null when the context has no job.
      */
+    // the three-argument invokeOnCompletion is the only way to run before the job's children complete (onCancelling); it is
+    // marked InternalCoroutinesApi, so every argument is passed: a call with defaults would compile to the synthetic
+    // `$default` bridge, which is not part of the member's stable shape across kotlinx.coroutines lines
     @OptIn(InternalCoroutinesApi::class)
     private fun onSocketCancelled(action: (Throwable) -> Unit): DisposableHandle? =
-        coroutineContext[Job]?.invokeOnCompletion(onCancelling = true) { c -> if (c != null) action(c) }
+        coroutineContext[Job]?.invokeOnCompletion(onCancelling = true, invokeImmediately = true, handler = { c ->
+            if (c != null) action(c)
+        })
+
+    /** The socket's job is being cancelled (its scope cancelled, an abort): the pumps' cancellations come from that end. */
+    private fun socketCancelling(): Boolean = this.coroutineContext[Job]?.isCancelled == true
 
     /** Why the socket ended, once it did: this side's end ([readEnd]) or the transport's failure; null while it stands. */
     private fun ended(): Throwable? = if (closeBegun || localEnd) readEnd() else transportFailure
@@ -291,7 +303,8 @@ public class TlsSocket private constructor(
         } catch (e: CancellationException) {
             // the close cancels the session's input under a relay that came after it (TlsConnection.cancelInput), and the
             // socket's end cancels the relay: the channel takes this side's end, not that cancellation
-            if (localEnd) readDelivery.fail(channel, readEnd())
+            // (the session's input pump can be cancelled with the socket, and reach an idle relay before the link above runs)
+            if (localEnd || socketCancelling()) readDelivery.fail(channel, ended() ?: readEnd())
             throw e
         } catch (e: Throwable) {
             // this side ended the socket ([abortTls] ends the session under the relay, a failed stream of the application's
@@ -396,7 +409,7 @@ public class TlsSocket private constructor(
 
                         e is CancellationException -> {
                             // ended for the socket's end: the channel takes that end, not the pump's cancellation
-                            if (closeBegun || localEnd) channel.cancel(pumpEndCause())
+                            if (closeBegun || localEnd || socketCancelling()) channel.cancel(pumpEndCause())
                         }
 
                         appFailure -> {
