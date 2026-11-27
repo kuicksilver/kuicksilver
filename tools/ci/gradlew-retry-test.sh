@@ -2,14 +2,20 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
 # Tests gradlew-retry.sh with a fake ./gradlew and a fake sleep: one more run, with --refresh-dependencies and the same
-# arguments, after a dependency was not found; up to three more, plain and after doubling pauses, after a 429 or 5xx; and
-# never after a failing test or a dependency verification failure, whatever 429 or 5xx the same log shows.
+# arguments, after a dependency was not found; up to four more (KSL_GRADLE_RETRY_MAX), plain, after a 429 or 5xx, each
+# after a pause drawn from a window that doubles up to a cap (KSL_GRADLE_RETRY_CAP); never after a failing test or a
+# dependency verification failure, whatever 429 or 5xx the same log shows. The random pauses are checked against their
+# windows on every case, and deterministically with KSL_GRADLE_RETRY_SEED: one seed gives one sequence (pinned below),
+# other seeds others, and the jobs of a matrix do not come back in lockstep.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 fails=0
+last_sleeps=""
 # case_run <name> <expected exit> <runs: - for the first, then R (refreshed) or P (plain) per retry> <outputs, one per run:
 # ok|module|file|get|crlf|tests|both|verify|plugin|range|method|429|503|403|v429|v429asc|vmismatch|vone|vkey|vsum|vgroup|vansi|vnohead|a429|t429>
-# (MAX: KSL_GRADLE_RETRY_MAX; LOG=1: every run appended to KSL_GRADLE_RETRY_LOG, which must keep the first run's errors)
+# (MAX: KSL_GRADLE_RETRY_MAX, unset: the script's default; CAP: KSL_GRADLE_RETRY_CAP; SEED: KSL_GRADLE_RETRY_SEED; LOG=1:
+# every run appended to KSL_GRADLE_RETRY_LOG, which must keep the first run's errors; the pauses of the last case are left
+# in $last_sleeps, one per line)
 case_run() {
   local name=$1 want_rc=$2 want_runs=$3
   shift 3
@@ -76,8 +82,12 @@ G
   : > "$dir/sleeps"
   local rc=0 delay=${DELAY:-0} keep=""
   [ "${LOG:-0}" = 1 ] && keep="$dir/kept.log" && echo "an earlier step" > "$keep"
-  (cd "$dir" && PATH="$dir/bin:$PATH" KSL_GRADLE_RETRY_DELAY="$delay" KSL_GRADLE_RETRY_QUIET="${QUIET:-0}" \
-    KSL_GRADLE_RETRY_MAX="${MAX:-3}" KSL_GRADLE_RETRY_LOG="$keep" \
+  local knobs=()
+  [ -z "${MAX:-}" ] || knobs+=("KSL_GRADLE_RETRY_MAX=$MAX")
+  [ -z "${CAP:-}" ] || knobs+=("KSL_GRADLE_RETRY_CAP=$CAP")
+  [ -z "${SEED:-}" ] || knobs+=("KSL_GRADLE_RETRY_SEED=$SEED")
+  (cd "$dir" && env PATH="$dir/bin:$PATH" KSL_GRADLE_RETRY_DELAY="$delay" KSL_GRADLE_RETRY_QUIET="${QUIET:-0}" \
+    KSL_GRADLE_RETRY_LOG="$keep" ${knobs[@]+"${knobs[@]}"} \
     bash "$here/gradlew-retry.sh" --stacktrace :a:b > out.log 2>&1) || rc=$?
   if [ "${QUIET:-0}" = 1 ] && { { [ "$1" = ok ] && [ -s "$dir/out.log" ]; } || { [ "$1" != ok ] && ! grep -q . "$dir/out.log"; }; }; then
     echo "FAIL $name (quiet): output '$(cat "$dir/out.log")'"; fails=$((fails + 1))
@@ -88,15 +98,18 @@ G
   done
   [ "$rc" -eq "$want_rc" ] || bad+=" exit $rc (want $want_rc);"
   [ "$(cat "$dir/args")"$'\n' = "$want_args" ] || bad+=" runs: $(tr '\n' '|' < "$dir/args") (want $(tr '\n' '|' <<< "${want_args%$'\n'}"));"
-  # pauses: a refreshed retry after a miss waits DELAY; the k-th overloaded retry waits DELAY * 2^(k-1) plus less than DELAY
-  if [ -n "${WANT_PAUSES:-}" ]; then
-    k=0
-    while IFS= read -r s; do
-      k=$((k + 1)); lo=$(( delay * (1 << (k - 1)) ))
-      [ "$s" -ge "$lo" ] && [ "$s" -lt $((lo + delay)) ] || bad+=" pause $k is ${s}s, not in [$lo, $((lo + delay)));"
-    done < "$dir/sleeps"
-    [ "$k" -eq "$WANT_PAUSES" ] || bad+=" $k pauses (want $WANT_PAUSES);"
-  fi
+  # pauses, one before every retry: a refreshed retry after a miss waits within [DELAY, 2 DELAY]; the k-th overloaded
+  # retry within [DELAY, min(CAP, DELAY * 2^k)] (CAP 300 unless set); always whole seconds
+  local cap=${CAP:-300} k=0 p=0 n hi s
+  while IFS= read -r s; do
+    k=$((k + 1)); n=${want_runs:k:1}
+    if [ "$n" = R ]; then hi=$(( delay * 2 )); else p=$((p + 1)); hi=$(( delay << p )); [ "$hi" -le "$cap" ] || hi=$cap; [ "$hi" -ge "$delay" ] || hi=$delay; fi
+    case $s in ''|*[!0-9]*) bad+=" pause $k is '$s', not whole seconds;"; continue ;; esac
+    [ "$s" -ge "$delay" ] && [ "$s" -le "$hi" ] || bad+=" pause $k ($n) is ${s}s, not in [$delay, $hi];"
+  done < "$dir/sleeps"
+  [ "$k" -eq $(( ${#want_runs} - 1 )) ] || bad+=" $k pauses (want $(( ${#want_runs} - 1 )));"
+  [ -z "${WANT_PAUSES:-}" ] || [ "$(tr '\n' ' ' < "$dir/sleeps")" = "$WANT_PAUSES " ] || bad+=" pauses $(tr '\n' ' ' < "$dir/sleeps")(want $WANT_PAUSES);"
+  last_sleeps=$(cat "$dir/sleeps")
   if [ -n "$keep" ]; then   # appended, never overwritten: what was there, then every run with its header and output
     [ "$(head -1 "$keep")" = "an earlier step" ] || bad+=" the log was overwritten;"
     [ "$(grep -c '^=== gradlew-retry.sh: run ' "$keep")" -eq "${#want_runs}" ] || bad+=" not every run is in the log;"
@@ -122,11 +135,38 @@ case_run "negative_aVerificationFailureNextToAMissingModuleIsNeverRetried" 1 - v
 # 429 and 5xx: plain retries (no --refresh-dependencies: one request per cached module) after doubling pauses, three at most
 case_run "a 429 is retried without refreshing" 0 -P 429 ok
 case_run "a 503 on HEAD is retried without refreshing" 0 -P 503 ok
-DELAY=30 WANT_PAUSES=3 case_run "429 three times: three retries with doubling pauses, then passes" 0 -PPP 429 429 429 ok
-DELAY=30 WANT_PAUSES=3 case_run "negative_429ToTheEndFailsAfterThreeRetries" 1 -PPP 429 429 429 429 ok
-case_run "a 429, then a file not found: the refreshed retry follows" 0 -PR 429 file ok
-case_run "a file not found, then three 429s: one refresh and three plain retries" 0 -RPPP file 429 429 429 ok
-case_run "negative_aFileNotFoundThen429ToTheEndStopsAfterFiveRuns" 1 -RPPP file 429 429 429 429 ok
+DELAY=30 case_run "429 four times: four retries within growing windows, then passes" 0 -PPPP 429 429 429 429 ok
+DELAY=30 case_run "negative_429ToTheEndFailsAfterFourRetries" 1 -PPPP 429 429 429 429 429 ok
+DELAY=30 MAX=3 case_run "negative_max3_429ToTheEndFailsAfterThreeRetries" 1 -PPP 429 429 429 429 ok
+DELAY=30 MAX=6 case_run "the windows stop growing at the cap (300 s)" 0 -PPPPPP 429 429 429 429 429 429 ok
+DELAY=30 CAP=100 case_run "KSL_GRADLE_RETRY_CAP caps the window" 0 -PPPP 429 429 429 429 ok
+DELAY=30 CAP=10 case_run "a cap below the delay leaves the delay" 0 -PP 429 429 ok
+DELAY=30 case_run "a 429, then a file not found: the refreshed retry follows" 0 -PR 429 file ok
+DELAY=30 case_run "a file not found, then four 429s: one refresh and four plain retries" 0 -RPPPP file 429 429 429 429 ok
+MAX=3 case_run "negative_aFileNotFoundThen429ToTheEndStopsAfterFiveRuns" 1 -RPPP file 429 429 429 429 ok
+# jitter, deterministic: one seed gives one sequence on every bash (a 31-bit LCG, pinned here), the same twice
+DELAY=30 SEED=1 WANT_PAUSES="35 55 226 201" case_run "seed 1: the pinned pauses" 0 -PPPP 429 429 429 429 ok
+DELAY=30 SEED=1 case_run "seed 1 again" 0 -PPPP 429 429 429 429 ok
+[ "$(tr '\n' ' ' <<< "$last_sleeps")" = "35 55 226 201 " ] || { echo "FAIL seed 1 is not repeatable: $last_sleeps"; fails=$((fails + 1)); }
+DELAY=30 SEED=2 case_run "seed 2" 0 -PPPP 429 429 429 429 ok
+[ "$(tr '\n' ' ' <<< "$last_sleeps")" != "35 55 226 201 " ] || { echo "FAIL seeds 1 and 2 give the same pauses"; fails=$((fails + 1)); }
+# no lockstep: twenty jobs refused together (seeds 1-20, as twenty PIDs would) spread over the first window
+firsts=""
+for seed in $(seq 1 20); do DELAY=30 SEED=$seed case_run "seed $seed, one 429" 0 -P 429 ok > /dev/null; firsts+="$last_sleeps"$'\n'; done
+distinct=$(grep -c . <<< "$(sort -u <<< "$firsts")")
+[ "$distinct" -ge 10 ] || { echo "FAIL 20 jobs drew only $distinct distinct first pauses: $(tr '\n' ' ' <<< "$firsts")"; fails=$((fails + 1)); }
+echo "ok 20 seeds: $distinct distinct first pauses in [30, 60]"
+# unseeded, two runs draw their own (four equal pauses in a row: about 1 in 10^8)
+DELAY=30 case_run "unseeded run 1" 0 -PPPP 429 429 429 429 ok; u1=$last_sleeps
+DELAY=30 case_run "unseeded run 2" 0 -PPPP 429 429 429 429 ok
+[ "$u1" != "$last_sleeps" ] || { echo "FAIL two unseeded runs drew the same pauses: $u1"; fails=$((fails + 1)); }
+# a knob that is not a whole number refuses to run (exit 2) rather than guess
+for knob in KSL_GRADLE_RETRY_DELAY=x KSL_GRADLE_RETRY_CAP=-5 KSL_GRADLE_RETRY_MAX=1.5 KSL_GRADLE_RETRY_SEED=abc; do
+  d=$(mktemp -d); printf '#!/usr/bin/env bash\necho ran >> runs; exit 1\n' > "$d/gradlew"; chmod +x "$d/gradlew"
+  rc=0; (cd "$d" && env "$knob" bash "$here/gradlew-retry.sh" help > out.log 2>&1) || rc=$?
+  if [ "$rc" -eq 2 ] && [ ! -e "$d/runs" ]; then echo "ok negative_$knob refuses"; else echo "FAIL $knob: exit $rc, ran: $([ -e "$d/runs" ] && echo yes || echo no)"; fails=$((fails + 1)); fi
+  rm -rf "$d"
+done
 # dependency verification: never retried, whatever 429 or 5xx the log shows (with Gradle's default console a tampered file
 # whose signature request was refused looks like an overloaded server)
 case_run "negative_aVerificationFailureWhosePomsWereRefusedIsNeverRetried" 1 - v429 ok
