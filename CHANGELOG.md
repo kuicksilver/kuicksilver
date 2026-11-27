@@ -1799,6 +1799,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/2 body, cancelled while it was read: the cancel emptied the body's buffer from its own thread while the reader
+  (Ktor's copier into the application's channel, in `HttpStatement.execute {}`) read it on another, so `Buffer.clear`
+  threw an EOFException out of `cancel` (or the read lost its bytes), the stream was never reset with CANCEL (RFC 9113
+  section 8.1) and the call's resources stayed open. A reader waiting for content also saw the stream's own
+  cancellation instead of the cancel's cause. The cancel now only fails the body, once (the first cause stays, a second
+  cancel does nothing), wakes a waiting reader and resets the stream; the reader drops the buffer itself. The HTTP/1.1
+  connection input (a socket timeout's cancel during a body read) and the request body's activity counter had the same
+  buffer race and are fixed the same way; the HTTP/3 body (a ktor-io channel, whose cancel never touches the buffer)
+  did not.
 - QUIC client, rejected 0-RTT: the server's 0.5-RTT flight was read before the rejection. A 1-RTT packet held for its
   key was replayed when the key arrived, a step before the handshake's end settled the 0-RTT (RFC 9001 section 4.6.2).
   The rejection then restarted the connection's credit and stream limits at the server's transport parameters, so a
