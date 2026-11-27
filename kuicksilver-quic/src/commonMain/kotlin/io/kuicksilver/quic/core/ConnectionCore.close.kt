@@ -44,23 +44,62 @@ internal fun utf8Prefix(
 }
 
 /**
- * Everything this side sent was acknowledged and nothing waits to be sent again: no ack-eliciting packet is in flight in a
- * space whose keys are still held, no probe is due, and no CRYPTO data, stream control frame (RESET_STREAM, STOP_SENDING,
- * the flow-control updates) or connection ID frame waits for a packet. A frame of a lost packet is queued again (RFC 9002
- * section 6), so it is in one of these until the peer acknowledged the packet that carried it. Stream data waiting for the
- * peer's credit is not counted: only the peer can release it. True once the connection is closing, draining or closed: it
- * sends nothing more but its CONNECTION_CLOSE.
+ * Why something this side sent still waits for the peer, or null when nothing does ([sendsSettled]): an ack-eliciting
+ * packet in flight in a space whose keys are still held, a probe due, or CRYPTO data, a stream control frame
+ * (RESET_STREAM, STOP_SENDING, a RESET_STREAM_AT queued once its reliable bytes went out, the flow-control updates), a
+ * connection ID frame or stream data the stream may send now (new or queued again after a loss, also while the pacer
+ * holds it) waiting for a packet. A frame of a lost packet is queued again (RFC 9002 section 6), so it is in one of these
+ * until the peer acknowledged the packet that carried it. Stream data blocked on the peer's credit is not counted (the
+ * scheduler drops such a stream until credit comes): only the peer can release it, and its reliable bytes hold a
+ * RESET_STREAM_AT back with it. Null once the connection is closing, draining or closed: it sends nothing more but its
+ * CONNECTION_CLOSE.
  */
-internal fun ConnectionCore.sendsSettled(): Boolean {
-    if (state == ConnectionState.Closing || state == ConnectionState.Draining || state == ConnectionState.Closed) return true
+internal fun ConnectionCore.sendsUnsettled(): String? {
+    if (state == ConnectionState.Closing || state == ConnectionState.Draining || state == ConnectionState.Closed) return null
     for (space in SpaceId.entries) {
         if (spaceDiscarded[space.ordinal]) continue
-        if (loss.space(space).ackElicitingInFlight > 0 || probePending[space.ordinal] > 0) return false
+        val inFlight = loss.space(space).ackElicitingInFlight
+        if (inFlight > 0) return "${space.name}: $inFlight ack-eliciting packet(s) in flight"
+        if (probePending[space.ordinal] > 0) return "${space.name}: a probe is due"
     }
-    if (!spaceDiscarded[SpaceId.Initial.ordinal] && cryptoStreams.send[0].hasPending) return false
-    if (!spaceDiscarded[SpaceId.Handshake.ordinal] && cryptoStreams.send[2].hasPending) return false
-    if (cryptoStreams.send[3].hasPending) return false
-    return !streams.hasControlFrames() && !cids.hasPendingFrames()
+    if (!spaceDiscarded[SpaceId.Initial.ordinal] && cryptoStreams.send[0].hasPending) return "Initial CRYPTO data waits"
+    if (!spaceDiscarded[SpaceId.Handshake.ordinal] && cryptoStreams.send[2].hasPending) return "Handshake CRYPTO data waits"
+    if (cryptoStreams.send[3].hasPending) return "1-RTT CRYPTO data waits"
+    if (streams.hasControlFrames()) return "stream control frames wait"
+    if (cids.hasPendingFrames()) return "connection ID frames wait"
+    if (streams.hasStreamData()) return "stream data waits"
+    return null
+}
+
+/** [sendsUnsettled] is null: everything this side sent was acknowledged and nothing waits to be sent. */
+internal fun ConnectionCore.sendsSettled(): Boolean = sendsUnsettled() == null
+
+/**
+ * Before a close: every space's unacknowledged frames are queued again and the next datagram goes as a probe, now
+ * instead of at the next probe timeout. The PTO backoff stays as it is (RFC 9002 section 6.2.1: it grows only when the
+ * timer expires, and this is no expiry), so a loss just before the close does not leave the last frames to a timer that
+ * the backoff has put seconds away. RFC 9002 section 6.2.4 lets a probe carry any data, unacknowledged data included;
+ * only the one probe datagram is exempt from the congestion window (section 7.5), the rest of what is queued again goes
+ * within it. The same as when the active address comes back (`resendInFlightAtOnce`). No-op once closing.
+ */
+internal fun ConnectionCore.probeUnsettledNow() {
+    if (state == ConnectionState.Closing || state == ConnectionState.Draining || state == ConnectionState.Closed) return
+    for (space in SpaceId.entries) {
+        if (spaceDiscarded[space.ordinal] || loss.space(space).ackElicitingInFlight <= 0) continue
+        if (probePending[space.ordinal] < 1) probePending[space.ordinal] = 1
+        requeueForProbe(space, Int.MAX_VALUE)
+    }
+}
+
+/**
+ * A closing connection sends its CONNECTION_CLOSE once more at the next poll, whatever the rate limit of its answers
+ * (RFC 9000 section 10.2.1 lets the closing packet be sent again, and limits only the rate): true when it is closing (not
+ * draining: a peer that closed too wants nothing more).
+ */
+internal fun ConnectionCore.repeatCloseNow(): Boolean {
+    if (state != ConnectionState.Closing || closeFrame == null) return false
+    closeSent = false
+    return true
 }
 
 /** The closing or draining period starts now: it ends 3 x the current PTO from now (RFC 9000 section 10.2). */

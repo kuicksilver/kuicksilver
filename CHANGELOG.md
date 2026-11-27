@@ -1805,8 +1805,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   closed the socket (RFC 9000 section 10.2 allows that), so loss recovery never repeated a reset still in flight. A
   server whose receive buffer the upload had filled (about 208 KiB by default on Linux and Android) lost both and
   learned of neither. The engine's close now gives each HTTP/3 connection up to 1 s, as an HTTP/1.1 connection's
-  close_notify, for the server to acknowledge what it sent: the reset is repeated until it arrives, and the
-  CONNECTION_CLOSE follows. Found on the API 24 emulator by the vendored contract test
+  close_notify and at the same time as those, for the server to acknowledge what it sent: the unacknowledged frames go
+  again at once as a probe and once more halfway through (RFC 9002 section 6.2.4; the probe timeout's backoff is left
+  as it is), the client's WebTransport sessions on it are closed first, and the connection then closes with
+  H3_NO_ERROR and repeats its CONNECTION_CLOSE once a probe timeout later (at most 250 ms; RFC 9000 section 10.2.1).
+  Found on the API 24 emulator by the vendored contract test
   `HttpTimeoutTest.testSocketTimeoutWriteFailOnWritePerRequestAttributes` (`H3OrderlyCloseTest`).
 - HTTP/2 body, cancelled while it was read: the cancel emptied the body's buffer from its own thread while the reader
   (Ktor's copier into the application's channel, in `HttpStatement.execute {}`) read it on another, so `Buffer.clear`

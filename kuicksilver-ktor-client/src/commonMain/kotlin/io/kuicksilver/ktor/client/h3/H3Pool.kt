@@ -82,8 +82,12 @@ import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TransportError
 import io.kuicksilver.quic.activePath
 import io.kuicksilver.quic.awaitSendsSettled
+import io.kuicksilver.quic.currentPto
 import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.quic.loopbackLocalFor
+import io.kuicksilver.quic.probeUnsettled
+import io.kuicksilver.quic.repeatClose
+import io.kuicksilver.quic.sendsUnsettled
 import io.kuicksilver.quic.unmappedLiteral
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -97,6 +101,7 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.joinAll
@@ -1046,35 +1051,82 @@ internal class H3Pool(
 
     /**
      * Before [close], once the engine's calls are over: each open connection gets up to [ORDERLY_CLOSE_TIMEOUT] (as an
-     * HTTP/1.1 connection's close_notify) for the peer to acknowledge what it sent, so the CONNECTION_CLOSE that closing the
-     * endpoints sends does not go out over undelivered frames. That close is sent once and the socket closes after it (RFC
+     * HTTP/1.1 connection's close_notify) for the peer to acknowledge what it sent, so its close does not go out over
+     * undelivered frames, and then closes with H3_NO_ERROR, repeating the CONNECTION_CLOSE once a probe timeout later
+     * (at most [CLOSE_REPEAT_CAP]). Closing the endpoints sends the close once and closes the socket right after it (RFC
      * 9000 section 10.2 allows it), so a frame still in flight then was never repeated: a call that failed just before (a
      * socket timeout during the upload, a cancellation) reset its stream with H3_REQUEST_CANCELLED (RFC 9114 section 4.1.1),
-     * and when that packet and the close were both lost (a server whose receive buffer the upload had filled: about 208 KiB
-     * on Linux and Android by default), the server learned of neither, and kept the request and the connection until its
-     * idle timeout (30 s; found on the API 24 emulator by the vendored contract test
-     * `testSocketTimeoutWriteFailOnWritePerRequestAttributes`). Waiting, loss recovery (RFC 9002 section 6) repeats them until
-     * they are acknowledged; an acknowledgment also tells that the server read what came before, so the close then finds
-     * room. Connections still being set up are not waited for.
+     * and when that packet and the close were both lost (a server whose receive buffer the upload had filled: about 208
+     * KiB on Linux and Android by default), the server learned of neither, and kept the request and the connection until
+     * its idle timeout (30 s; found on the API 24 emulator by the vendored contract test
+     * `testSocketTimeoutWriteFailOnWritePerRequestAttributes`). Now the unacknowledged frames go again at once as a probe
+     * (`probeUnsettled`, no wait for a probe timeout that a backoff may have put past the bound), and again halfway
+     * through the bound; loss recovery (RFC 9002 section 6) repeats them meanwhile. An acknowledgment also tells that the
+     * server read what came before, so the close then finds room; the close's one repeat covers a close lost on its own
+     * (quic-go and picoquic answer packets in their closing state; a peer that lost the close may send none). The
+     * client's WebTransport sessions on a connection are closed first (WT_CLOSE_SESSION, section 6 of
+     * draft-ietf-webtrans-http3), within the same bound. Connections still being set up are not waited for.
      */
-    suspend fun awaitSendsSettled() {
+    suspend fun closeOrderly() {
         val open =
             lock.withLock {
-                (connections.values + retired).mapNotNull { it.deferred.getCompletedOrNull() }.filter { !it.ended() }.distinct()
+                (connections.values + retired + wtExtras.values.flatten())
+                    .mapNotNull { it.deferred.getCompletedOrNull() }
+                    .filter { !it.ended() }
+                    .distinct()
             }
         if (open.isEmpty()) return
+        val wt = sessions.load()
         val bound = orderlyCloseTimeoutForTest
         coroutineScope {
-            for (c in open) {
-                launch {
-                    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
-                    withTimeoutOrNull(bound) { c.quic.awaitSendsSettled() }
-                }
-            }
+            for (c in open) launch { closeOrderly(c, wt.filter { it.second === c }.map { it.first }, bound) }
         }
     }
 
-    /** The bound of [awaitSendsSettled], [ORDERLY_CLOSE_TIMEOUT] (a test hook). */
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    private suspend fun closeOrderly(
+        c: Http3Connection,
+        wt: List<io.kuicksilver.http3.WebTransportSession>,
+        bound: kotlin.time.Duration,
+    ) {
+        val q = c.quic
+        val started =
+            kotlin.time.TimeSource.Monotonic
+                .markNow()
+        settleStartedForTest?.invoke(c)
+        val settled =
+            withTimeoutOrNull(bound) {
+                coroutineScope { for (session in wt) launch { runCatching { session.close() } } }
+                q.probeUnsettled()
+                withTimeoutOrNull(bound / 2 - started.elapsedNow()) { q.awaitSendsSettled() } ?: run {
+                    q.probeUnsettled() // the first probe went into the same loss: once more, still before any backoff
+                    q.awaitSendsSettled()
+                }
+            }
+        val outcome =
+            when (settled) {
+                true -> SettleOutcome.Settled
+                false -> SettleOutcome.Ended
+                null -> SettleOutcome.TimedOut
+            }
+        settledForTest?.invoke(c, outcome, if (outcome == SettleOutcome.TimedOut) q.sendsUnsettled() else null, started.elapsedNow())
+        if (outcome == SettleOutcome.Ended || c.ended()) return
+        runCatching { c.close(io.kuicksilver.http3.Http3ErrorCode.NO_ERROR, "") }
+        val pto = q.currentPto() ?: return
+        delay(minOf(pto, CLOSE_REPEAT_CAP))
+        q.repeatClose()
+    }
+
+    /** How one connection's wait in [closeOrderly] ended (tests). */
+    internal enum class SettleOutcome { Settled, Ended, TimedOut }
+
+    /** Test hook: [closeOrderly] starts waiting for a connection. */
+    internal var settleStartedForTest: ((Http3Connection) -> Unit)? = null
+
+    /** Test hook: how a connection's wait in [closeOrderly] ended, what it still waited for when it timed out, and how long it took. */
+    internal var settledForTest: ((Http3Connection, SettleOutcome, String?, kotlin.time.Duration) -> Unit)? = null
+
+    /** The bound of [closeOrderly], [ORDERLY_CLOSE_TIMEOUT] (a test hook). */
     internal var orderlyCloseTimeoutForTest: kotlin.time.Duration = ORDERLY_CLOSE_TIMEOUT
 
     fun close() {
@@ -2746,6 +2798,12 @@ internal class H3Pool(
                 )
             }
         }
+
+        /**
+         * The longest wait in [closeOrderly] before a closing connection repeats its CONNECTION_CLOSE (one probe timeout,
+         * capped): with [ORDERLY_CLOSE_TIMEOUT] it stays below the leak sentinel's 1.5 s slow-teardown mark.
+         */
+        val CLOSE_REPEAT_CAP = 250.milliseconds
 
         /** How long `closeHttp3Connections()` waits for each GOAWAY to be written (WT_DRAIN_SESSION has drain()'s own 5 s). */
         val GOAWAY_TIMEOUT = 5.seconds

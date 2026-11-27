@@ -1430,7 +1430,7 @@ so nothing leaves after the wait (on macOS a server that stopped reading, its re
 until it sends something itself); an HTTP/2 or HTTP/3 stream is reset), 5 s for the server's close of the transport (then the client
 closes its side cleanly), and over HTTP/2 and HTTP/3 5 s more for the server's END_STREAM or FIN after the client's own
 (then the stream is reset). The session's end handlers are cut off two close waits after the session ended, whatever
-they still wait for. The pools close after that, as for any request (at most about 3 s more). The connection, its pool slot and the engine's
+they still wait for. The pools close after that, as for any request (at most about 3 s more: the HTTP/1.1 and HTTP/2 connections' orderly closes, and at the same time each HTTP/3 connection's wait of up to 1 s for the server to acknowledge what it sent, then its close, repeated once a probe timeout later, at most 250 ms). The connection, its pool slot and the engine's
 `close()` wait for the session, not for the call: `client.close()` right after `close(reason)` still sends the Close
 before the pools close. A call that fails or is cancelled before the session queued its Close still closes it with the
 closing handshake (RFC 6455 sections 7.1.7 and 7.3): one Close, 1001 Going Away (or the application's own code when it sends

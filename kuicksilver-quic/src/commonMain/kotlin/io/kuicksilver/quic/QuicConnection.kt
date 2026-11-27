@@ -239,14 +239,41 @@ public val QuicConnection.sniSelectedFor: String?
 
 /**
  * Suspends until everything this side sent on [this] connection was acknowledged and nothing waits to be sent again (a
- * lost frame's content goes out once more, RFC 9002 section 6), or until the connection is closing or gone. For a close
- * that should not take the last frames with it: CONNECTION_CLOSE is sent once and the socket may close right after it (RFC
- * 9000 section 10.2), so a RESET_STREAM or STOP_SENDING still in flight then is never repeated and the peer learns of
- * neither until its idle timeout. Not bounded: the caller bounds the wait (a peer that does not acknowledge holds it
- * forever). Stream data waiting for the peer's credit does not hold it. Returns at once for a connection that is not an
- * endpoint's.
+ * lost frame's content goes out once more, RFC 9002 section 6), and returns true; returns false when the connection
+ * closed or ended first. For a close that should not take the last frames with it: CONNECTION_CLOSE goes out once and the
+ * socket may close right after it (RFC 9000 section 10.2), so a RESET_STREAM or STOP_SENDING still in flight then is
+ * never repeated and the peer learns of neither until its idle timeout. Not bounded: the caller bounds the wait (a peer
+ * that does not acknowledge holds it forever). Stream data blocked on the peer's credit does not hold it; see
+ * [sendsUnsettled] for what does. Returns true at once for a connection that is not an endpoint's.
  */
 @io.kuicksilver.annotations.InternalKuicksilverApi
-public suspend fun QuicConnection.awaitSendsSettled() {
-    (this as? io.kuicksilver.quic.runtime.ConnectionRuntime)?.awaitSendsSettled()
+public suspend fun QuicConnection.awaitSendsSettled(): Boolean =
+    (this as? io.kuicksilver.quic.runtime.ConnectionRuntime)?.awaitSendsSettled() ?: true
+
+/** What [awaitSendsSettled] still waits for on [this] connection, null when nothing (or not an endpoint's connection). */
+@io.kuicksilver.annotations.InternalKuicksilverApi
+public suspend fun QuicConnection.sendsUnsettled(): String? = (this as? io.kuicksilver.quic.runtime.ConnectionRuntime)?.sendsUnsettled()
+
+/**
+ * Queues every unacknowledged frame of [this] connection again and sends at once, the first datagram as a probe (RFC 9002
+ * section 6.2.4: a probe may carry any data; the probe timeout and its backoff are left as they are, as this is no
+ * expiry of the timer). Before a close whose last frames may have been lost: the next probe timeout can be seconds away
+ * after a backoff. No-op once the connection is closing or gone.
+ */
+@io.kuicksilver.annotations.InternalKuicksilverApi
+public suspend fun QuicConnection.probeUnsettled() {
+    (this as? io.kuicksilver.quic.runtime.ConnectionRuntime)?.probeUnsettled()
 }
+
+/**
+ * A connection closed by this side ([QuicConnection.close]) and still in its closing state sends its CONNECTION_CLOSE once
+ * more (RFC 9000 section 10.2.1 lets the closing packet be sent again; the rate is the caller's to limit): true when it
+ * went out, false when the connection is not closing (draining after the peer's close, or gone).
+ */
+@io.kuicksilver.annotations.InternalKuicksilverApi
+public suspend fun QuicConnection.repeatClose(): Boolean = (this as? io.kuicksilver.quic.runtime.ConnectionRuntime)?.repeatClose() ?: false
+
+/** The current probe timeout of [this] connection (RFC 9002 section 6.2.1, without the backoff); null when not an endpoint's. */
+@io.kuicksilver.annotations.InternalKuicksilverApi
+public suspend fun QuicConnection.currentPto(): kotlin.time.Duration? =
+    (this as? io.kuicksilver.quic.runtime.ConnectionRuntime)?.currentPto()

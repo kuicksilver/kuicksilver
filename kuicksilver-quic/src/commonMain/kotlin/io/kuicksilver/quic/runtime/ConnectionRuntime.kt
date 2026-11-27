@@ -38,9 +38,13 @@ import io.kuicksilver.quic.core.fail
 import io.kuicksilver.quic.core.failInternal
 import io.kuicksilver.quic.core.localCidBySeq
 import io.kuicksilver.quic.core.localCidSeqOn
+import io.kuicksilver.quic.core.probeUnsettledNow
+import io.kuicksilver.quic.core.pto
 import io.kuicksilver.quic.core.remoteCidOn
 import io.kuicksilver.quic.core.remoteCidSeqOn
+import io.kuicksilver.quic.core.repeatCloseNow
 import io.kuicksilver.quic.core.sendsSettled
+import io.kuicksilver.quic.core.sendsUnsettled
 import io.kuicksilver.quic.core.silentClose
 import io.kuicksilver.quic.core.takeReceivedTokens
 import io.kuicksilver.quic.emit
@@ -1331,25 +1335,55 @@ internal class ConnectionRuntime(
             true
         }
 
-    /** `QuicConnection.awaitSendsSettled`: checked on the loop after every poll, which every acknowledgment and loss is followed by. */
-    internal suspend fun awaitSendsSettled() {
+    /**
+     * `QuicConnection.awaitSendsSettled`: checked on the loop after every poll, which every acknowledgment, loss and timer
+     * is followed by. True once settled, false when the connection ended first.
+     */
+    internal suspend fun awaitSendsSettled(): Boolean =
         withContext(loop.dispatcher) {
             val ticker = newTicker()
             try {
-                while (!finished && !core.sendsSettled()) {
+                while (!core.sendsSettled()) {
+                    if (finished) return@withContext false
                     try {
                         ticker.receive()
                     } catch (e: CancellationException) {
                         throw e
                     } catch (_: Throwable) {
-                        return@withContext // the connection ended: its tickers close with its reason
+                        return@withContext false // the connection ended: its tickers close with its reason
                     }
                 }
+                // settled, unless it is because the connection is closing or gone (it then sends nothing more)
+                !finished && core.state != ConnectionState.Closing && core.state != ConnectionState.Draining &&
+                    core.state != ConnectionState.Closed
             } finally {
                 removeTicker(ticker)
             }
         }
+
+    /** `QuicConnection.sendsUnsettled`: [ConnectionCore.sendsUnsettled] read on the loop; "connection ended" once it did. */
+    internal suspend fun sendsUnsettled(): String? =
+        withContext(loop.dispatcher) { if (finished) "connection ended" else core.sendsUnsettled() }
+
+    /** `QuicConnection.probeUnsettled`: [ConnectionCore.probeUnsettledNow], then a flush. */
+    internal suspend fun probeUnsettled() {
+        withContext(loop.dispatcher) {
+            if (finished) return@withContext
+            core.probeUnsettledNow()
+            loop.flush(core)
+        }
     }
+
+    /** `QuicConnection.repeatClose`: [ConnectionCore.repeatCloseNow], then a flush; false when nothing was sent again. */
+    internal suspend fun repeatClose(): Boolean =
+        withContext(loop.dispatcher) {
+            if (!core.repeatCloseNow()) return@withContext false
+            loop.flush(core)
+            true
+        }
+
+    /** The connection's current probe timeout (RFC 9002 section 6.2.1, without the backoff), read on the loop. */
+    internal suspend fun currentPto(): kotlin.time.Duration = withContext(loop.dispatcher) { core.pto() }
 
     override suspend fun exportKeyingMaterial(
         label: String,
