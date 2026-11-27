@@ -43,11 +43,15 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
+
+/** The call's failure when a new HTTP/2 connection takes no request (H1Pool). */
+private const val REFUSAL = "the server took no request on a new HTTP/2 connection (GOAWAY or SETTINGS_MAX_CONCURRENT_STREAMS 0)"
 
 /**
  * HTTP/2 on the TCP path (RFC 9113; docs/guide/client.md, "HTTP/2 on the client"): ALPN `h2`, one multiplexed connection per route, the
@@ -415,6 +419,45 @@ class ClientH2Test {
         }
 
     /**
+     * RFC 9113 section 8.7: a pooled connection that is lost under a reserved stream (the server fails its side: its TLS
+     * layer sends internal_error, and the client's TLS layer reports the loss) never carried the request, which is
+     * repeated on a new connection and succeeds. The connection had worked (the server's SETTINGS came), so a TLS failure
+     * among the loss's causes is no reason to give up, unlike a handshake refusal (ClientMissingCertificateTest).
+     */
+    @Test fun aPooledConnectionLostUnderAReservedStreamIsRepeated() =
+        clientTest {
+            val drop = CompletableDeferred<Unit>()
+            tlsWithSilentUdp(listOf("h2"), silentUdp = false, handler = { index, _, input, output ->
+                if (index == 0) {
+                    launch {
+                        drop.await()
+                        output.cancel(kotlinx.io.IOException("the server's handler failed")) // internal_error, then FIN
+                    }
+                }
+                rawH2Server(input, output)
+            }) { port ->
+                val listener = EventRecorder()
+                testClient(engine = { observability { eventListener = listener } }).use { c ->
+                    assertEquals(200, c.get("https://127.0.0.1:$port/1").status.value)
+                    val pool = engine(c).h1
+                    val first = pool.h2.connectionsForTest().single()
+                    val once = AtomicInt(0)
+                    pool.obtainedForTest = {
+                        // the second call holds its reserved stream on the pooled connection while that connection is lost
+                        if (once.addAndFetch(1) == 1) {
+                            drop.complete(Unit)
+                            withTimeout(10.seconds) { first.client.awaitClosed() }
+                        }
+                    }
+                    val r = c.get("https://127.0.0.1:$port/2")
+                    assertEquals(200, r.status.value)
+                    assertEquals(2, r.kuicksilverDiagnostics!!.attempts, "the request went again on a new connection")
+                    assertEquals(1, listener.retries.size, "${listener.retries}")
+                }
+            }
+        }
+
+    /**
      * A repeat must not wait for its own first attempt: the refused stream is released before the request goes again, so
      * with one stream and one connection allowed the repeat takes that stream (not a connect timeout).
      */
@@ -675,6 +718,35 @@ class ClientH2Test {
                     val r = c.get("https://127.0.0.1:$port/")
                     assertEquals(HttpProtocolVersion.HTTP_1_1, r.version)
                     assertEquals(FallbackReason.H2Refused, r.kuicksilverDiagnostics!!.fallback)
+                }
+            }
+        }
+
+    /**
+     * A new connection whose server allows no stream (SETTINGS_MAX_CONCURRENT_STREAMS 0) is a refusal, and the call says
+     * so: not the end of the connection the client then shuts down ("GOAWAY and no streams left").
+     */
+    @Test fun negative_aServerThatAllowsNoStreamIsARefusal() =
+        clientTest {
+            tlsH2WithSilentUdp(settings = io.kuicksilver.http2.http2Settings { maxConcurrentStreams = 0 }, onRequest = { _, r ->
+                ok(r)
+            }) { port, _ ->
+                testClient().use { c ->
+                    engine(c).h1.afterH2StartForTest = { client, _ -> client.awaitServerSettings() }
+                    val e = assertFails { c.get("https://127.0.0.1:$port/") }
+                    assertEquals(REFUSAL, e.message, "$e")
+                }
+            }
+        }
+
+    /** The same for a GOAWAY (NO_ERROR, last stream 0) right after the server's preface. */
+    @Test fun negative_anImmediateGoAwayIsARefusal() =
+        clientTest {
+            tlsH2WithSilentUdp(onConnection = { _, c -> c.goAway(Http2ErrorCode.NO_ERROR) }, onRequest = { _, r -> ok(r) }) { port, _ ->
+                testClient().use { c ->
+                    engine(c).h1.afterH2StartForTest = { client, _ -> client.awaitClosed() }
+                    val e = assertFails { c.get("https://127.0.0.1:$port/") }
+                    assertEquals(REFUSAL, e.message, "$e")
                 }
             }
         }

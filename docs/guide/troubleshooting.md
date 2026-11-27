@@ -203,7 +203,7 @@ Decide on `reason`, not on the message text ("certificate verification failed: <
 | `Expired`, `NotYetValid` | 45 | certificate dates, or a wrong device clock |
 | `Revoked`, `UnknownRevocationStatus` | 44, 48 | the platform verifier's revocation policy (JVM PKIX, Apple, Windows soft-fail on the leaf) |
 | `InvalidPurpose` | 43 | the key usage or extended key usage forbids TLS server (or client) authentication |
-| `BadSignature`, `BadEncoding`, `NoCertificate` | 42 | a damaged chain, or a server that requires a client certificate the client did not configure (`identity`; the Ktor client's `tls { identity }`: a call over HTTP/2 then fails with `Http2Exception.ConnectionClosed` carrying the server's alert, one over HTTP/1.1 with the `TlsException` itself) |
+| `BadSignature`, `BadEncoding`, `NoCertificate` | 42 | a damaged chain, or a server that requires a client certificate the client did not configure (`identity`; the Ktor client's `tls { identity }`). The client then gets the server's alert, a `TlsException.AlertReceived` with `description` `certificate_required` and `code` 116 under TLS 1.3, whatever the timing: a call over HTTP/2 fails with `Http2Exception.ConnectionClosed` "the connection was lost: <cause>" (the alert as its cause), one over HTTP/1.1 with the `TlsException` itself, one over HTTP/3 with `TransportClosed(code = 0x0174)` whose `cause` is the alert |
 | `CertificateTransparency` | 46 | Android's CT policy rejected the chain |
 | `Custom(text)` | 46 | your `CertificateVerifier` or the platform said `text` |
 

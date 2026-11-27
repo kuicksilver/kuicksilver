@@ -948,8 +948,20 @@ internal class H1Pool(
                                     data.attributes.getOrNull(io.kuicksilver.ktor.client.KuicksilverDiagnosticsKey)?.h2Refused = true
                                 } else {
                                     // a new connection that takes no request (a GOAWAY at once, SETTINGS_MAX_CONCURRENT_STREAMS 0):
-                                    // the call fails rather than open connection after connection to a server that refuses them
+                                    // the call fails rather than open connection after connection to a server that refuses them.
+                                    // A connection whose transport failed already fails the call with that loss: over TLS 1.3
+                                    // the client's handshake completes before the server checks its certificate, and the
+                                    // server's alert (certificate_required) is what the caller must see, not a refusal. Read
+                                    // before the shutdown below, whose own end ("GOAWAY and no streams left") is no reason,
+                                    // and only a loss with a cause: a refusal ended by the protocol stays a refusal
+                                    val lost =
+                                        (c.client.closeCause as? io.kuicksilver.http2.runtime.Http2Exception.ConnectionClosed)
+                                            ?.takeIf { it.cause != null }
                                     c.client.shutdown()
+                                    lost?.let {
+                                        @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+                                        throw it.copyForCall()
+                                    }
                                     throw kotlinx.io.IOException(
                                         "the server took no request on a new HTTP/2 connection (GOAWAY or SETTINGS_MAX_CONCURRENT_STREAMS 0)",
                                     )
@@ -1307,7 +1319,12 @@ internal class H1Pool(
                             e.cause,
                         )
                     }
-                    if (++h2Repeats > 2) {
+                    // a connection that never worked (the server's SETTINGS never came) because the server refused this
+                    // client in the handshake is not repeated: a new connection meets the same refusal after a full
+                    // handshake (TLS 1.3: the server's certificate_required comes after the client's handshake ended). A
+                    // connection that worked and was then lost (closed, reset, truncated: the TLS layer reports those as
+                    // TlsException.Protocol) is repeated as RFC 9113 section 8.7 allows
+                    if (++h2Repeats > 2 || (!h2c.client.serverSettingsReceived && e.cause.isHandshakeRefusal())) {
                         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                         diagnostics?.connectionWide(h2c.client.closeCause)
                         throw e.cause
@@ -2495,3 +2512,14 @@ internal class TcpProgress {
         }
     }
 }
+
+/**
+ * Whether the causes hold the peer's refusal of this client in the handshake: an alert it sent (but internal_error and
+ * user_canceled, which say nothing about this client), or this side's failed verification of it (but an unknown
+ * revocation status, which may be gone on the next attempt). A transport loss (TlsException.Protocol) is not one.
+ */
+internal fun Throwable.isHandshakeRefusal(): Boolean =
+    generateSequence(this) { it.cause }.any {
+        (it is io.kuicksilver.tls.TlsException.AlertReceived && it.code != 80 && it.code != 90) ||
+            (it is io.kuicksilver.tls.TlsException.Verify && it.reason != io.kuicksilver.tls.VerifyReason.UnknownRevocationStatus)
+    }

@@ -54,9 +54,10 @@ public sealed class ConnectionEndedException(
     /**
      * This side closed the connection, nothing the peer did: the client closed it (`HttpClient.close()`, an idle or
      * expired pooled connection, `the HTTP/2 connection was closed by the client`), an orderly close dropped what was
-     * still to be read (`the connection is closing`), a read came after the TLS socket was closed (`the TLS socket is
-     * closed: nothing more is read`), or the TCP socket itself was closed, aborted or reset by this side while its read
-     * side was open (`Socket closed`, `The connection was aborted`, on Kotlin/Native also `The connection was reset`).
+     * still to be read (`the connection is closing`), a read or a write came after the TLS socket was closed or aborted,
+     * or was waiting as it closed (`the TLS socket is closed: nothing more is read`, `the TLS socket is closed: nothing
+     * more is written`), or the TCP socket itself was closed, aborted or reset by this side while its read side was open
+     * (`Socket closed`, `The connection was aborted`, on Kotlin/Native also `The connection was reset`).
      */
     public class LocalClose
         @InternalKuicksilverApi

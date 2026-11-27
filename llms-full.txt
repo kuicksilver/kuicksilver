@@ -3663,8 +3663,12 @@ harness or an app need not match messages:
   or the socket timeout, or a WebSocket's connect timeout, expired while the whole request was out and only the
   server's answer was awaited. While the request was still going out (a request body the application produces slowly)
   the cut is a plain `IOException`: nothing says whose side stalled.
-- `LocalClose`: this client closed the connection, or read after closing it (`Socket closed`, `The connection was
-  aborted`).
+- `LocalClose`: this client closed or aborted the connection, or read or wrote after that (`Socket closed`, `The
+  connection was aborted`; over TLS `the TLS socket is closed: nothing more is read`, `... nothing more is written`),
+  whatever the timing: never a raw coroutine cancellation. One exception on the write side: a TLS write channel already
+  attached when `close()` begins is closed in order, so that what was queued still goes out, and a write after that fails
+  like one on any closed channel (`ClosedWriteChannelException` without a cause); a write channel opened after the close
+  began, or one an abort ends, fails with `LocalClose`.
 
 A reset is not typed: it stays the platform's exception (a `SocketException` on the JVM and Android, the receive error
 on Kotlin/Native), as does any other failure of the socket. An HTTP/2 call usually fails with
@@ -6305,7 +6309,7 @@ Decide on `reason`, not on the message text ("certificate verification failed: <
 | `Expired`, `NotYetValid` | 45 | certificate dates, or a wrong device clock |
 | `Revoked`, `UnknownRevocationStatus` | 44, 48 | the platform verifier's revocation policy (JVM PKIX, Apple, Windows soft-fail on the leaf) |
 | `InvalidPurpose` | 43 | the key usage or extended key usage forbids TLS server (or client) authentication |
-| `BadSignature`, `BadEncoding`, `NoCertificate` | 42 | a damaged chain, or a server that requires a client certificate the client did not configure (`identity`; the Ktor client's `tls { identity }`: a call over HTTP/2 then fails with `Http2Exception.ConnectionClosed` carrying the server's alert, one over HTTP/1.1 with the `TlsException` itself) |
+| `BadSignature`, `BadEncoding`, `NoCertificate` | 42 | a damaged chain, or a server that requires a client certificate the client did not configure (`identity`; the Ktor client's `tls { identity }`). The client then gets the server's alert, a `TlsException.AlertReceived` with `description` `certificate_required` and `code` 116 under TLS 1.3, whatever the timing: a call over HTTP/2 fails with `Http2Exception.ConnectionClosed` "the connection was lost: <cause>" (the alert as its cause), one over HTTP/1.1 with the `TlsException` itself, one over HTTP/3 with `TransportClosed(code = 0x0174)` whose `cause` is the alert |
 | `CertificateTransparency` | 46 | Android's CT policy rejected the chain |
 | `Custom(text)` | 46 | your `CertificateVerifier` or the platform said `text` |
 
