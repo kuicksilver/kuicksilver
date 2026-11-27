@@ -4241,6 +4241,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.EndpointLifecycleTest.pa
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.EndpointLifecycleTest.refusedClientHearsTheClosePromptly
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.ErrorModelTest.cancellationNeverWrapped
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.ErrorModelTest.connectionCloseFailsStreamsWithSameReason
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.ErrorModelTest.openAfterPeerTransportCloseThrowsTheReason
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.ErrorModelTest.peerTransportErrorSurfaces
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.FinalSizeTest.aFirstReadAfterTheEndStillTellsWhatWasFixedBefore
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.FinalSizeTest.finFixesTheFinalSizeOnBothSidesWithoutReading

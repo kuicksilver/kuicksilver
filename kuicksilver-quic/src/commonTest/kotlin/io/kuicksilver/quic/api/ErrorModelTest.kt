@@ -9,20 +9,22 @@ import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.CoreFixtures
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicClientConfig
+import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.runtime.ConnectionRuntime
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
-import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
@@ -74,18 +76,47 @@ class ErrorModelTest {
         runBlocking {
             ApiPair.open().use { p ->
                 withTimeout(20.seconds) {
-                    val (c, s) = p.connect()
-                    c.core.testInjectHandshakeDone = true
+                    val (c, _) = p.connect()
+                    // the stream is opened before the provocation is armed: once armed, the client's next packet carries it, and
+                    // that may be its ACK of the server's post-handshake flight (HANDSHAKE_DONE, NEW_TOKEN) with no write of
+                    // ours, so the peer's close can land before a later openBidi, which then throws it (QuicConnection.openBidi)
                     val st = c.openBidi()
+                    armClientHandshakeDone(c)
                     runCatching {
                         st.output.writeFully(byteArrayOf(1), 0, 1)
                         st.output.flush()
                     } // the write may already see the close
                     val r = c.closed.await()
                     assertIs<QuicException.ConnectionLost.TransportClosed>(r)
-                    assertEquals(0x0aL, r.code)
+                    assertEquals(0x0aL, r.code) // PROTOCOL_VIOLATION, RFC 9000 section 19.20
                     assertEquals(Initiator.Peer, r.initiator)
                 }
             }
         }
+
+    /** The interleaving that lost [peerTransportErrorSurfaces] its stream on a slow runner: a stream asked for after the peer's close gets that close. */
+    @Test fun openAfterPeerTransportCloseThrowsTheReason() =
+        runBlocking {
+            ApiPair.open().use { p ->
+                withTimeout(20.seconds) {
+                    val (c, _) = p.connect()
+                    armClientHandshakeDone(c)
+                    val r = c.closed.await() // no write of ours: the client's ACK of the server's post-handshake flight carries it
+                    assertIs<QuicException.ConnectionLost.TransportClosed>(r)
+                    assertEquals(0x0aL, r.code)
+                    assertEquals(Initiator.Peer, r.initiator)
+                    // the connection's own reason (on the JVM, coroutines' stack-trace recovery may hand over a copy of it)
+                    for (e in listOf(assertFailsWith<QuicException.ConnectionLost> { c.openBidi() }, assertFailsWith { c.openUni() })) {
+                        assertIs<QuicException.ConnectionLost.TransportClosed>(e)
+                        assertEquals(0x0aL, e.code)
+                        assertEquals(Initiator.Peer, e.initiator)
+                        assertEquals(r.message, e.message)
+                    }
+                }
+            }
+        }
+
+    /** Makes the client's next 1-RTT packet carry HANDSHAKE_DONE, which a server MUST treat as PROTOCOL_VIOLATION (RFC 9000 section 19.20); set on the loop that reads it. */
+    private suspend fun armClientHandshakeDone(c: QuicConnection) =
+        withContext((c as ConnectionRuntime).loopDispatcherForTest) { c.core.testInjectHandshakeDone = true }
 }
