@@ -425,7 +425,7 @@ class ClientPoolTest {
     /**
      * The race's HTTP/1.1 side takes the route's idle connection as its caller is cancelled (HTTP/3 won the race meanwhile):
      * the connection goes back to the pool, idle, instead of staying out of it, open, with nobody to close it (the leak
-     * sentinel's tcp.socket and ksl.ssl in matrix steps 54 and 72). The pool's wait for a connection watches the route's
+     * sentinel's tcp.socket and ksl.ssl in matrix steps 58 and 76). The pool's wait for a connection watches the route's
      * HTTP/2 state (an https route may use HTTP/2), and a cancellation that reaches that wait's scope as it takes the
      * connection made the scope throw and drop it; here the caller is cancelled as it starts to obtain the connection, so
      * the scope always ends cancelled with the connection taken.
