@@ -5,7 +5,8 @@
 # module (tools/ci/matrix.sh KSL_JVM_TESTS) run against that library, never a host-gcc one (review I8). On a Linux host of
 # the same architecture (the GitHub runners) the suites run on the host JVM; elsewhere (the owner's macOS host) in a
 # Temurin 21 container, Gradle offline against the host's dependency cache, read-only. Usage: docker-jvm.sh <linux-x86_64|linux-aarch_64>
-# Env: KSL_GRADLE_ARGS extra Gradle arguments for the host run; KSL_JVM_IN_CONTAINER=1 forces the container on Linux.
+# Env: KSL_GRADLE_ARGS extra Gradle arguments for the host run; KSL_JVM_IN_CONTAINER=1 forces the container on Linux;
+# GRADLE_RO_DEP_CACHE, GRADLE_USER_HOME: where the host's Gradle keeps its dependencies, which the container reads (below).
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"; cls="${1:-linux-x86_64}"
 . "$root/tools/ci/matrix.sh"
@@ -39,16 +40,31 @@ else
   # (tools/ci/gradle-init.d), and the host's unpacked wrapper distribution read-only, run directly: the wrapper itself would
   # take a lock file in the distribution directory, which a read-only mount refuses. The host must have resolved everything
   # online first (tools/ci/local-matrix.sh does, before the Docker steps).
+  # When the host's Gradle itself reads a read-only dependency cache (GRADLE_RO_DEP_CACHE, as CI's matrix jobs do with the
+  # gradle-deps entry), what it resolved is split: most of it in that cache, which Gradle reads in place and never copies,
+  # the rest (what the entry lacked) in the host's user home. Gradle takes one read-only cache only, so the container gets
+  # the host's as its read-only cache and a copy of the host's modules-2 (no lock files) in its private user home, where its
+  # Gradle looks next; with cache cleanup off there nothing is ever deleted, and the host's cache is not written.
   # --no-daemon: one build per container, nothing left running when it exits; --no-watch-fs: a container build never runs
   # twice, and inotify on the bind mount ended in "Couldn't poll for events, error = 4" (EINTR) noise
+  hgh="${GRADLE_USER_HOME:-$HOME/.gradle}"
   gv=$(sed -n 's#^distributionUrl=.*/gradle-\([0-9.]*\)-bin\.zip$#\1#p' "$root/gradle/wrapper/gradle-wrapper.properties")
-  dist=""; for d in "$HOME/.gradle/wrapper/dists/gradle-$gv-bin/"*/"gradle-$gv"; do [ -x "$d/bin/gradle" ] && { dist="$d"; break; }; done
-  [ -n "$gv" ] && [ -x "$dist/bin/gradle" ] || { echo "no unpacked Gradle $gv under ~/.gradle/wrapper/dists: run ./gradlew --version on the host first" >&2; exit 2; }
-  [ -d "$HOME/.gradle/caches/modules-2" ] || { echo "no ~/.gradle/caches/modules-2 to mount as the read-only dependency cache" >&2; exit 2; }
+  dist=""; for d in "$hgh/wrapper/dists/gradle-$gv-bin/"*/"gradle-$gv"; do [ -x "$d/bin/gradle" ] && { dist="$d"; break; }; done
+  [ -n "$gv" ] && [ -x "$dist/bin/gradle" ] || { echo "no unpacked Gradle $gv under $hgh/wrapper/dists: run ./gradlew --version on the host first" >&2; exit 2; }
+  if [ -n "${GRADLE_RO_DEP_CACHE:-}" ] && [ -d "$GRADLE_RO_DEP_CACHE/modules-2" ]; then
+    deps=(-v "$GRADLE_RO_DEP_CACHE/modules-2:/ro-dep-cache/modules-2:ro")
+    [ ! -d "$hgh/caches/modules-2" ] || deps+=(-v "$hgh/caches/modules-2:/host-modules-2:ro")
+    echo "docker-jvm: dependencies from $GRADLE_RO_DEP_CACHE (read-only) and a copy of $hgh/caches/modules-2"
+  else
+    [ -d "$hgh/caches/modules-2" ] || { echo "no $hgh/caches/modules-2 to mount as the read-only dependency cache" >&2; exit 2; }
+    deps=(-v "$hgh/caches/modules-2:/ro-dep-cache/modules-2:ro")
+  fi
+  # the copy of the host's user-home part, when there is one (no lock files, no gc.properties: the container's own)
+  copy='[ ! -d /host-modules-2 ] || { mkdir -p /tmp/gh/caches/modules-2 && cp -R /host-modules-2/. /tmp/gh/caches/modules-2/ && find /tmp/gh/caches/modules-2 \( -name "*.lock" -o -name gc.properties \) -type f -delete; }'
   docker run --rm -e KUICKSILVER_LEAK_STRICT -e KUICKSILVER_LEAK_SITES -e KUICKSILVER_LEAK_WAIT_MS -e KUICKSILVER_LEAK_SLOW_MS --platform "$plat" -v "$root:/w" -w /w \
-    -v "$HOME/.gradle/caches/modules-2:/ro-dep-cache/modules-2:ro" -e GRADLE_RO_DEP_CACHE=/ro-dep-cache \
+    "${deps[@]}" -e GRADLE_RO_DEP_CACHE=/ro-dep-cache \
     -e GRADLE_USER_HOME=/tmp/gh -v "$root/tools/ci/gradle-init.d:/tmp/gh/init.d:ro" -v "$dist:/opt/gradle:ro" \
     -e GRADLE_OPTS="-Dorg.gradle.workers.max=2" \
     eclipse-temurin:21@sha256:3e3c176ffed168beb42c607be9bc1639b466cf00261a0fb04425562c9d0c5c2b bash -c \
-    "(command -v cc >/dev/null || { apt-get -qq update >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get -qq install -y --no-install-recommends gcc libc6-dev >/dev/null; }) && /opt/gradle/bin/gradle --offline --no-daemon --no-watch-fs -q --continue --project-cache-dir /tmp/gradle-project -Pkuicksilver.openssl.prebuilt=true -x :kuicksilver-native:buildJniHost $KSL_JVM_TESTS"
+    "(command -v cc >/dev/null || { apt-get -qq update >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get -qq install -y --no-install-recommends gcc libc6-dev >/dev/null; }) && $copy && /opt/gradle/bin/gradle --offline --no-daemon --no-watch-fs -q --continue --project-cache-dir /tmp/gradle-project -Pkuicksilver.openssl.prebuilt=true -x :kuicksilver-native:buildJniHost $KSL_JVM_TESTS"
 fi
