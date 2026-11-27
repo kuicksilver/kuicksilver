@@ -55,7 +55,7 @@ public sealed class QuicException(
     cause: Throwable? = null,
 ) : IOException(message, cause),
     CopyableThrowable<QuicException> {
-    /** The connection is gone; the same instance reaches every stream of the connection. */
+    /** The connection is gone; the same reason reaches every stream of the connection (on the JVM a copy may carry the receiving stack). */
     public sealed class ConnectionLost(
         message: String,
         cause: Throwable? = null,

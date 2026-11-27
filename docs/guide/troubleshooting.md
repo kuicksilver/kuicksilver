@@ -71,8 +71,8 @@ anything per packet. Details: [QUIC: Observability](quic.md#observability),
 [QUIC: qlog](quic.md#qlog), [Ktor: Observability](ktor.md#observability-experimental).
 
 A failed connection's cause is always a `QuicException`: `QuicConnection.closed` completes with it, and every waiting
-call (`openBidi`, `acceptStream`, the stream channels, `sendDatagram`) fails with the same instance. Look at its type and
-fields before its message.
+call (`openBidi`, `acceptStream`, the stream channels, `sendDatagram`) fails with the same reason (on the JVM a copy may
+carry the receiving stack). Look at its type and fields before its message.
 
 ## Connecting
 
