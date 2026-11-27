@@ -143,7 +143,8 @@ class H2ReleaseFailureTest {
         runTest {
             val f = fixture()
             val call = Job()
-            val response = async { h2Exchange(f.conn, request("https://example.com/"), call, f.events) { f.released += it } }
+            val response =
+                async { h2Exchange(f.conn, request("https://example.com/"), call, f.events, NO_SOCKET_TIMEOUT) { f.released += it } }
             runCurrent()
             f.server.requests
                 .receive()
@@ -163,7 +164,15 @@ class H2ReleaseFailureTest {
             val call = Job()
             val response =
                 async {
-                    runCatching { h2Exchange(f.conn, request("https://example.com/"), call, f.events) { f.released += it } }
+                    runCatching {
+                        h2Exchange(
+                            f.conn,
+                            request("https://example.com/"),
+                            call,
+                            f.events,
+                            NO_SOCKET_TIMEOUT,
+                        ) { f.released += it }
+                    }
                 }
             runCurrent()
             f.armed = true
@@ -225,7 +234,8 @@ class H2ReleaseFailureTest {
         runTest {
             val f = fixture()
             val call = Job()
-            val response = async { h2Exchange(f.conn, request("https://example.com/"), call, f.events) { f.released += it } }
+            val response =
+                async { h2Exchange(f.conn, request("https://example.com/"), call, f.events, NO_SOCKET_TIMEOUT) { f.released += it } }
             runCurrent()
             f.armed = true
             response.cancel() // the caller's cancellation (or a request timeout) is in flight: it never reports the release's
@@ -243,7 +253,10 @@ class H2ReleaseFailureTest {
             f.armed = true
             val e =
                 assertFailsWith<IllegalStateException> {
-                    h2Exchange(f.conn, request("https://example.com/"), EmptyCoroutineContext, f.events) { f.released += it }
+                    h2Exchange(f.conn, request("https://example.com/"), EmptyCoroutineContext, f.events, NO_SOCKET_TIMEOUT) {
+                        f.released +=
+                            it
+                    }
                 }
             assertEquals("a call without a Job", e.message)
             assertEquals("from onChange", e.suppressedExceptions.single().message)
@@ -344,3 +357,9 @@ class H2ReleaseFailureTest {
             assertTrue(call.isCompleted)
         }
 }
+
+/** These tests drive the stream by hand under virtual time: no socket timeout, as before the engine had a default. */
+private val NO_SOCKET_TIMEOUT =
+    io.kuicksilver.ktor.client
+        .KuicksilverEngineConfig()
+        .apply { socketTimeout = null }

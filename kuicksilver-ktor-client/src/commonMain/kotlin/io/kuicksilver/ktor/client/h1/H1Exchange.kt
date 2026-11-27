@@ -49,6 +49,7 @@ import io.kuicksilver.ktor.client.HeldTransportEnd
 import io.kuicksilver.ktor.client.WEBSOCKET_CLOSE_WAIT_MILLIS
 import io.kuicksilver.ktor.client.WebSocketLifetime
 import io.kuicksilver.ktor.client.checkWebSocketUpgrade
+import io.kuicksilver.ktor.client.explicitSocketTimeoutMillis
 import io.kuicksilver.ktor.client.h3.KeptRequestBody
 import io.kuicksilver.ktor.client.h3.KeptRequestBodyKey
 import io.kuicksilver.ktor.client.priority
@@ -532,6 +533,8 @@ internal suspend fun readResponse(
     webSocketMaxMessageSize: Long = DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE,
     webSocketCloseWaitMillis: Long = WEBSOCKET_CLOSE_WAIT_MILLIS,
     onHandOver: (H1WebSocketHandOver) -> Unit = {},
+    // the socket timeout of the body for its Content-Type (HttpRequestData.bodySocketTimeoutMillis); HttpTimeout's alone by default
+    bodySocketTimeoutMillis: (contentType: String?) -> Long? = { request.explicitSocketTimeoutMillis() },
     onBodyDone: (AfterResponse) -> Unit,
 ): HttpResponseData =
     withContext(callContext) {
@@ -702,7 +705,10 @@ internal suspend fun readResponse(
                         var settled = false
                         val parser =
                             scope.writer(autoFlush = true) {
-                                framing.readBody(input.withSocketTimeout(request), channel)
+                                framing.readBody(
+                                    input.withSocketTimeout(request, bodySocketTimeoutMillis(headers[HttpHeaders.ContentType])),
+                                    channel,
+                                )
                                 onBodyDone(afterResponse(keepAlive && framing.delimited, requestBodySent()))
                                 settled = true
                             }

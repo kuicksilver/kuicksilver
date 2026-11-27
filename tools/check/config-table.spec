@@ -21,6 +21,7 @@
 `engine { }` | kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/KuicksilverEngineConfig.kt | KuicksilverEngineConfig | var | engine
 `engine { tls { } }` | kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/KuicksilverEngineConfig.kt | ClientTlsConfig | var | engine.tls
 `engine { tls { ech { } } }` | kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/Ech.kt | EchClientConfig | var | engine.tls.ech
+`engine { tls { pins { } } }` | kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/HostPins.kt | HostPinsConfig | var | engine.tls.pins
 `engine { http3 { } }` | kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/KuicksilverEngineConfig.kt | Http3ClientConfig | var | engine.http3
 `engine { http3 { earlyData { } } }` | kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/KuicksilverEngineConfig.kt | ClientEarlyDataConfig | var | engine.http3.earlyData
 `engine { http3 { stall { } } }` | kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/KuicksilverEngineConfig.kt | StallConfig | var | engine.http3.stall

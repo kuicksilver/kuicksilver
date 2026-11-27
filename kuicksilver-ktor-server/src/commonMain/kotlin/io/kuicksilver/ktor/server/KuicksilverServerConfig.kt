@@ -36,6 +36,7 @@ import io.kuicksilver.tls.SessionTicketConfig
 import io.kuicksilver.tls.TlsIdentity
 import io.kuicksilver.tls.TlsVersions
 import io.kuicksilver.tls.TrustConfig
+import io.kuicksilver.tls.readPemText
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 

@@ -37,6 +37,7 @@ import io.kuicksilver.ktor.client.PriorityUpdaterKey
 import io.kuicksilver.ktor.client.RequestDns
 import io.kuicksilver.ktor.client.ResolvedProxy
 import io.kuicksilver.ktor.client.WEBSOCKET_NOT_CONNECTED
+import io.kuicksilver.ktor.client.bodySocketTimeoutMillis
 import io.kuicksilver.ktor.client.checkCoalescing
 import io.kuicksilver.ktor.client.cleartextNotPermitted
 import io.kuicksilver.ktor.client.cleartextPolicyHost
@@ -1289,7 +1290,7 @@ internal class H1Pool(
                     val released = { kept: Boolean ->
                         events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_2_0, kept) }
                     }
-                    if (webSocketKeys == null) return h2Exchange(h2c, data, callContext, events, obtained.coalesced, released)
+                    if (webSocketKeys == null) return h2Exchange(h2c, data, callContext, events, config, obtained.coalesced, released)
                     // RFC 8441: the WebSocket's Extended CONNECT; it holds its keys (RFC 6455 section 4.1) until the server
                     // answered, and that answer comes within the connect timeout, as over HTTP/1.1
                     try {
@@ -1447,13 +1448,14 @@ internal class H1Pool(
                 // the socket timeout measures inactivity in both directions (Ktor: "maximum time of inactivity between two
                 // data packets"): sending the request and waiting for the response head share one timer, which every
                 // flushed piece of the request and every arriving byte of the response restarts
-                val activity = data.socketTimeoutMillis()?.let { Activity() }
+                val socketMillis = data.socketTimeoutMillis(config)
+                val activity = socketMillis?.let { Activity() }
                 val output = activity?.let { ActivityOutput(conn.output, it) } ?: conn.output
                 val input = activity?.let { ActivityInput(conn.input, it) } ?: conn.input
                 var bodySent = false
 
                 suspend fun exchangeOnce(): HttpResponseData =
-                    withSocketInactivityTimeout(data, activity, onExpiry = { closeAfterExpiry() }) {
+                    withSocketInactivityTimeout(data, socketMillis, activity, onExpiry = { closeAfterExpiry() }) {
                         // a new key for every connection a WebSocket handshake is sent on (RFC 6455 section 4.1)
                         val webSocketKey = if (webSocketKeys != null) newWebSocketKey() else null
                         var webSocket: H1WebSocketHandOver? = null
@@ -1509,6 +1511,7 @@ internal class H1Pool(
                             webSocketMaxMessageSize = config.webSockets.maxMessageSize,
                             webSocketCloseWaitMillis = webSocketCloseWaitMillis,
                             onHandOver = { webSocket = it },
+                            bodySocketTimeoutMillis = { data.bodySocketTimeoutMillis(config, it) },
                         ) { after ->
                             fun released(kept: Boolean) =
                                 events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_1_1, kept) }

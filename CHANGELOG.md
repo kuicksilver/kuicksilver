@@ -14,6 +14,27 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- Ktor client: certificate pins per host, `engine { tls { pins { add("api.example.com", pin, backupPin) } } }`
+  (`HostPinsConfig`, stable, 🔒), the form of OkHttp's `CertificatePinner`: the same patterns (a host, `*.` for one label,
+  `**.` for any number, none included; IP literals), matched against the request URL's host keyed as the TLS layer's
+  reference identifier (without case, spaces around it or one trailing dot), the same `sha256/<base64>` text. Patterns
+  are ASCII (an IDN as its `xn--` A-labels, checked to round-trip) under the TLS layer's name rules; with pins configured,
+  a host the TLS layer cannot take as a name fails with `TlsException.Config` instead of going unpinned. A host's pins are those of every pattern that matches it,
+  checked as `TrustConfig.Pinned(pins, scope, base = trust)` on each of its connections (HTTP/3, HTTP/2, HTTP/1.1, an
+  `Alt-Svc` alternative, the origin's TLS inside a proxy tunnel); `scope` is `PinScope.Leaf` by default,
+  `AnyInValidatedChain` for OkHttp's rule. Connection coalescing joins two hosts only when their pins are equal. Refused
+  when the engine is created: together with `trust = TrustConfig.Pinned(…)` (two sources of pins), and on `Tofu` or
+  `Custom`; `add` refuses a bad pattern, `sha1/` pins and no pin. `proxies { tls { pins { } } }` pins the proxy's own host;
+  the engine's pins never reach the proxy hop. `VerifyReason.PinMismatch` gains `host`, the normalized host whose pins failed (its
+  one-argument constructor stays), and its
+  message names it next to the chain's pins: `PinMismatch(host=api.example.com, chain=[sha256/…])`.
+- TLS: `TrustConfig.fromPem(text)` and `TrustConfig.fromPemFile(path)` (stable), an `AnchoredCa` of a PEM's certificates
+  for "trust my own CA". The file is read as the server's PEM files are (at most 1 MiB, a private key refused before any
+  `String` of it is made); a text or file without a certificate, with a private key or with an encrypted block is refused
+  with a message that says which. The CA replaces the platform's roots. The quickstart and the guides use it instead of
+  `AnchoredCa(Certificate.parsePem(File(…).readText()))`. The secret-file reader moved from the server into
+  `kuicksilver-tls` to be shared.
+
 - Ktor client: one log line per origin, at `observability { protocolChoiceLogLevel }` (`Info` by default), when the
   origin's response advertised no HTTP/3 alternative (none usable in the store once its `Alt-Svc` was read): `kuicksilver: https://example.com: no usable HTTP/3 alternative, using
   HTTP/2.0`. The per-call line of such calls stays at `Debug`, so the most common reason for "why not HTTP/3", a server
@@ -1166,6 +1187,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Ktor client: a socket timeout of 10 s by default (a default change; ADR-0026). `engine { socketTimeout }` (stable, on
+  the first screen, `Duration?`) is the time without progress on a call in either direction, as OkHttp's `readTimeout` and
+  `writeTimeout`: a server that accepts a request and then stays silent, or stops reading an upload, fails the call with
+  `SocketTimeoutException` after 10 s instead of holding it forever. It used to apply only when `HttpTimeout` set
+  `socketTimeoutMillis`, which still wins, per client or per request (`INFINITE_TIMEOUT_MS` turns it off for one). A
+  download or upload that keeps moving never trips it. Not applied by default to WebSockets, SSE (the `SSE` plugin's
+  requests, and a `text/event-stream` body the request's `Accept` asked for) and WebTransport sessions; a per-request
+  `timeout { }` still applies. A slow endpoint that stays silent for longer needs `engine { socketTimeout = … }`, `null`
+  for none, or a per-request `timeout { socketTimeoutMillis = … }`. While an HTTP/3 stall is in force the timer stands
+  still and `http3 { stall { abandonAfter } }` decides, as before; it starts over when the path is back. The client's first screen lists it
+  next to `connectTimeout`; `http2 { enabled }` left the first screen for the line below it.
 - Ktor client: TLS 1.2 is offered next to TLS 1.3 over TCP by default (a default change; ADR-0026). `tls { versions }`
   defaults to `TlsVersions.Tls12And13` (it was `Tls13`), as in OkHttp and the browsers, so a backend that speaks only
   TLS 1.2 keeps working after a move from OkHttp; `tls { versions = TlsVersions.Tls13 }` keeps TLS 1.3 only, and with it a

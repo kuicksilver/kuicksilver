@@ -24,15 +24,16 @@ kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ClientF
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ClientH1Test.kt	5
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ClientH2Test.kt	2
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ClientH2WebSocketTest.kt	11
-kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ClientH3StallTest.kt	7
+kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ClientH3StallTest.kt	8
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ClientH3Test.kt	3
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ClientMigrationTest.kt	5
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ClientPoolTest.kt	6
+kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ClientSocketTimeoutTest.kt	17
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ClientWebSocketCloseOrderTest.kt	1
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ClientWebSocketCloseTest.kt	3
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ClientWebSocketConnectingTest.kt	1
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/FaultyIo.kt	1
-kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/InactivityTest.kt	6
+kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/InactivityTest.kt	11
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ProtocolRaceTest.kt	7
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/RequestDnsTest.kt	1
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/contract/ContentTest.kt	1
@@ -46,6 +47,7 @@ kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/contrac
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/contract/ServerTimeout.kt	5
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/contract/WebSocketTest.kt	3
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/h1/H1SocketTimeoutTest.kt	5
+kuicksilver-ktor-client/src/jvmFirstScreenTest/kotlin/io/kuicksilver/guide/quickstart/QuickstartClient.kt	1
 kuicksilver-ktor-client/src/jvmTest/kotlin/io/kuicksilver/ktor/client/ClientUdpReleaseTest.kt	2
 kuicksilver-ktor-network/src/commonTest/kotlin/io/kuicksilver/ktor/network/EngineSelectorTest.kt	1
 kuicksilver-ktor-network/src/commonTest/kotlin/io/kuicksilver/ktor/network/HappyEyeballsResolutionTest.kt	18

@@ -20,8 +20,10 @@ timeouts, HTTP/2, h2c, the connection pool and coalescing, Happy Eyeballs and na
 
 ## First screen
 
-The most common client configures nothing: `HttpClient(Kuicksilver)` ([Minimal example](ktor.md#minimal-example)). With
-Ktor's timeouts, which most apps want (without `HttpTimeout` only the engine's 10 s connect timeout applies):
+The most common client configures nothing: `HttpClient(Kuicksilver)` ([Minimal example](ktor.md#minimal-example)). Its
+timeouts are OkHttp's: 10 s to connect (`engine { connectTimeout }`) and 10 s without progress on a call
+(`engine { socketTimeout }`, [Timeouts](#timeouts)), and no limit on a whole call. Ktor's `HttpTimeout` sets its own
+values, which win:
 
 ```kotlin
 // guide:ktor:client
@@ -46,6 +48,7 @@ val connectivity = context.getSystemService(ConnectivityManager::class.java)
 val client = HttpClient(Kuicksilver) {
     engine {
         connectTimeout = 10.seconds
+        socketTimeout = 10.seconds                                                   // no progress this long fails the call
         http3 {
             hints = setOf(HostPort("api.example.com", 443))                         // HTTP/3 from the first request
             altSvcStore = FileAltSvcStore(File(context.cacheDir, "alt-svc"))        // remember HTTP/3 across restarts
@@ -69,9 +72,41 @@ client that trusts only your CA fails on every public host (`UnknownIssuer`). Gi
 ```kotlin
 // guide:ktor:private-ca
 val internal = HttpClient(Kuicksilver) {
-    engine { tls { trust = TrustConfig.AnchoredCa(Certificate.parsePem(caPem)) } }   // caPem: your CA's PEM text
+    engine { tls { trust = TrustConfig.fromPem(caPem) } }   // caPem: your CA's PEM text; TrustConfig.fromPemFile(path) for a file
 }
 ```
+
+## Timeouts
+
+| Timeout | Default | Set with | Fails with |
+|---|---|---|---|
+| connect (name resolution, the wait for a pool slot, TCP + TLS or the QUIC handshake) | 10 s | `HttpTimeout`'s `connectTimeoutMillis`, else `engine { connectTimeout }` | `ConnectTimeoutException`, whose message names the timeout that fired (`connect_timeout=500 ms`) |
+| socket: time without progress on a call, in either direction | 10 s | `HttpTimeout`'s `socketTimeoutMillis`, else `engine { socketTimeout }` (`null`: none) | `SocketTimeoutException` |
+| request (one request, redirects and retries each start it again) | none | `HttpTimeout`'s `requestTimeoutMillis` | `HttpRequestTimeoutException` |
+
+The socket timeout is an inactivity timeout, as Ktor defines it ("maximum time of inactivity between two data packets")
+and as OkHttp's `readTimeout` and `writeTimeout` are: while the request body goes out and the response head is awaited,
+every piece of the body the connection takes and every byte of the response that arrives restarts it, so an upload or a
+download that keeps moving never times out however long it takes, and one that stalls (the server stops reading or
+answering, the application stops writing) fails that long after its last progress; every read of the response body then
+has it on its own. `HttpTimeout`'s value wins when set, for the client or for one request
+(`timeout { socketTimeoutMillis = HttpTimeoutConfig.INFINITE_TIMEOUT_MS }` turns it off for that request).
+
+- **Left alone by default:** WebSockets (the opening handshake is bounded by the connect timeout, the session by its
+  pings), SSE (requests of Ktor's `SSE` plugin, and a `text/event-stream` response to a request whose `Accept` asked for
+  it) and WebTransport sessions. A per-request `timeout { socketTimeoutMillis = … }` still applies to WebSockets and SSE;
+  Ktor's client-wide `HttpTimeout` skips those requests. An event stream nobody asked for keeps the timeout: a server
+  cannot turn it off by its choice of `Content-Type`.
+- **A long poll** whose server holds the answer longer than 10 s sets its own on the request:
+  `timeout { socketTimeoutMillis = 60_000 }`.
+- **The connection's own watches** do not change it. QUIC's idle timeout (`http3 { quic { maxIdleTimeout } }`, 30 s) and
+  HTTP/2 PINGs (`http2 { pingInterval }`) end a dead connection and fail every call on it with the connection's error;
+  the socket timeout ends one call that made no progress, on a connection that may be alive. With the defaults the socket
+  timeout fires first. On an HTTP/3 connection whose stall detection declared a stall (`http3 { stall { } }`), the socket
+  timeout stands still while the stall lasts, for the request and for its response body: a request that may be repeated
+  goes over TCP at once, any other work waits for the path up to `stall { abandonAfter }` and then fails with
+  `QuicStalledException`; when the path comes back the socket timeout starts over. A socket timeout that runs out as a
+  stall is being declared has the `QuicStalledException` as its `cause`.
 
 ## Android and iOS
 
@@ -514,14 +549,7 @@ How the engine behaves in detail, for when a guide above is not enough.
   limits.
 - Requests go through a proxy when one applies (by default the platform's proxy settings): TCP only (HTTP/1.1, or HTTP/2
   inside the tunnel), see [Proxies](client-proxies.md#proxies).
-- Timeouts come from `HttpTimeout`: the connect timeout (TCP + TLS, or the QUIC handshake; the name resolution and the
-  wait for a pool slot share it) fails with Ktor's `ConnectTimeoutException`, whose message names the timeout that fired
-  (`connect_timeout=500 ms`: `HttpTimeout`'s, else the engine's own `connectTimeout`), the socket timeout with `SocketTimeoutException`; the request timeout is the plugin's own.
-  The socket timeout is an inactivity timeout, as Ktor defines it ("maximum time of inactivity between two data
-  packets"): while the request body goes out and the response head is awaited, every piece of the body the connection
-  takes and every byte of the response that arrives restarts it, so an upload that keeps moving never times out however
-  long it takes, and one that stalls (the server stops reading, the application stops writing) fails that long after its
-  last progress; every read of the response body then has it on its own. Without `HttpTimeout` the engine's `connectTimeout` (10 s) applies.
+- Timeouts: see [Timeouts](#timeouts).
 - Capabilities: `HttpTimeoutCapability`, `WebSocketCapability`, `WebSocketExtensionsCapability`, `SSECapability`; no
   Unix sockets. How the engine checks WebSocket handshakes and frames: [WebSockets: behaviour
   reference](realtime.md#behaviour-reference).

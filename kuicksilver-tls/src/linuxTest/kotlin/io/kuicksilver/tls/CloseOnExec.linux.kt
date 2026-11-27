@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 @file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
 
-package io.kuicksilver.ktor.server
+package io.kuicksilver.tls
 
 import kotlinx.cinterop.CPointer
 import platform.posix.FD_CLOEXEC

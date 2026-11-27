@@ -309,6 +309,8 @@ final class io.kuicksilver.ktor.client/ClientTlsConfig { // io.kuicksilver.ktor.
 
     final val ech // io.kuicksilver.ktor.client/ClientTlsConfig.ech|{}ech[0]
         final fun <get-ech>(): io.kuicksilver.ktor.client/EchClientConfig // io.kuicksilver.ktor.client/ClientTlsConfig.ech.<get-ech>|<get-ech>(){}[0]
+    final val pins // io.kuicksilver.ktor.client/ClientTlsConfig.pins|{}pins[0]
+        final fun <get-pins>(): io.kuicksilver.ktor.client/HostPinsConfig // io.kuicksilver.ktor.client/ClientTlsConfig.pins.<get-pins>|<get-pins>(){}[0]
 
     final var certificateCompression // io.kuicksilver.ktor.client/ClientTlsConfig.certificateCompression|{}certificateCompression[0]
         final fun <get-certificateCompression>(): kotlin/Boolean // io.kuicksilver.ktor.client/ClientTlsConfig.certificateCompression.<get-certificateCompression>|<get-certificateCompression>(){}[0]
@@ -336,6 +338,7 @@ final class io.kuicksilver.ktor.client/ClientTlsConfig { // io.kuicksilver.ktor.
         final fun <set-versions>(io.kuicksilver.tls/TlsVersions) // io.kuicksilver.ktor.client/ClientTlsConfig.versions.<set-versions>|<set-versions>(io.kuicksilver.tls.TlsVersions){}[0]
 
     final fun ech(kotlin/Function1<io.kuicksilver.ktor.client/EchClientConfig, kotlin/Unit>) // io.kuicksilver.ktor.client/ClientTlsConfig.ech|ech(kotlin.Function1<io.kuicksilver.ktor.client.EchClientConfig,kotlin.Unit>){}[0]
+    final fun pins(kotlin/Function1<io.kuicksilver.ktor.client/HostPinsConfig, kotlin/Unit>) // io.kuicksilver.ktor.client/ClientTlsConfig.pins|pins(kotlin.Function1<io.kuicksilver.ktor.client.HostPinsConfig,kotlin.Unit>){}[0]
 }
 
 final class io.kuicksilver.ktor.client/ClientWebSocketsConfig { // io.kuicksilver.ktor.client/ClientWebSocketsConfig|null[0]
@@ -422,6 +425,17 @@ final class io.kuicksilver.ktor.client/FileAltSvcStore : io.kuicksilver.ktor.cli
 
 final class io.kuicksilver.ktor.client/H3BodyConsumed : kotlin/IllegalStateException { // io.kuicksilver.ktor.client/H3BodyConsumed|null[0]
     constructor <init>(kotlin/String, kotlin/Throwable? = ...) // io.kuicksilver.ktor.client/H3BodyConsumed.<init>|<init>(kotlin.String;kotlin.Throwable?){}[0]
+}
+
+final class io.kuicksilver.ktor.client/HostPinsConfig { // io.kuicksilver.ktor.client/HostPinsConfig|null[0]
+    constructor <init>() // io.kuicksilver.ktor.client/HostPinsConfig.<init>|<init>(){}[0]
+
+    final var scope // io.kuicksilver.ktor.client/HostPinsConfig.scope|{}scope[0]
+        final fun <get-scope>(): io.kuicksilver.tls/PinScope // io.kuicksilver.ktor.client/HostPinsConfig.scope.<get-scope>|<get-scope>(){}[0]
+        final fun <set-scope>(io.kuicksilver.tls/PinScope) // io.kuicksilver.ktor.client/HostPinsConfig.scope.<set-scope>|<set-scope>(io.kuicksilver.tls.PinScope){}[0]
+
+    final fun add(kotlin/String, kotlin/Array<out io.kuicksilver.tls/SpkiSha256>...) // io.kuicksilver.ktor.client/HostPinsConfig.add|add(kotlin.String;kotlin.Array<out|io.kuicksilver.tls.SpkiSha256>...){}[0]
+    final fun add(kotlin/String, kotlin/Array<out kotlin/String>...) // io.kuicksilver.ktor.client/HostPinsConfig.add|add(kotlin.String;kotlin.Array<out|kotlin.String>...){}[0]
 }
 
 final class io.kuicksilver.ktor.client/HostPort { // io.kuicksilver.ktor.client/HostPort|null[0]
@@ -578,6 +592,9 @@ final class io.kuicksilver.ktor.client/KuicksilverEngineConfig : io.ktor.client.
     final var connectTimeout // io.kuicksilver.ktor.client/KuicksilverEngineConfig.connectTimeout|{}connectTimeout[0]
         final fun <get-connectTimeout>(): kotlin.time/Duration // io.kuicksilver.ktor.client/KuicksilverEngineConfig.connectTimeout.<get-connectTimeout>|<get-connectTimeout>(){}[0]
         final fun <set-connectTimeout>(kotlin.time/Duration) // io.kuicksilver.ktor.client/KuicksilverEngineConfig.connectTimeout.<set-connectTimeout>|<set-connectTimeout>(kotlin.time.Duration){}[0]
+    final var socketTimeout // io.kuicksilver.ktor.client/KuicksilverEngineConfig.socketTimeout|{}socketTimeout[0]
+        final fun <get-socketTimeout>(): kotlin.time/Duration? // io.kuicksilver.ktor.client/KuicksilverEngineConfig.socketTimeout.<get-socketTimeout>|<get-socketTimeout>(){}[0]
+        final fun <set-socketTimeout>(kotlin.time/Duration?) // io.kuicksilver.ktor.client/KuicksilverEngineConfig.socketTimeout.<set-socketTimeout>|<set-socketTimeout>(kotlin.time.Duration?){}[0]
 
     final fun http1(kotlin/Function1<io.kuicksilver.ktor.client/Http1ClientConfig, kotlin/Unit>) // io.kuicksilver.ktor.client/KuicksilverEngineConfig.http1|http1(kotlin.Function1<io.kuicksilver.ktor.client.Http1ClientConfig,kotlin.Unit>){}[0]
     final fun http2(kotlin/Function1<io.kuicksilver.ktor.client/Http2ClientConfig, kotlin/Unit>) // io.kuicksilver.ktor.client/KuicksilverEngineConfig.http2|http2(kotlin.Function1<io.kuicksilver.ktor.client.Http2ClientConfig,kotlin.Unit>){}[0]

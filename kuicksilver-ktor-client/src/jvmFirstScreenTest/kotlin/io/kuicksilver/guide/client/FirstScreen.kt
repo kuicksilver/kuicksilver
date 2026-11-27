@@ -36,6 +36,7 @@ internal fun firstScreenMobileStable(
         HttpClient(Kuicksilver) {
             engine {
                 connectTimeout = 10.seconds
+                socketTimeout = 10.seconds // no progress this long fails the call
                 http3 {
                     hints = setOf(HostPort("api.example.com", 443)) // HTTP/3 from the first request
                     altSvcStore = FileAltSvcStore(File(cacheDir, "alt-svc")) // remember HTTP/3 across restarts
@@ -52,7 +53,7 @@ internal fun privateCaClient(caPem: String): HttpClient {
     // guide:ktor:private-ca
     val internal =
         HttpClient(Kuicksilver) {
-            engine { tls { trust = TrustConfig.AnchoredCa(Certificate.parsePem(caPem)) } } // caPem: your CA's PEM text
+            engine { tls { trust = TrustConfig.fromPem(caPem) } } // caPem: your CA's PEM text; TrustConfig.fromPemFile(path) for a file
         }
     return internal
 }

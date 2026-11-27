@@ -710,6 +710,8 @@ public final class io/kuicksilver/tls/TrustConfig$AnchoredCa : io/kuicksilver/tl
 }
 
 public final class io/kuicksilver/tls/TrustConfig$Companion {
+	public final fun fromPem (Ljava/lang/String;)Lio/kuicksilver/tls/TrustConfig$AnchoredCa;
+	public final fun fromPemFile (Ljava/lang/String;)Lio/kuicksilver/tls/TrustConfig$AnchoredCa;
 	public final fun reloadable (Lio/kuicksilver/tls/TrustConfig$AnchoredCa;)Lio/kuicksilver/tls/TrustConfig$ReloadableCa;
 }
 
@@ -829,7 +831,9 @@ public final class io/kuicksilver/tls/VerifyReason$NotYetValid : io/kuicksilver/
 
 public final class io/kuicksilver/tls/VerifyReason$PinMismatch : io/kuicksilver/tls/VerifyReason {
 	public fun <init> (Ljava/util/List;)V
+	public fun <init> (Ljava/util/List;Ljava/lang/String;)V
 	public final fun getChainPins ()Ljava/util/List;
+	public final fun getHost ()Ljava/lang/String;
 	public fun toString ()Ljava/lang/String;
 }
 

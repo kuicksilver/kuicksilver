@@ -5,8 +5,8 @@ SPDX-License-Identifier: Apache-2.0
 
 # TLS in the Ktor engines
 
-**What this page is for.** The TLS tasks of the client and server engines: certificate pinning, client
-certificates (mutual TLS), reloading a renewed certificate, a certificate per host name (SNI), TLS 1.2 for old clients and
+**What this page is for.** The TLS tasks of the client and server engines: trusting your own CA, certificate pinning,
+client certificates (mutual TLS), reloading a renewed certificate, a certificate per host name (SNI), TLS 1.2 for old clients and
 Encrypted Client Hello.
 
 **Before you start**
@@ -16,24 +16,51 @@ Encrypted Client Hello.
   certificates below the engines (`TrustConfig`, `TlsIdentity`, TLS over a socket): [TLS](tls.md).
 - The imports of the code blocks: [Ktor engines: Imports](ktor.md#imports).
 
+## Your own CA
+
+A client that talks to servers under a private CA (a company CA, a test CA, a server's self-signed certificate) trusts
+that CA's certificates from a PEM file:
+
+```kotlin
+// guide:ktor:own-ca
+val internal = HttpClient(Kuicksilver) {
+    engine { tls { trust = TrustConfig.fromPemFile(caFile) } }   // caFile: your CA's PEM file; fromPem(text) for text
+}
+```
+
+- **It replaces the platform's roots**, it does not add to them: a server whose chain does not lead to one of the file's
+  certificates fails, public servers included. Use the client for your own servers only, and keep a default client for
+  everything else. On Android the app's Network Security Config is bypassed with it (OpenSSL verifies the chain inside
+  the library); an app that wants the system's roots and its own CA together declares both in the Network Security
+  Config's `<trust-anchors>` and keeps the default `TrustConfig.Platform`.
+- **What the file may hold.** Every `CERTIFICATE` block becomes a trust anchor, a server certificate too; text around the
+  blocks (`openssl x509 -text` output, comments) and Windows line ends are fine. Refused, each with its own message: a
+  file with no certificate (the message names the blocks it found instead), a private key (also next to the
+  certificates: a key never belongs in a CA file, and it is refused before the library makes a `String` of it), an
+  encrypted block, a damaged certificate, a file larger than 1 MiB. The errors are `TlsException.Config` for the content
+  and `IOException` for the file ([troubleshooting](troubleshooting.md#trustconfigfrompemfile-refuses-the-file)).
+- **Read once**, when you call it: a changed file is seen by the next client you build.
+- On Android, from a raw resource: `TrustConfig.fromPem(resources.openRawResource(R.raw.ca).reader().readText())`.
+- Pins on top: `tls { trust = TrustConfig.fromPemFile(path); pins { … } }` ([Certificate pinning](#certificate-pinning)).
+
+There is no `caFile()` option on the client: `fromPemFile` is the one way (the server's `tls { clientCaFile(path) }`
+exists because it watches the file for a new bundle).
+
 ## Certificate pinning
 
-A client that talks to its own servers can pin their keys on top of the certificate checks: `TrustConfig.Pinned` in the
-engine's `tls { trust }` accepts a server only when its chain verifies against `base` (the platform's store by default)
-and the public key (SPKI, SHA-256) of its leaf is one of the pins:
+A client that talks to its own servers can pin their keys on top of the certificate checks, per host, as OkHttp's
+`CertificatePinner` does. A host the patterns match is accepted only when its chain verifies against `trust` (the
+platform's store by default) and the public key (SPKI, SHA-256) of its leaf is one of that host's pins:
 
 ```kotlin
 // guide:ktor:pinning
 val pinned = HttpClient(Kuicksilver) {
     engine {
         tls {
-            trust = TrustConfig.Pinned(
-                setOf(
-                    SpkiSha256.parse(currentPin),   // your server's key: "sha256/<base64>", made as below
-                    SpkiSha256.parse(backupPin),    // a backup key you hold offline
-                ),
-                base = TrustConfig.Platform,   // the chain is still verified; the pin comes on top
-            )
+            pins {
+                add("api.example.com", currentPin, backupPin)   // "sha256/<base64>": your server's key and a backup
+                add("**.cdn.example.com", cdnPin)              // OkHttp's patterns: *. one label, **. any number
+            }
         }
     }
 }
@@ -54,24 +81,64 @@ echo "sha256/$(openssl s_client -connect api.example.com:443 -servername api.exa
   | openssl x509 -noout -pubkey | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | openssl base64)"
 ```
 
-**When no pin matches**, the handshake fails with `TlsException.Verify` whose `reason` is `VerifyReason.PinMismatch`.
-Over TCP the call throws that exception (on the JVM a `TlsException` is a `javax.net.ssl.SSLException`). Over QUIC the
-connection ends with `QuicException.ConnectionLost.TransportClosed` (TLS alert 42, `bad_certificate`) whose `cause` is
-the `TlsException.Verify`; in the default `Auto` mode the call then goes over TCP, fails the same way there, and throws
-the TCP failure with the HTTP/3 one in `suppressed`. `PinMismatch.chainPins` lists the pins the server's validated chain
-has, leaf first, in the same `sha256/` form: logged once, it shows what to pin, or which key the server changed to. It
-is empty when the mismatch came from an Android Network Security Config `<pin-set>` (the platform's check, with the
-default trust), which does not say what the chain has
+**Patterns** are OkHttp's: a host (`api.example.com`), `*.` for exactly one label in front (`*.example.com` matches
+`www.example.com`, not `example.com` nor `a.b.example.com`), `**.` for any number of labels in front, none included
+(`**.example.com` matches `example.com` and every name under it), or an IP literal. Hosts are keyed exactly as the TLS
+layer names the server it checks (`HostName.normalize`): case, spaces or tabs around the name and one trailing dot change
+nothing (a request to `api.example.com.` is pinned as `api.example.com`, which OkHttp would not pin). The name after the
+wildcard follows the TLS layer's rules too: ASCII letters, digits and hyphens, no `_`, no hyphen first or last, a last
+label that is not all digits. An internationalized name is written as its A-labels (`xn--bcher-kva.example` for
+`bücher.example`, as IDNA's ToASCII or `idn2` gives it): a non-ASCII pattern is refused, as the TLS layer refuses a
+non-ASCII host, and an `xn--` label must be valid Punycode. The host is the request URL's: the pins of every pattern
+that matches it count, and one match is enough. A host no pattern matches has no pins; once any pin is configured, a
+request whose host the TLS layer cannot take as a name (`127.1`, `2130706433`, an IPv6 zone) fails with
+`TlsException.Config` rather than going unpinned. A `*` anywhere else or in front of an IP literal, a `sha1/` pin (use the
+`sha256/` pin of the same key) or a pin that is not 32 bytes fails when the client is built.
+
+**When no pin matches**, the handshake fails with `TlsException.Verify` whose `reason` is `VerifyReason.PinMismatch`;
+its message names the host and the chain's pins:
+`certificate verification failed: PinMismatch(host=api.example.com, chain=[sha256/…, sha256/…])`. Over TCP the call
+throws that exception (on the JVM a `TlsException` is a `javax.net.ssl.SSLException`). Over QUIC the connection ends
+with `QuicException.ConnectionLost.TransportClosed` (TLS alert 42, `bad_certificate`) whose `cause` is the
+`TlsException.Verify`; in the default `Auto` mode the call then goes over TCP, fails the same way there, and throws the
+TCP failure with the HTTP/3 one in `suppressed`. `PinMismatch.chainPins` lists the pins of the server's validated chain,
+leaf first, in the same `sha256/` form: logged once, it shows what to pin, or which key the server changed to. It is
+empty when the mismatch came from an Android Network Security Config `<pin-set>` (the platform's check, with the default
+trust), which does not say what the chain has
 ([troubleshooting](troubleshooting.md#the-handshake-fails-with-a-certificate-error)).
 
-- The pins hold for every host the client talks to: give a pinned API a client of its own.
-- The pins hold for every protocol: HTTP/3 over QUIC and the TCP fallback (HTTP/2, HTTP/1.1) use the one `tls { }`, so a
-  blocked UDP path never leads to a connection with weaker checks. A pin never replaces the name check.
+- **Every protocol and route.** HTTP/3 over QUIC and the TCP fallback (HTTP/2, HTTP/1.1) use the same pins, so a
+  blocked UDP path never leads to a connection with weaker checks; so does an `Alt-Svc` alternative (it must present the
+  origin's certificate) and the origin's TLS inside a proxy's tunnel. A redirect to another host meets that host's pins,
+  or none. A pin never replaces the name check or the chain's verification.
+- **The leaf's key by default.** `scope = PinScope.AnyInValidatedChain` inside `pins { }` (`io.kuicksilver.tls.PinScope`)
+  lets a pin match any certificate of the validated chain (your intermediate CA's key, say), as OkHttp's pins do; the
+  default `PinScope.Leaf` is the strictest.
+- **Connection coalescing** (`pool { coalescing }`) puts two hosts on one connection only when they have the same pins.
+- **Proxies.** The engine's pins never apply to the TLS to an `https://` proxy; `proxies { tls { pins { } } }` pins the
+  proxy's own host ([Proxies](client-proxies.md#proxies)).
 - Pin a backup key you hold offline as well, or a key change locks the app out until it is updated.
-  `scope = PinScope.AnyInValidatedChain` (`io.kuicksilver.tls.PinScope`) matches any certificate of the validated chain (an intermediate CA's key, say)
-  instead of the leaf.
-- A `Pinned` trust names the origin's keys, so the TLS to a proxy (`proxies { tls { } }`, [Proxies](client-proxies.md#proxies)) starts
-  from its `base` instead. The variants and their rules: [TLS: Trust](tls.md#trust).
+
+**Pins for every host.** `TrustConfig.Pinned` pins the whole client instead: every host it talks to must present one of
+the keys. It is the form for a client that talks to one server only; a client that sets it together with `pins { }` is
+refused when it is built (two sources of pins), and so are pins on a `TrustConfig.Tofu` or `TrustConfig.Custom` trust.
+
+```kotlin
+// guide:ktor:pinning-every-host
+val single = HttpClient(Kuicksilver) {
+    engine {
+        tls {
+            trust = TrustConfig.Pinned(
+                setOf(SpkiSha256.parse(currentPin), SpkiSha256.parse(backupPin)),
+                base = TrustConfig.Platform,   // the chain is still verified; the pin comes on top
+            )
+        }
+    }
+}
+```
+
+A `Pinned` trust names the origin's keys, so the TLS to a proxy starts from its `base` instead. The variants and their
+rules: [TLS: Trust](tls.md#trust).
 
 ## Mutual TLS (client certificates)
 

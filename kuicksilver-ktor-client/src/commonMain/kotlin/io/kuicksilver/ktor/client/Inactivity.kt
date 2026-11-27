@@ -13,6 +13,8 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -57,6 +59,9 @@ internal class Activity {
         millis: Long,
         timeout: (CancellationException) -> Throwable,
         onExpiry: () -> Unit = {},
+        // while true the timer stands still (an HTTP/3 connection whose stall detection declared a stall: its own
+        // abandonAfter governs then); when it turns false the timer starts over, as if data had moved
+        hold: StateFlow<Boolean>? = null,
         block: suspend () -> T,
     ): T {
         var expired: Inactive? = null
@@ -68,11 +73,29 @@ internal class Activity {
                     launch {
                         var seen = ticks.value
                         while (true) {
+                            if (hold != null && hold.value) {
+                                hold.first { !it }
+                                seen = ticks.value
+                                continue
+                            }
+                            val start = seen
                             // a tick seen as the timeout fires is progress (withTimeoutOrNull drops what the wait returned
                             // when the timeout lands after it): the count is read again before the timeout counts
-                            seen = withTimeoutOrNull(millis) { ticks.first { it != seen }.also { tickSeenForTest?.invoke() } }
-                                ?: ticks.value.takeIf { it != seen }
-                                ?: break
+                            val moved =
+                                withTimeoutOrNull(millis) {
+                                    if (hold == null) {
+                                        ticks.first { it != start }
+                                    } else {
+                                        combine(ticks, hold) { t, h -> t != start || h }.first { it }
+                                    }
+                                    tickSeenForTest?.invoke()
+                                }
+                            if (moved != null || ticks.value != start) {
+                                seen = ticks.value
+                                continue
+                            }
+                            if (hold?.value == true) continue // the hold came as the timer ran out: it stands still
+                            break
                         }
                         if (!settled.compareAndSet(false, true)) return@launch // the block ended first
                         val inactive = Inactive(millis)
@@ -101,18 +124,22 @@ internal class Activity {
 }
 
 /**
- * [block] under [request]'s socket timeout as an inactivity timeout over [activity] (see [Activity.within] for
- * [onExpiry]); no timeout when either is absent.
+ * [block] under [millis] (the request's socket timeout, [socketTimeoutMillis]) as an inactivity timeout over [activity]
+ * (see [Activity.within] for [onExpiry] and [hold]); no timeout when either is absent. [cause] gives the timeout's cause, the
+ * expiry itself by default (an HTTP/3 request gives the stall its connection was in, if any).
  */
 internal suspend fun <T> withSocketInactivityTimeout(
     request: HttpRequestData,
+    millis: Long?,
     activity: Activity?,
     onExpiry: () -> Unit = {},
+    cause: (CancellationException) -> Throwable = { it },
+    // [Activity.within]'s hold: the HTTP/3 stall in force
+    hold: StateFlow<Boolean>? = null,
     block: suspend () -> T,
 ): T {
-    val millis = request.socketTimeoutMillis()
     if (millis == null || activity == null) return block()
-    return activity.within(millis, { SocketTimeoutException(request, it) }, onExpiry, block)
+    return activity.within(millis, { SocketTimeoutException(request, cause(it)) }, onExpiry, hold, block)
 }
 
 /** [delegate], with a [Activity.tick] at every flush: the bytes before it were taken by the transport. */

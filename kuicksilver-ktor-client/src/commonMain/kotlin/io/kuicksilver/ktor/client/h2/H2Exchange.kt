@@ -12,6 +12,7 @@ import io.ktor.client.request.HttpRequestData
 import io.ktor.client.request.HttpResponseData
 import io.ktor.client.request.ResponseAdapterAttributeKey
 import io.ktor.http.HeadersBuilder
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.http.HttpStatusCode
@@ -25,10 +26,12 @@ import io.kuicksilver.http3.message.PriorityField
 import io.kuicksilver.ktor.client.Activity
 import io.kuicksilver.ktor.client.ConsumedBody
 import io.kuicksilver.ktor.client.EngineEvents
+import io.kuicksilver.ktor.client.KuicksilverEngineConfig
 import io.kuicksilver.ktor.client.NeverIndexKey
 import io.kuicksilver.ktor.client.NeverIndexedReceivedKey
 import io.kuicksilver.ktor.client.PriorityUpdater
 import io.kuicksilver.ktor.client.PriorityUpdaterKey
+import io.kuicksilver.ktor.client.bodySocketTimeoutMillis
 import io.kuicksilver.ktor.client.connectTimeoutException
 import io.kuicksilver.ktor.client.h1.CONTINUE_TIMEOUT
 import io.kuicksilver.ktor.client.h1.expectsContinue
@@ -183,6 +186,8 @@ internal suspend fun h2Exchange(
     data: HttpRequestData,
     callContext: CoroutineContext,
     events: EngineEvents,
+    // the engine's configuration: its socketTimeout when HttpTimeout sets none
+    config: KuicksilverEngineConfig,
     // the stream is on another origin's connection (coalescing): a 421 is not the call's answer but [H2Misdirected]
     misdirectedFails: Boolean = false,
     onReleased: (kept: Boolean) -> Unit,
@@ -259,11 +264,12 @@ internal suspend fun h2Exchange(
         if (cause != null) stream.body.cancel(cause)
         releaseLogged(events, stream) { release() }
     }
-    val activity = data.socketTimeoutMillis()?.let { Activity() }
+    val socketMillis = data.socketTimeoutMillis(config)
+    val activity = socketMillis?.let { Activity() }
     var bodyStarted = false
     try {
         val head =
-            withSocketInactivityTimeout(data, activity, onExpiry = { stream.cancel() }) {
+            withSocketInactivityTimeout(data, socketMillis, activity, onExpiry = { stream.cancel() }) {
                 if (hasBody) {
                     // RFC 9110 section 10.1.1: with `Expect: 100-continue` the body waits for an answer, at most CONTINUE_TIMEOUT
                     if (expectsContinue(data)) stream.awaitAnswer(CONTINUE_TIMEOUT.inWholeMilliseconds)
@@ -277,7 +283,7 @@ internal suspend fun h2Exchange(
                                 GlobalScope
                                     .launch(callContext.minusKey(Job) + CoroutineName("kuicksilver-h2-request-body")) {
                                         try {
-                                            stream.sendBody(counted, stallMillis = data.socketTimeoutMillis()) {
+                                            stream.sendBody(counted, stallMillis = socketMillis) {
                                                 io.ktor.client.plugins
                                                     .SocketTimeoutException(data, null)
                                             }
@@ -308,7 +314,12 @@ internal suspend fun h2Exchange(
         val headers = HeadersBuilder().apply { for ((n, v) in head.fields) append(n, v) }.build()
         if (head.neverIndexed.isNotEmpty()) data.attributes.put(NeverIndexedReceivedKey, head.neverIndexed)
         val noBody = data.method == HttpMethod.Head || status == HttpStatusCode.NoContent || status == HttpStatusCode.NotModified
-        val bodyChannel: ByteReadChannel = if (noBody) ByteReadChannel.Empty else stream.body.withSocketTimeout(data)
+        val bodyChannel: ByteReadChannel =
+            if (noBody) {
+                ByteReadChannel.Empty
+            } else {
+                stream.body.withSocketTimeout(data, data.bodySocketTimeoutMillis(config, headers[HttpHeaders.ContentType]))
+            }
         val responseBody: Any =
             data.attributes.getOrNull(ResponseAdapterAttributeKey)?.adapt(data, status, headers, bodyChannel, data.body, callContext)
                 ?: bodyChannel

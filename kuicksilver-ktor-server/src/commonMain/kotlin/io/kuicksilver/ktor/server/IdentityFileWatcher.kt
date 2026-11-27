@@ -1,16 +1,18 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(ExperimentalKuicksilverApi::class)
+@file:OptIn(ExperimentalKuicksilverApi::class, io.kuicksilver.annotations.InternalKuicksilverApi::class)
 
 package io.kuicksilver.ktor.server
 
 import io.ktor.util.logging.Logger
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.MAX_PEM_FILE_BYTES
 import io.kuicksilver.tls.TlsIdentity
+import io.kuicksilver.tls.readPemText
+import io.kuicksilver.tls.readSecretFile
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
-import kotlinx.io.IOException
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
@@ -143,52 +145,8 @@ internal suspend fun pollFiles(
     }
 }
 
-/** A PEM file that must hold certificates only ([holds]) also holds a private key; the message names the file, never the key. */
-internal class PrivateKeyInPemFile(
-    path: String,
-    holds: String,
-) : IOException("$path contains a private key; it must hold $holds only")
-
-/** The most a PEM file of the identity may hold (a chain of a dozen certificates is a few tens of KiB). */
-internal const val MAX_PEM_FILE_BYTES: Long = 1L shl 20
-
-/**
- * The chain file as text; with [refusePrivateKey], a file that also holds a private key (a combined PEM) fails with
- * [IOException] before any `String` of it is made, and the characters read are wiped.
- */
-internal fun readPemText(
-    path: String,
-    refusePrivateKey: Boolean = false,
-    holds: String = "the certificate chain",
-): String {
-    val chars = readSecretFile(path, MAX_PEM_FILE_BYTES)
-    try {
-        if (refusePrivateKey && chars.containsText("PRIVATE KEY")) throw PrivateKeyInPemFile(path, holds)
-        return chars.concatToString()
-    } finally {
-        chars.fill('\u0000')
-    }
-}
-
-private fun CharArray.containsText(needle: String): Boolean {
-    var i = 0
-    while (i <= size - needle.length) {
-        var j = 0
-        while (j < needle.length && this[i + j] == needle[j]) j++
-        if (j == needle.length) return true
-        i++
-    }
-    return false
-}
-
 /**
  * The key file as characters, without a `String` of it and without kotlinx-io's pooled segments (never wiped): read by
  * [readSecretFile] into a buffer of its own that is wiped. PEM is ASCII.
  */
 internal fun readPemKey(path: String): CharArray = readSecretFile(path, MAX_PEM_FILE_BYTES)
-
-/** The bytes of [path] (at most [maxBytes], else [IOException]) as characters, every intermediate copy wiped. */
-internal expect fun readSecretFile(
-    path: String,
-    maxBytes: Long,
-): CharArray

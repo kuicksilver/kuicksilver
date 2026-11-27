@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 @file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
 
-package io.kuicksilver.ktor.server
+package io.kuicksilver.tls
 
 import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.addressOf
@@ -34,7 +34,8 @@ internal expect fun openSecretFile(path: String): CPointer<FILE>?
  * Reads the file unbuffered (`_IONBF`: `fread` goes straight into the pinned array, no stdio buffer keeps a copy) into an
  * array of our own, wiped after the characters are taken; the file is opened by [openSecretFile].
  */
-internal actual fun readSecretFile(
+@io.kuicksilver.annotations.InternalKuicksilverApi
+public actual fun readSecretFile(
     path: String,
     maxBytes: Long,
 ): CharArray {

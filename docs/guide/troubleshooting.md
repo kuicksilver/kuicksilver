@@ -49,6 +49,9 @@ Search this page for the exact text or code you see; the table sends you to the 
 | a warning ending "it is not a trusted source of the PROXY protocol", `connectionRefused` with `PROXY protocol header`, a server behind a load balancer that resets every connection | [the PROXY protocol](#a-proxy-protocol-connector-resets-connections) |
 | `QuicStalledException`, `fallback = QuicStalled`, `"HTTP/3 connection stalled"` | [stalled HTTP/3 connections](#calls-fail-with-quicstalledexception-or-fall-back-with-quicstalled) |
 | `ConnectTimeoutException` on the Ktor client | [requests wait and then fail](#requests-wait-and-then-fail-with-connecttimeoutexception) |
+| `SocketTimeoutException` on the Ktor client without `HttpTimeout` (0.3.0), `Socket timeout has expired` | [calls fail with `SocketTimeoutException`](#calls-fail-with-sockettimeoutexception-after-10-s) |
+| `PinMismatch(host=…, chain=[…])`, "tls { pins { add(…) } }: … is not a pin", "not a host pattern", "two sources of pins" | [certificate errors](#the-handshake-fails-with-a-certificate-error) and [pins refused](#tls--pins----is-refused) |
+| `TrustConfig.fromPem` or `fromPemFile`: "holds no certificate", "holds a private key", "encrypted PEM block", "contains a private key" | [`fromPemFile` refuses the file](#trustconfigfrompemfile-refuses-the-file) |
 | a failed Ktor client call: over QUIC or TCP? `kuicksilverDiagnostics` on the exception, `connectFailed`, `ConnectFailure` | [which transport failed](#a-ktor-client-call-failed-over-which-transport) |
 | the client fails against a server with `protocol_version` or `handshake_failure` | [a server that speaks TLS 1.2 only](#the-client-cannot-connect-to-a-server-that-speaks-tls-12-only) |
 | a TLS 1.2 client refused with `protocol_version` or `handshake_failure`, `kuicksilver.tls.versions` refused | [TLS 1.2 clients](#a-tls-12-client-cannot-connect-to-the-server) |
@@ -199,7 +202,7 @@ Decide on `reason`, not on the message text ("certificate verification failed: <
 |---|---|---|
 | `UnknownIssuer` | 48 | the chain does not lead to a trusted root: a private CA without `TrustConfig.AnchoredCa`, a server that does not send its intermediates, the JVM's `cacerts` lacking a corporate root (the JVM verifier uses the JDK store, not the OS store). Also the fallback for platform failures without a better mapping |
 | `HostnameMismatch(expected, presented)` | 42 | the certificate's names (`presented`) do not include `serverName`; connecting by IP literal to a certificate without that IP is the common case. Fix the name, or use `TrustConfig.ExpectedName` behind a proxy; the check cannot be disabled |
-| `PinMismatch(chainPins)` | 42 | no pin of `TrustConfig.Pinned` matches the validated chain (or a `TrustConfig.Tofu` key changed); `chainPins` lists what the chain has, leaf first. Rotate pins before rotating keys |
+| `PinMismatch(chainPins, host)` | 42 | no pin of the host's `tls { pins { } }` (or of `TrustConfig.Pinned`) matches the validated chain, or a `TrustConfig.Tofu` key changed; the message is `PinMismatch(host=<host>, chain=[<pins>])`: `host` is the request's host whose pins failed, `chainPins` what the chain has, leaf first, in the `sha256/` text. Under the default `PinScope.Leaf` only the leaf's pin counts, even when the chain also holds a pinned CA key (`scope = PinScope.AnyInValidatedChain` for OkHttp's rule). Rotate pins before rotating keys |
 | `Expired`, `NotYetValid` | 45 | certificate dates, or a wrong device clock |
 | `Revoked`, `UnknownRevocationStatus` | 44, 48 | the platform verifier's revocation policy (JVM PKIX, Apple, Windows soft-fail on the leaf) |
 | `InvalidPurpose` | 43 | the key usage or extended key usage forbids TLS server (or client) authentication |
@@ -649,6 +652,47 @@ null". The ranges are in the [configuration reference](configuration.md). Two re
   mean. `pemFiles` with `reloadInterval` is the one that picks up renewed files.
 - "proxyProtocol { } needs at least one trusted source: trust(...)": a connector that reads the PROXY protocol must
   name the load balancers allowed to send it ([Behind a proxy or load balancer](server-proxies.md#proxy-protocol)).
+- "socketTimeout must be at least 1 ms or null (none)": the client's `engine { socketTimeout }`; `null` turns it off.
+- The client's pins: [`tls { pins { } }` is refused](#tls--pins----is-refused).
+
+### `tls { pins { } }` is refused
+
+The client's per-host pins are checked when they are added (`add`) and when the client engine is created, each with an
+`IllegalArgumentException`:
+
+- "<pin> is a sha1/ pin, which is not supported": OkHttp also takes SHA-1 pins; use the
+  `sha256/` pin of the same key (OkHttp's pin failure message prints both).
+- "… is not a pin: expected sha256/ and the base64 of 32 bytes": a pin with another prefix, damaged base64 or the wrong
+  length.
+- "… not a host pattern: …", the reason after it: a non-ASCII name (write its A-labels, `xn--…`), an `xn--` label that is
+  not valid Punycode, a `*` anywhere but a leading `*.` or `**.`, a wildcard in front of an IP literal, or a name the TLS
+  layer would not take as a server name (an empty label, a label over 63 characters, `_`, a hyphen first or last, a last
+  label of digits only, an IPv6 zone).
+- "… needs at least one pin": `add` without pins.
+- "<block> and <block> are two sources of pins": use `pins { }` for pins per host,
+  or `Pinned` for every host of the client, not both. The same for `proxies { tls { } }`.
+- "<block> cannot be combined with trust = <trust>": pins never sit on `TrustConfig.Tofu` or `TrustConfig.Custom`
+  (also inside `ExpectedName`), which decide alone (ADR-0011).
+
+With pins configured, a request whose host the TLS layer cannot take as a server name (`https://127.1/`, `2130706433`, an
+IPv6 zone, a non-ASCII host) fails with `TlsException.Config` ("invalid host name …" and the like) before it connects:
+pins fail closed, never open.
+
+### `TrustConfig.fromPemFile` refuses the file
+
+`TrustConfig.fromPem(text)` and `fromPemFile(path)` take CA certificates (`-----BEGIN CERTIFICATE-----` blocks) only:
+
+| Message | Meaning and fix |
+|---|---|
+| `TlsException.Config` "… holds no certificate (-----BEGIN CERTIFICATE-----): only "X509 CRL" blocks" (or "no PEM block at all") | the file has other blocks, or is DER (binary): convert with `openssl x509 -inform der -in ca.der -out ca.pem` |
+| `TlsException.Config` "<what> holds a private key; a trust anchor is a CA certificate" | a key instead of (or next to) the certificate: pass the CA's certificate; a key never goes into a client |
+| `TlsException.Config` "… holds an encrypted PEM block (a password-protected key); …" | an `ENCRYPTED PRIVATE KEY` or a legacy key with `Proc-Type: 4,ENCRYPTED`: the same mistake, password-protected |
+| `IOException` "<path> contains <kind> private key; it must hold <what> only" (kind "a" or "an encrypted"; what "CA certificates") | the same from a file, refused before the library makes a `String` of it |
+| `IOException` "<path> is larger than 1048576 bytes" | a CA file is a few KiB; a larger one is not a CA bundle |
+| `TlsException.Config` "malformed PEM: …", "malformed certificate DER", "unterminated PEM block CERTIFICATE" | a damaged or cut file |
+
+A client with your CA fails on every public host with `UnknownIssuer`: the CA replaces the platform's roots
+([Your own CA](engine-tls.md#your-own-ca)).
 
 ### The server's private key is refused
 
@@ -880,6 +924,26 @@ WebSockets to one IP address connect one at a time (RFC 6455 section 4.1), so th
 this one until then. That queue does not count against the connect timeout of the WebSockets in it: many WebSockets
 started at once to one address connect one after another, bounded only by each call's request timeout (`HttpTimeout`)
 or its cancellation.
+
+### Calls fail with `SocketTimeoutException` after 10 s
+
+Since 0.3.0 the client has a socket timeout of its own, `engine { socketTimeout }`, 10 s as OkHttp's read and write
+timeouts: a call that makes no progress for that long, in either direction, fails with Ktor's `SocketTimeoutException`
+("Socket timeout has expired [url=…, socket_timeout=…] ms"), also without `HttpTimeout`. A server that takes longer
+than that before it answers, or pauses longer inside a body, needs a longer value:
+
+- for every call, `engine { socketTimeout = 30.seconds }` (`null`: none);
+- for one call, `timeout { socketTimeoutMillis = 60_000 }` on the request (with `HttpTimeout` installed or not), or
+  `HttpTimeoutConfig.INFINITE_TIMEOUT_MS` for none: a long poll, a report that takes a minute to build.
+
+A download or upload that keeps moving never trips it, however long it takes. WebSockets, SSE (Ktor's `SSE` plugin, and a
+`text/event-stream` body the request's `Accept` asked for) and WebTransport sessions are left alone unless a per-request
+`timeout { }` sets a value. `HttpTimeout`'s `socketTimeoutMillis` always wins over the engine's
+([Timeouts](client.md#timeouts)). Over HTTP/3 a stall stops the timer and fails the call with `QuicStalledException` at
+`stall { abandonAfter }` instead ([stalled HTTP/3 connections](#calls-fail-with-quicstalledexception-or-fall-back-with-quicstalled)).
+
+Known issue of 0.3.0 snapshots: Ktor's `SSE` plugin received no events over HTTP/2 and HTTP/3 (the raw body arrived);
+fixed in 0.3.0.
 
 ### The client cannot connect to a server that speaks TLS 1.2 only
 

@@ -61,18 +61,21 @@ HTTP/1.1) and HTTP/3 follows once the server announced it with `Alt-Svc`.
 | Option | Type | Default | Status | What it is for |
 |---|---|---|---|---|
 | `engine { connectTimeout }` | `Duration` | 10 s | stable | the connect timeout (TCP + TLS, or the QUIC handshake) when `HttpTimeout` sets none |
+| `engine { socketTimeout }` | `Duration?` | 10 s | stable | the time without progress on a call, in either direction, when `HttpTimeout` sets none (OkHttp's read and write timeouts); `null` for none |
 | `engine { http3 { hints } }` | `Set<HostPort>` | empty | stable | your own API's origins: HTTP/3 from their first request |
 | `engine { http3 { altSvcStore } }` | `AltSvcStore` | in memory | stable | `FileAltSvcStore(File(context.cacheDir, "alt-svc"))` remembers HTTP/3 across restarts |
 | `engine { http3 { allowed } }` | `() -> Boolean` | `{ true }` | stable | a remote kill switch for HTTP/3 |
 | `engine { http3 { enabled } }` | `Boolean` | `true` | stable | `false`: TCP only |
 | `engine { http3 { discovery } }` | `Http3Discovery` | `Auto` | stable | `Preferred` tries HTTP/3 first for every origin, `H3Only` never uses TCP |
-| `engine { tls { trust } }` | `TrustConfig` | `Platform` | stable | a private CA (`TrustConfig.AnchoredCa`) or certificate pins (`TrustConfig.Pinned`) |
+| `engine { tls { trust } }` | `TrustConfig` | `Platform` | stable | your own CA (`TrustConfig.fromPemFile(path)`); pins per host go in `tls { pins { } }` |
 | `engine { tls { identity } }` | `TlsIdentity?` | `null` | stable | a client certificate (mTLS) |
-| `engine { http2 { enabled } }` | `Boolean` | `true` | stable | `false` for a server or middlebox whose HTTP/2 is broken |
 | `engine { observability { logger } }` | `KuicksilverLogger` | `KuicksilverLogger.Default` (the platform's, warnings and up) | stable | `KuicksilverLogger.platform(LogLevel.Info)` while you debug "why not HTTP/3" |
 
 On a phone, `http3 { migration = Http3ConnectionMigration.followDefaultNetwork(connectivity) }` keeps HTTP/3 connections
 across a switch between Wi-Fi and the mobile network; it is experimental (its type is), so it is not on this screen.
+Certificate pins per host are `tls { pins { add("api.example.com", pin, backupPin) } }`
+([`engine { tls { pins { } } }`](#engine--tls--pins----)), and a server or middlebox whose HTTP/2 is broken gets
+`http2 { enabled = false }`.
 
 ### First screen: Ktor server
 
@@ -111,6 +114,11 @@ Some goals have several settings that look alike. Each does one thing:
 | | `tcp { maxConnectionsPerIp }` (`null`) | TCP connections; 256 for a server that faces its clients directly ([Connection limits](server.md#connection-limits)) |
 | Connect timeout | `HttpTimeout`'s `connectTimeoutMillis` | wins when set |
 | | `engine { connectTimeout }` (10 s) | used when `HttpTimeout` sets none; also the QUIC and TLS handshake deadline |
+| Time without progress on a call | `HttpTimeout`'s `socketTimeoutMillis` | wins when set (`INFINITE_TIMEOUT_MS`: none for that request) |
+| | `engine { socketTimeout }` (10 s) | used when `HttpTimeout` sets none; not on WebSocket sessions, SSE and WebTransport ([Timeouts](client.md#timeouts)) |
+| | `http3 { quic { maxIdleTimeout } }`, `http2 { pingInterval }` | watch the connection, not a call: a dead connection fails every call on it with its own error |
+| Certificate pins | `engine { tls { pins { } } }` | per host, OkHttp's patterns |
+| | `engine { tls { trust = TrustConfig.Pinned(…) } }` | every host of the client; not together with `pins { }` |
 | Idle connections | client `pool { idleTimeout }` (5 min) | pooled connections without requests are closed after this |
 | | `http3 { quic { maxIdleTimeout } }` (30 s) | QUIC's own idle timeout, negotiated with the peer: an HTTP/3 connection closes after the smaller of this and `pool { idleTimeout }` unless `quic { keepAlive }` is set |
 | | server `tcp { idleTimeout }` (45 s) | TCP connections without requests (`ktor.deployment.connectionIdleTimeoutSeconds` in `EngineMain`) |
@@ -134,8 +142,8 @@ The DSL path of an option and its configuration-file key are the same (`http3 { 
 
 ## Ktor client
 
-`HttpClient(Kuicksilver) { engine { … } }` (`KuicksilverEngineConfig`): `connectTimeout` at the top, everything else in
-the blocks `tls { ech { } }`, `http3 { earlyData { } stall { } webTransport { } quic { } settings { } expert { } }`,
+`HttpClient(Kuicksilver) { engine { … } }` (`KuicksilverEngineConfig`): `connectTimeout` and `socketTimeout` at the top,
+everything else in the blocks `tls { ech { } }`, `http3 { earlyData { } stall { } webTransport { } quic { } settings { } expert { } }`,
 `http2 { settings { } }`, `http1 { }`, `pool { }`, `network { }`, `proxies { tls { } }`, `webSockets { }` and
 `observability { }`. Values are checked when the engine is created. Guide: [Client](client.md).
 
@@ -144,6 +152,7 @@ the blocks `tls { ech { } }`, `http3 { earlyData { } stall { } webTransport { } 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
 | `connectTimeout` | `Duration` | 10 s | 0.2.0 | stable | | connect timeout (TCP + TLS, or the QUIC handshake; the name resolution and the wait for a pool slot share it) when `HttpTimeout` sets none; a WebSocket over HTTP/1.1 also waits at most this long for the answer to its opening handshake (`ConnectTimeoutException`). It is also the QUIC and TLS handshake deadline, which the engine derives from it |
+| `socketTimeout` | `Duration?` | 10 s (0.3.0; was none) | 0.3.0 | stable | | the time without progress on a call when `HttpTimeout` sets no `socketTimeoutMillis` (OkHttp's `readTimeout` and `writeTimeout`): from the request until the response head over every piece of the request body taken and every response byte that arrives, then over every read of the response body; fails with `SocketTimeoutException`. `HttpTimeout`'s value wins (`INFINITE_TIMEOUT_MS`: none for a request). Not applied by default to WebSockets, SSE (the `SSE` plugin's requests, and `text/event-stream` bodies the request's `Accept` asked for) and WebTransport; a per-request `timeout { }` still applies to them. Stands still while an HTTP/3 stall is in force (`stall { abandonAfter }` decides). `null` for none; at least 1 ms |
 | `proxy` (Ktor) | `ProxyConfig?` | `null` | 0.2.0 | stable | | an explicit proxy: TCP through it (HTTP/1.1, or HTTP/2 inside the tunnel; CONNECT for `https` and WebSockets, absolute form for `http`; SOCKS5 CONNECT with the proxy resolving names); off the JVM an `https://` proxy URL is TLS to the proxy; HTTP/3 is never proxied. Other proxies come from `proxies { resolver }` |
 
 `pipelining` and `threadsCount` (from Ktor's `HttpClientEngineConfig`) are not used.
@@ -156,7 +165,8 @@ verify another name with `TrustConfig.ExpectedName`) and the handshake deadline 
 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
-| `trust` | `TrustConfig` | `TrustConfig.Platform` | 0.3.0 | stable | 🔒 | how the server is verified ([TrustConfig](#trustconfig)) |
+| `trust` | `TrustConfig` | `TrustConfig.Platform` | 0.3.0 | stable | 🔒 | how the server is verified ([TrustConfig](#trustconfig)); your own CA: `TrustConfig.fromPemFile(path)` |
+| `pins { }` | `HostPinsConfig` block | none | 0.3.0 | stable | 🔒 | certificate pins per host, as OkHttp's `CertificatePinner` ([`engine { tls { pins { } } }`](#engine--tls--pins----)); not together with `trust = TrustConfig.Pinned(…)` |
 | `identity` | `TlsIdentity?` | `null` | 0.3.0 | stable | 🔒 | the client certificate, sent when a server asks for one ([Mutual TLS](engine-tls.md#mutual-tls-client-certificates)) |
 | `versions` | `TlsVersions` | `TlsVersions.Tls12And13` (0.3.0; was `Tls13`) | 0.3.0 | stable | 🔒 | the TLS versions offered over TCP and to an `https://` proxy: TLS 1.3, or TLS 1.2 with a server without 1.3, under the RFC 9325 profile (ECDHE and AEAD only, Extended Master Secret, no renegotiation: a server's request ends an HTTP/2 connection, RFC 9113 section 9.2.1), as OkHttp and the browsers; `Tls13` refuses a TLS 1.2-only server; QUIC and every connection that offers ECH are TLS 1.3 only |
 | `cipherSuites` | `CipherSuites` | `CipherSuites.Default` | 0.3.0 | stable | 🔒 | TLS 1.3 suites in preference order |
@@ -176,6 +186,19 @@ over TCP and QUIC alike, TLS 1.3 only.
 | `configLists` | `Map<String, EchConfigList>` | empty | 0.3.0 | experimental | | ECHConfigLists given out of band, by request host: every connection for that origin offers it (directly, to an `Alt-Svc` alternative, inside a proxy tunnel) unless an HTTPS record's endpoint brings its own; those connections are TLS 1.3 only whatever `tls { versions }` says (RFC 9849 section 6.1) |
 | `grease` | `Boolean` | `true` | 0.3.0 | experimental | | GREASE ECH on every TLS connection that offers no configuration (RFC 9849 section 6.2.1) |
 | `fromHttpsRecords` | `Boolean` | `true` | 0.3.0 | experimental | | offer the `ech` parameter of the origin's HTTPS records (RFC 9848), which `network { httpsRecords }` must look up: no ClientHello before the records resolved (section 5.3), and no fallback to a connection without them when every endpoint has `ech` (section 5.1, SVCB-reliant); those connections are TLS 1.3 only |
+
+### `engine { tls { pins { } } }`
+
+`HostPinsConfig`: SPKI pins per host on top of `trust` (guide: [Certificate pinning](engine-tls.md#certificate-pinning)).
+A host's pins are those of every pattern that matches the request URL's host; its connections then verify as
+`TrustConfig.Pinned(pins, scope, base = trust)`, over HTTP/3, HTTP/2 and HTTP/1.1, to `Alt-Svc` alternatives and inside
+proxy tunnels; coalescing joins only hosts with the same pins. `proxies { tls { pins { } } }` pins the proxy's host. Refused
+when the engine is created: together with `trust = TrustConfig.Pinned(…)`, and on `Tofu` or `Custom`.
+
+| Option | Type | Default | Since | Status | 🔒 | Description |
+|---|---|---|---|---|---|---|
+| `add(pattern, pins)` | function | | 0.3.0 | stable | 🔒 | pins (`"sha256/<base64>"` text or `SpkiSha256`) for the hosts `pattern` matches: a host, `*.` for one label, `**.` for any number (none included), or an IP literal, as OkHttp's; the name as the TLS layer takes a server name (ASCII LDH, IDNs as their `xn--` A-labels, no `_`), compared without case, OWS or one trailing dot; calls add up; a non-ASCII or bad pattern, a wildcard in front of an IP literal, a `sha1/` pin or no pin is refused |
+| `scope` | `PinScope` | `PinScope.Leaf` | 0.3.0 | stable | 🔒 | which certificates of the validated chain a pin may match: the leaf, or `AnyInValidatedChain` (OkHttp's rule) |
 
 ### `engine { http3 { } }`
 
@@ -854,6 +877,7 @@ Guide: [TLS: Trust](tls.md#trust).
 |---|---|---|---|
 | `TrustConfig.Platform` | | Linux Native: a CA store must exist when the client config is built | the operating system's verifier ([Platform trust](tls.md#platform-trust)) |
 | `TrustConfig.AnchoredCa(roots)` | `roots: List<Certificate>` | at least one root | only these roots, verified inside `ksl`; with `ReloadableCa`, the only trust for client certificates |
+| `TrustConfig.fromPem(pem)`, `TrustConfig.fromPemFile(path)` | `pem: String`, `path: String` | at least one `CERTIFICATE` block; no private key or encrypted block; a file at most 1 MiB | an `AnchoredCa` of the PEM's certificates ([Your own CA](engine-tls.md#your-own-ca)); it replaces the platform's roots |
 | `TrustConfig.reloadable(initial)` (*experimental*) | `initial: AnchoredCa` | servers only; `reload` refuses a bundle with no certificate valid now | a `ReloadableCa`: client certificates verified against the `AnchoredCa` current when the handshake starts; `reload(next)` rotates it ([Rotating the client CA](tls.md#rotating-the-client-ca)) |
 | `TrustConfig.ExpectedName(name, base)` | `base = Platform` | non-blank `name`; `base` is `Platform`, `AnchoredCa` or `Custom` | verify another name than the one connected to (proxies) |
 | `TrustConfig.Pinned(pins, scope, base)` | `scope = PinScope.Leaf`, `base = Platform` | at least one pin; not around `Tofu`, `Custom` or another `Pinned` | SPKI pins checked on top of `base`; `PinScope.AnyInValidatedChain` matches any certificate of the validated chain |

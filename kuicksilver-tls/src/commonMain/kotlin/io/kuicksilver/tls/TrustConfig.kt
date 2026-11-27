@@ -6,6 +6,8 @@ package io.kuicksilver.tls
 
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.annotations.InternalKuicksilverApi
+import io.kuicksilver.annotations.SecuritySensitive
 import io.kuicksilver.native.Ksl
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
@@ -239,10 +241,42 @@ public sealed interface TrustConfig {
     }
 
     /**
-     * Anchor for platform extensions such as `TrustConfig.fromTrustManager` on the JVM, and [reloadable] for a client CA bundle
-     * that rotates.
+     * Anchor for platform extensions such as `TrustConfig.fromTrustManager` on the JVM, [fromPem] and [fromPemFile] for your
+     * own CA, and [reloadable] for a client CA bundle that rotates.
      */
     public companion object {
+        /**
+         * Trusts the CA certificates of [pem] and nothing else: an [AnchoredCa] whose roots are its `CERTIFICATE` blocks
+         * (RFC 7468), for a private CA or a server's self-signed certificate. `engine { tls { trust = TrustConfig.fromPem(pem) } }`;
+         * on Android `TrustConfig.fromPem(resources.openRawResource(R.raw.ca).reader().readText())`.
+         *
+         * The CA **replaces** the platform's roots, it does not add to them: a server whose chain does not reach one of these
+         * certificates fails, public ones included, and on Android the app's network security config is bypassed (OpenSSL
+         * verifies inside `ksl`). Keep the platform's roots next to your CA with the network security config's
+         * `<trust-anchors>` under [Platform] instead. Every certificate of [pem] is an anchor, a server certificate too (a
+         * server presenting exactly it is trusted), and blocks of other kinds (an `X509 CRL`) are ignored. Pins go on top:
+         * `Pinned(pins, base = TrustConfig.fromPem(pem))`.
+         *
+         * @throws TlsException.Config when [pem] holds no certificate (the message names the blocks it found instead), holds
+         *   a private key or an encrypted block (a key is never a trust anchor; the text is refused whole, also next to
+         *   certificates), or a certificate does not parse.
+         */
+        @SecuritySensitive
+        public fun fromPem(pem: String): AnchoredCa = AnchoredCa(pemTrustAnchors(pem, "the PEM text"))
+
+        /**
+         * [fromPem] with the PEM file at [path], read now (at most 1 MiB; later changes to the file are not seen). The file
+         * is read as the server reads its PEM files: a file that holds a private key is refused before any `String` of it is
+         * made. One way to trust a CA from a file: there is no `caFile()` option on the client.
+         *
+         * @throws kotlinx.io.IOException when the file cannot be read, is larger than 1 MiB or holds a private key (an
+         *   unencrypted or encrypted PKCS#8 key; the message names the file, never its content).
+         * @throws TlsException.Config for what [fromPem] refuses, the file's path in the message.
+         */
+        @SecuritySensitive
+        public fun fromPemFile(path: String): AnchoredCa =
+            AnchoredCa(pemTrustAnchors(readPemText(path, refusePrivateKey = true, holds = "CA certificates", requirePemBlock = true), path))
+
         /**
          * A [ReloadableCa] that starts with [initial] (see [ReloadableCa] for what a reload changes and the checks).
          *
@@ -406,12 +440,19 @@ public sealed interface VerifyReason {
      *
      * @property chainPins the SPKI hashes of the checked chain, leaf first, to compare with the configuration; empty when
      *   the platform (Android network security config) reported the mismatch.
+     * @property host the host the pins were checked for, as the reference identifier ([HostName.normalize]: lower case,
+     *   no trailing dot), so a message says which host's pins failed; null where no name applies (a server checking a client
+     *   certificate) or the platform reported the mismatch.
      */
     public class PinMismatch(
         public val chainPins: List<SpkiSha256>,
+        public val host: String?,
     ) : VerifyReason {
-        /** For logs. */
-        override fun toString(): String = "PinMismatch(chain=$chainPins)"
+        /** Without a host (0.2's constructor, kept for binary compatibility): a custom verifier's or the platform's verdict. */
+        public constructor(chainPins: List<SpkiSha256>) : this(chainPins, null)
+
+        /** For logs: the host, when known, and the chain's pins in OkHttp's text form, to compare with the configuration. */
+        override fun toString(): String = if (host == null) "PinMismatch(chain=$chainPins)" else "PinMismatch(host=$host, chain=$chainPins)"
     }
 
     /** No chain to a trusted anchor could be built; alert `unknown_ca` (48). Also the fallback for unclassified platform failures. */

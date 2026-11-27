@@ -7,13 +7,16 @@ package io.kuicksilver.ktor.client
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.readAvailable
+import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeFully
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
+import kotlinx.io.readByteArray
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -128,5 +131,86 @@ class InactivityTest {
             assertEquals("done", result)
             assertEquals(0, expiries)
             assertEquals(1_000L, currentTime)
+        }
+
+    /**
+     * H3 of the DX review: while the hold is up (an HTTP/3 stall in force) the timer stands still; when it falls the timer
+     * starts over. A 1 s timeout survives a 5 s hold, then fires 1 s after the hold ended.
+     */
+    @Test fun aHoldStopsTheTimerAndItStartsOverAfter() =
+        runTest(timeout = 20.seconds) {
+            val activity = Activity()
+            val hold = MutableStateFlow(false)
+            backgroundScope.launch {
+                delay(500)
+                hold.value = true
+                delay(5_000)
+                hold.value = false
+            }
+            assertFailsWith<Timeout> { activity.within(1_000, { Timeout() }, hold = hold) { awaitCancellation() } }
+            assertEquals(6_500L, currentTime)
+        }
+
+    /** A block that ends during a hold keeps its result, however long the hold lasted. */
+    @Test fun aBlockThatEndsDuringAHoldIsNoTimeout() =
+        runTest(timeout = 20.seconds) {
+            val activity = Activity()
+            val hold = MutableStateFlow(true)
+            val result = activity.within(1_000, { Timeout() }, hold = hold) { delay(30_000).let { "done" } }
+            assertEquals("done", result)
+            assertEquals(30_000L, currentTime)
+        }
+
+    /** A response body that keeps arriving every 900 ms under a 1 s socket timeout reads to its end (virtual time). */
+    @Test fun aBodyThatKeepsMovingNeverTimesOut() =
+        runTest(timeout = 20.seconds) {
+            val wire = ByteChannel()
+            backgroundScope.launch {
+                repeat(20) {
+                    wire.writeFully(ByteArray(10))
+                    wire.flush()
+                    delay(900)
+                }
+                wire.flushAndClose()
+            }
+            val body =
+                SocketTimeoutChannel(
+                    wire,
+                    1_000,
+                    io.ktor.client.request
+                        .HttpRequestBuilder()
+                        .build(),
+                )
+            assertEquals(200, body.readBuffer().readByteArray().size)
+            assertEquals(18_000L, currentTime)
+        }
+
+    /** A body that stops times out 1 s after its last byte; with a hold up meanwhile, 1 s after the hold fell (M1). */
+    @Test fun negative_aStalledBodyTimesOutAndAHoldDefersIt() =
+        runTest(timeout = 20.seconds) {
+            val request =
+                io.ktor.client.request
+                    .HttpRequestBuilder()
+                    .build()
+            val wire = ByteChannel()
+            backgroundScope.launch {
+                wire.writeFully(ByteArray(10))
+                wire.flush()
+                awaitCancellation()
+            }
+            val body = SocketTimeoutChannel(wire, 1_000, request)
+            body.readAvailable(ByteArray(10), 0, 10)
+            assertFailsWith<io.ktor.client.network.sockets.SocketTimeoutException> { body.readAvailable(ByteArray(10), 0, 10) }
+            assertEquals(1_000L, currentTime)
+            val hold = MutableStateFlow(true)
+            val marker = IllegalStateException("the stall")
+            val held = SocketTimeoutChannel(ByteChannel(), 1_000, request, hold = hold, cause = { marker })
+            backgroundScope.launch {
+                delay(4_000)
+                hold.value = false
+            }
+            val e = assertFailsWith<io.ktor.client.network.sockets.SocketTimeoutException> { held.readAvailable(ByteArray(1), 0, 1) }
+            assertEquals(marker, e.cause)
+            assertEquals(1_000L + 5_000L, currentTime)
         }
 }

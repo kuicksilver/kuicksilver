@@ -144,7 +144,13 @@ internal class H3StallMonitor(
     /** The stall in force: declared and the path not back yet. */
     @kotlin.concurrent.Volatile
     var stall: Stall? = null
-        private set
+        private set(value) {
+            field = value
+            stalledState.value = value != null
+        }
+
+    /** Whether a stall is in force ([stall] non-null), for the socket timeout to stand still meanwhile. */
+    private val stalledState = MutableStateFlow(false)
 
     /** The stall that outlasted [StallSettings.abandonAfter]: the connection was closed. */
     @kotlin.concurrent.Volatile
@@ -163,6 +169,12 @@ internal class H3StallMonitor(
 
         /** The stall the request's failure belongs to, if any: the one that closed the connection, or the one in force. */
         val stall: Stall? get() = abandoned ?: this@H3StallMonitor.stall
+
+        /**
+         * True while a stall is in force: the request's socket timeout stands still then (`stall { abandonAfter }` decides
+         * when the request fails, as StallConfig promises) and starts over once the path is back.
+         */
+        val stalled: kotlinx.coroutines.flow.StateFlow<Boolean> get() = stalledState
 
         /**
          * Runs [block], the wait of a request that may be repeated (or was not sent yet), until a stall: then it ends with
@@ -310,8 +322,19 @@ internal class H3StallMonitor(
                 lastReceived = now
                 ptoSeenAt = -1L
                 quiet = false
-                // the path came back: work that waited on the drained connection finishes on it
-                if (stall != null) stall = null
+                // the path came back: work that waited on the drained connection finishes on it. A PING now gets an ACK at
+                // once, which shows what the outage lost (RFC 9002 section 6.1), so the request's data is sent again without
+                // waiting out a probe timeout that backed off through the outage; the socket timeout starts over meanwhile
+                if (stall != null) {
+                    stall = null
+                    try {
+                        quic.ping()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Throwable) {
+                        // a connection that closed meanwhile: nothing to probe
+                    }
+                }
                 continue
             }
             if (s.ptoCount == 0) {
@@ -373,10 +396,17 @@ internal class H3StallMonitor(
 
     private suspend fun abandon(s: Stall) {
         abandoned = s
+        // the connection is closed below: no timer waits on it any more ([Watch.stall] keeps naming the stall)
+        stalledState.value = false
         for (l in bodies.load()) runCatching { l(s.exception(null)) }
         withContext(NonCancellable) {
             runCatching { conn.close(Http3ErrorCode.NO_ERROR, "stalled: no packet for ${s.silence.inWholeMilliseconds} ms") }
         }
+    }
+
+    /** Lets every socket timeout that stood still for a stall run again (the monitor ended). */
+    internal fun releaseHold() {
+        stalledState.value = false
     }
 
     companion object {
@@ -392,6 +422,8 @@ internal class H3StallMonitor(
                     try {
                         monitor.run()
                     } finally {
+                        // the watch is over: a hold that outlived it would freeze a socket timeout for good
+                        monitor.releaseHold()
                         finally(monitor.ended())
                     }
                 }

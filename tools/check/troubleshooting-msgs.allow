@@ -21,3 +21,6 @@ OpenSSL <found> found, OpenSSL 3.5+ (not 4.x) required
 the server chose ALPN \"<alpn>\", not \"h3\"
 # KslLoader.jvm.kt:338 builds "resource ${RESOURCE_DIR}$name not on the classpath" (RESOURCE_DIR is META-INF/native/).
 resource META-INF/native/<name> not on the classpath
+# Ktor's own SocketTimeoutException (io.ktor.client.plugins.SocketTimeoutException(request, cause)) words its message; the
+# engine passes only the request and the cause.
+Socket timeout has expired [url=…, socket_timeout=…] ms

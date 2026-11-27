@@ -54,6 +54,7 @@ import io.kuicksilver.ktor.client.RequestDns
 import io.kuicksilver.ktor.client.WEBSOCKET_NOT_CONNECTED
 import io.kuicksilver.ktor.client.WebSocketLifetime
 import io.kuicksilver.ktor.client.WebSocketLifetimeKey
+import io.kuicksilver.ktor.client.bodySocketTimeoutMillis
 import io.kuicksilver.ktor.client.checkCoalescing
 import io.kuicksilver.ktor.client.coalescingRetired
 import io.kuicksilver.ktor.client.connectTimeoutException
@@ -2880,7 +2881,8 @@ internal class H3Pool(
         val body = data.body.unwrap()
         // the socket timeout measures inactivity (Ktor: "maximum time of inactivity between two data packets"): the body
         // goes out while the response is awaited, and every piece of it the stream takes restarts the timer
-        val activity = data.socketTimeoutMillis()?.let { Activity() }
+        val socketMillis = data.socketTimeoutMillis(config)
+        val activity = socketMillis?.let { Activity() }
         // a request that may be repeated (RFC 9110 section 9.2.2) waits for its response only until a stall: then it goes
         // over TCP; any other request waits on, for the path to come back or the stall to be abandoned
         val repeatable = data.method.isIdempotent() && data.body.isReplayable()
@@ -2896,7 +2898,11 @@ internal class H3Pool(
         // the application's channel this attempt reads (a streamed body), for the repeat a 421 may hand it to
         var sent: SentBody? = null
         val response: Http3Response =
-            withSocketInactivityTimeout(data, activity) {
+            // while the connection is stalled (http3 { stall { } }) the timer stands still and abandonAfter decides; a timeout
+            // that ran out while a stall was being detected says so in its cause
+            withSocketInactivityTimeout(data, socketMillis, activity, cause = { e ->
+                watch?.stall?.exception(e) ?: e
+            }, hold = watch?.stalled) {
                 val w = watch
                 if (w != null && repeatable) {
                     w.abortable(
@@ -2946,7 +2952,7 @@ internal class H3Pool(
             watch?.end(completed = cause == null)
             if (watch != null) receivedForTest?.invoke()
         }
-        return finish(conn, data, callContext, response, requestTime)
+        return finish(conn, data, callContext, response, requestTime, watch)
     }
 
     /** The channel one attempt sends a request body from. */
@@ -3020,6 +3026,8 @@ internal class H3Pool(
         callContext: CoroutineContext,
         response: Http3Response,
         requestTime: GMTDate,
+        // the request's stall watch: the body's socket timeout stands still during a stall and names it as its cause
+        watch: H3StallMonitor.Watch? = null,
     ): HttpResponseData {
         callContext[Job]?.invokeOnCompletion { cause ->
             // the call is over: an unread rest of the body is abandoned (STOP_SENDING); a reader still waiting sees why
@@ -3035,7 +3043,17 @@ internal class H3Pool(
             data.attributes.put(io.kuicksilver.ktor.client.NeverIndexedReceivedKey, it)
         }
         val noBody = data.method == HttpMethod.Head || status == HttpStatusCode.NoContent || status == HttpStatusCode.NotModified
-        val bodyChannel: ByteReadChannel = if (noBody) ByteReadChannel.Empty else response.body.withSocketTimeout(data)
+        val bodyChannel: ByteReadChannel =
+            if (noBody) {
+                ByteReadChannel.Empty
+            } else {
+                response.body.withSocketTimeout(
+                    data,
+                    data.bodySocketTimeoutMillis(config, headers[HttpHeaders.ContentType]),
+                    hold = watch?.stalled,
+                    cause = { watch?.stall?.exception(null) },
+                )
+            }
         val responseBody: Any =
             data.attributes.getOrNull(ResponseAdapterAttributeKey)?.adapt(data, status, headers, bodyChannel, data.body, callContext)
                 ?: bodyChannel

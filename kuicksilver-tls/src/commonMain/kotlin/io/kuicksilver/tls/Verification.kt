@@ -240,6 +240,17 @@ internal class Verification(
         p.store.put(p.name, p.pin)
     }
 
+    /**
+     * The reference identifier the pins are checked for, as [verify] names it: an `ExpectedName`'s name when the pins sit
+     * on one (the certificate is checked against it, not against the SNI), else the server name; normalized; null for a
+     * server checking a client certificate.
+     */
+    internal fun pinnedHost(): String? {
+        if (config.role != TlsRole.Client) return null
+        val name = runCatching { referenceOf(config) }.getOrNull() ?: return null
+        return runCatching { HostName.normalize(name).value }.getOrDefault(name)
+    }
+
     /** Pin check against a chain the verifier (or `ksl`) built; also used after an AnchoredCa handshake. */
     fun pinCheck(validated: List<Certificate>): VerifyResult {
         val pinned = trust as? TrustConfig.Pinned ?: return VerifyResult.Accepted(validated)
@@ -250,7 +261,7 @@ internal class Verification(
         ) {
             VerifyResult.Accepted(validated)
         } else {
-            VerifyResult.Rejected(VerifyReason.PinMismatch(validated.map { it.spkiSha256 }))
+            VerifyResult.Rejected(VerifyReason.PinMismatch(validated.map { it.spkiSha256 }, pinnedHost()))
         }
     }
 
@@ -289,7 +300,7 @@ internal class Verification(
             }
 
             else -> {
-                VerifyResult.Rejected(VerifyReason.PinMismatch(listOf(leaf)))
+                VerifyResult.Rejected(VerifyReason.PinMismatch(listOf(leaf), reference.value))
             }
         }
     }

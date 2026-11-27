@@ -746,25 +746,66 @@ class GuideSamplesTest {
         }
         val currentPin = "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
         val backupPin = "sha256/u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7s="
+        val cdnPin = "sha256/zMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMw="
         // guide:ktor:pinning
         val pinned =
             HttpClient(Kuicksilver) {
                 engine {
                     tls {
-                        trust =
-                            TrustConfig.Pinned(
-                                setOf(
-                                    SpkiSha256.parse(currentPin), // your server's key: "sha256/<base64>", made as below
-                                    SpkiSha256.parse(backupPin), // a backup key you hold offline
-                                ),
-                                base = TrustConfig.Platform, // the chain is still verified; the pin comes on top
-                            )
+                        pins {
+                            add("api.example.com", currentPin, backupPin) // "sha256/<base64>": your server's key and a backup
+                            add("**.cdn.example.com", cdnPin) // OkHttp's patterns: *. one label, **. any number
+                        }
                     }
                 }
             }
         pinned.use {
             val config = it.engine.config as KuicksilverEngineConfig
+            val api = config.tls.pins.pinsFor("API.example.com")
+            assertEquals(setOf(SpkiSha256.parse(currentPin), SpkiSha256.parse(backupPin)), api)
+            assertEquals(setOf(SpkiSha256.parse(cdnPin)), config.tls.pins.pinsFor("a.b.cdn.example.com"))
+            assertTrue(
+                config.tls.pins
+                    .pinsFor("example.com")
+                    .isEmpty(),
+            )
+        }
+        // guide:ktor:pinning-every-host
+        val single =
+            HttpClient(Kuicksilver) {
+                engine {
+                    tls {
+                        trust =
+                            TrustConfig.Pinned(
+                                setOf(SpkiSha256.parse(currentPin), SpkiSha256.parse(backupPin)),
+                                base = TrustConfig.Platform, // the chain is still verified; the pin comes on top
+                            )
+                    }
+                }
+            }
+        single.use {
+            val config = it.engine.config as KuicksilverEngineConfig
             assertTrue(config.tls.trust is TrustConfig.Pinned)
+        }
+        val ca = File.createTempFile("guide-ca", ".pem")
+        try {
+            val base64 =
+                java.util.Base64
+                    .getMimeEncoder()
+                    .encodeToString(TestCerts.testCa)
+            ca.writeText("-----BEGIN CERTIFICATE-----\n$base64\n-----END CERTIFICATE-----\n")
+            val caFile = ca.path
+            // guide:ktor:own-ca
+            val internal =
+                HttpClient(Kuicksilver) {
+                    engine { tls { trust = TrustConfig.fromPemFile(caFile) } } // caFile: your CA's PEM file; fromPem(text) for text
+                }
+            internal.use {
+                val config = it.engine.config as KuicksilverEngineConfig
+                assertEquals(listOf(Certificate(TestCerts.testCa)), (config.tls.trust as TrustConfig.AnchoredCa).roots)
+            }
+        } finally {
+            ca.delete()
         }
     }
 
