@@ -3,10 +3,10 @@ Copyright 2026 The Kuicksilver Authors
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# WebSockets, WebTransport and priorities
+# WebSockets, server-sent events, WebTransport and priorities
 
 **What this page is for.** WebSockets on both engines over HTTP/1.1, HTTP/2 and HTTP/3, their compression,
-WebTransport sessions on the server and the client, and request priorities.
+server-sent events, WebTransport sessions on the server and the client, and request priorities.
 
 **Before you start**
 
@@ -72,6 +72,36 @@ with `overHttp3 = false`, also when `http3 { webTransport { enabled = true } }` 
 tunnel nobody accepted (RFC 9110 section 9.3.6), and `call.response.status()` reports the 501. An accepted upgrade
 reports 101, as on HTTP/1.1, while `:status 200` goes out. A plain HTTP/1.1 `Upgrade` on an HTTP/3 request is meaningless (RFC 9114
 section 4.5) and gets 501 too.
+
+## Server-sent events
+
+Ktor's `SSE` plugins work on both engines over HTTP/1.1, HTTP/2 and HTTP/3: `sse("/path") {}` routes on the server,
+`client.sse(url) {}` and `client.serverSentEventsSession(url)` on the client, with `SSECapability` declared by the client
+engine. A client session holds its response's stream (or, over HTTP/1.1, its connection) for as long as the session is
+open, pauses between events included, and gets every event in order. Ending a session the application holds, by leaving
+the `sse {}` block, cancelling the session or cancelling the coroutine that collects it, abandons the stream: over HTTP/2
+it is reset with RST_STREAM CANCEL (RFC 9113 section 8.1), over HTTP/3 the client sends STOP_SENDING with
+H3_REQUEST_CANCELLED (RFC 9114 section 4.1.1), over HTTP/1.1 the connection is closed, and the server's `sse {}` handler
+ends when its next event cannot be sent. As any call in flight, an open session keeps a closed client's cleanup waiting
+until the session ends ([Closing the client](client.md#closing-the-client)).
+
+- **Collect or cancel sessions promptly.** A session holds its call until it has read its body to the end, or was
+  cancelled: not merely until the whole body arrived. A session nobody collects keeps its call, its stream slot and,
+  over HTTP/2, the flow-control credit of what it has not read, up to the stream's window (`http2 { settings {
+  initialStreamWindow } }`, 512 KiB, growing up to `maxStreamWindow` while read) out of the connection's, which the
+  connection's other streams then do without.
+- **Cancellation before the session is handed out leaks, on every Ktor engine.** `serverSentEventsSession()` (and `sse
+  {}`, which calls it) runs the request in a coroutine of the client's own scope: when the coroutine that called it is
+  cancelled before the response head came, the request goes on, and the session made from the response is handed to
+  nobody. Nothing reads or closes it, so it holds its call, stream or connection while the server streams on, and
+  `client.close()` never completes. This is Ktor's (3.6.1, CIO and OkHttp alike); the engine gets no signal that the
+  session was dropped. Avoid cancelling a caller that waits for a session (a timeout around `serverSentEventsSession()`
+  included); where it can happen, a client plugin that keeps each SSE response's `coroutineContext[Job]` can cancel the
+  call, which ends it.
+
+Before 0.3.0 a client session over HTTP/3 got no events, or only those that had arrived before Ktor handed it the
+response, and ended without an error: the engine released the stream once Ktor completed the call, which the `SSE` plugin
+does before the session reads. HTTP/1.1 was not affected, and HTTP/2, new in 0.3.0, works too.
 
 ## WebSocket compression (experimental)
 

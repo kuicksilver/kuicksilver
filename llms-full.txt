@@ -399,7 +399,7 @@ reference](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/confi
 | A load balancer or proxy in front: the PROXY protocol, misdirected requests | [Behind a proxy or load balancer](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server-proxies.md) |
 | `application.conf` and `EngineMain` | [Configuration file (EngineMain)](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server-config-file.md) |
 | Certificate pinning, client certificates, certificate reload, SNI, TLS 1.2, ECH | [TLS in the Ktor engines](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/engine-tls.md) |
-| WebSockets, WebTransport, priorities | [WebSockets, WebTransport and priorities](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/realtime.md) |
+| WebSockets, server-sent events, WebTransport, priorities | [WebSockets, server-sent events, WebTransport and priorities](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/realtime.md) |
 | Logs, metrics, qlog; why a request did not use HTTP/3; why a call failed | [Observability and diagnostics](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/observability.md) |
 | 0-RTT | [0-RTT](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/zero-rtt.md) |
 | Ports, firewalls, Docker, Kubernetes, load balancers | [Deploying the HTTP/3 server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/deployment.md) |
@@ -421,10 +421,10 @@ This page used to hold every section below; links to them land here and lead on.
 | <a id="http2-on-the-server"></a>HTTP/2 on the server | [Ktor server engine](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md#http2-on-the-server) |
 | <a id="h2c-on-the-server"></a>h2c on the server | [Ktor server engine](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md#h2c-on-the-server) |
 | <a id="turning-http3-off-on-the-server"></a>Turning HTTP/3 off on the server | [Ktor server engine](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md#turning-http3-off-on-the-server) |
-| <a id="websockets-on-the-server"></a>WebSockets on the server | [WebSockets, WebTransport and priorities](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/realtime.md#websockets-on-the-server) |
-| <a id="websockets-over-http3"></a>WebSockets over HTTP/3 | [WebSockets, WebTransport and priorities](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/realtime.md#websockets-over-http3) |
-| <a id="websockets-over-http2"></a>WebSockets over HTTP/2 | [WebSockets, WebTransport and priorities](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/realtime.md#websockets-over-http2) |
-| <a id="webtransport-over-http3-experimental"></a>WebTransport over HTTP/3 (experimental) | [WebSockets, WebTransport and priorities](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/realtime.md#webtransport-over-http3-experimental) |
+| <a id="websockets-on-the-server"></a>WebSockets on the server | [WebSockets, server-sent events, WebTransport and priorities](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/realtime.md#websockets-on-the-server) |
+| <a id="websockets-over-http3"></a>WebSockets over HTTP/3 | [WebSockets, server-sent events, WebTransport and priorities](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/realtime.md#websockets-over-http3) |
+| <a id="websockets-over-http2"></a>WebSockets over HTTP/2 | [WebSockets, server-sent events, WebTransport and priorities](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/realtime.md#websockets-over-http2) |
+| <a id="webtransport-over-http3-experimental"></a>WebTransport over HTTP/3 (experimental) | [WebSockets, server-sent events, WebTransport and priorities](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/realtime.md#webtransport-over-http3-experimental) |
 | <a id="connect-udp-over-http3-experimental"></a>CONNECT-UDP over HTTP/3 (experimental) | [Ktor server engine](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md#connect-udp-over-http3-experimental) |
 | <a id="misdirected-requests"></a>Misdirected requests | [Behind a proxy or load balancer](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server-proxies.md#misdirected-requests) |
 | <a id="proxy-protocol"></a>PROXY protocol | [Behind a proxy or load balancer](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server-proxies.md#proxy-protocol) |
@@ -448,11 +448,11 @@ This page used to hold every section below; links to them land here and lead on.
 | <a id="connection-migration"></a>Connection migration | [HTTP/3 in the Ktor client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-http3.md#connection-migration) |
 | <a id="proxies"></a>Proxies | [Proxies in the Ktor client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-proxies.md#proxies) |
 | <a id="http3-through-a-connect-udp-proxy-experimental"></a>HTTP/3 through a CONNECT-UDP proxy (experimental) | [Proxies in the Ktor client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-proxies.md#http3-through-a-connect-udp-proxy-experimental) |
-| <a id="webtransport-on-the-client-experimental"></a>WebTransport on the client (experimental) | [WebSockets, WebTransport and priorities](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/realtime.md#webtransport-on-the-client-experimental) |
+| <a id="webtransport-on-the-client-experimental"></a>WebTransport on the client (experimental) | [WebSockets, server-sent events, WebTransport and priorities](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/realtime.md#webtransport-on-the-client-experimental) |
 | <a id="mutual-tls-client-certificates"></a>Mutual TLS (client certificates) | [TLS in the Ktor engines](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/engine-tls.md#mutual-tls-client-certificates) |
 | <a id="certificate-pinning"></a>Certificate pinning | [TLS in the Ktor engines](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/engine-tls.md#certificate-pinning) |
-| <a id="priorities-experimental"></a>Priorities (experimental) | [WebSockets, WebTransport and priorities](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/realtime.md#priorities-experimental) |
-| <a id="websocket-compression-experimental"></a>WebSocket compression (experimental) | [WebSockets, WebTransport and priorities](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/realtime.md#websocket-compression-experimental) |
+| <a id="priorities-experimental"></a>Priorities (experimental) | [WebSockets, server-sent events, WebTransport and priorities](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/realtime.md#priorities-experimental) |
+| <a id="websocket-compression-experimental"></a>WebSocket compression (experimental) | [WebSockets, server-sent events, WebTransport and priorities](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/realtime.md#websocket-compression-experimental) |
 | <a id="closing-the-client"></a>Closing the client | [Ktor client engine](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client.md#closing-the-client) |
 | <a id="who-ended-the-connection"></a>Who ended the connection | [Observability and diagnostics](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/observability.md#who-ended-the-connection) |
 | <a id="observability"></a><a id="observability-experimental"></a>Observability | [Observability and diagnostics](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/observability.md) |
@@ -1797,7 +1797,7 @@ limits, HTTP/3 and HTTP/2 on the server, h2c, turning HTTP/3 off, the CONNECT-UD
 - Related pages: certificates, client certificates and reload in [TLS in the Ktor engines](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/engine-tls.md); a load balancer
   or proxy in front in [Behind a proxy or load balancer](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server-proxies.md); `application.conf` in [Configuration file
   (EngineMain)](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server-config-file.md); ports, firewalls, Docker and Kubernetes in [Deploying the HTTP/3
-  server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/deployment.md); WebSockets and WebTransport in [WebSockets, WebTransport and priorities](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/realtime.md).
+  server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/deployment.md); WebSockets and WebTransport in [WebSockets, server-sent events, WebTransport and priorities](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/realtime.md).
 
 The server's first screen is the [Minimal example](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#minimal-example): `tls { pemFiles(…) }` and one
 `tlsConnector { port = 443 }`. The recipes for common deployments, all stable: pick the lines that fit yours, not all
@@ -3043,10 +3043,10 @@ keys.rotate(listOf(EchKey(ech2.readBytes()), EchKey(ech1.readBytes(), inRetryCon
   forwards to a backend) is not supported.
 - `EngineMain`: `kuicksilver.tls.echKeys` (above).
 
-## WebSockets, WebTransport and priorities
+## WebSockets, server-sent events, WebTransport and priorities
 
 **What this page is for.** WebSockets on both engines over HTTP/1.1, HTTP/2 and HTTP/3, their compression,
-WebTransport sessions on the server and the client, and request priorities.
+server-sent events, WebTransport sessions on the server and the client, and request priorities.
 
 **Before you start**
 
@@ -3112,6 +3112,36 @@ with `overHttp3 = false`, also when `http3 { webTransport { enabled = true } }` 
 tunnel nobody accepted (RFC 9110 section 9.3.6), and `call.response.status()` reports the 501. An accepted upgrade
 reports 101, as on HTTP/1.1, while `:status 200` goes out. A plain HTTP/1.1 `Upgrade` on an HTTP/3 request is meaningless (RFC 9114
 section 4.5) and gets 501 too.
+
+### Server-sent events
+
+Ktor's `SSE` plugins work on both engines over HTTP/1.1, HTTP/2 and HTTP/3: `sse("/path") {}` routes on the server,
+`client.sse(url) {}` and `client.serverSentEventsSession(url)` on the client, with `SSECapability` declared by the client
+engine. A client session holds its response's stream (or, over HTTP/1.1, its connection) for as long as the session is
+open, pauses between events included, and gets every event in order. Ending a session the application holds, by leaving
+the `sse {}` block, cancelling the session or cancelling the coroutine that collects it, abandons the stream: over HTTP/2
+it is reset with RST_STREAM CANCEL (RFC 9113 section 8.1), over HTTP/3 the client sends STOP_SENDING with
+H3_REQUEST_CANCELLED (RFC 9114 section 4.1.1), over HTTP/1.1 the connection is closed, and the server's `sse {}` handler
+ends when its next event cannot be sent. As any call in flight, an open session keeps a closed client's cleanup waiting
+until the session ends ([Closing the client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client.md#closing-the-client)).
+
+- **Collect or cancel sessions promptly.** A session holds its call until it has read its body to the end, or was
+  cancelled: not merely until the whole body arrived. A session nobody collects keeps its call, its stream slot and,
+  over HTTP/2, the flow-control credit of what it has not read, up to the stream's window (`http2 { settings {
+  initialStreamWindow } }`, 512 KiB, growing up to `maxStreamWindow` while read) out of the connection's, which the
+  connection's other streams then do without.
+- **Cancellation before the session is handed out leaks, on every Ktor engine.** `serverSentEventsSession()` (and `sse
+  {}`, which calls it) runs the request in a coroutine of the client's own scope: when the coroutine that called it is
+  cancelled before the response head came, the request goes on, and the session made from the response is handed to
+  nobody. Nothing reads or closes it, so it holds its call, stream or connection while the server streams on, and
+  `client.close()` never completes. This is Ktor's (3.6.1, CIO and OkHttp alike); the engine gets no signal that the
+  session was dropped. Avoid cancelling a caller that waits for a session (a timeout around `serverSentEventsSession()`
+  included); where it can happen, a client plugin that keeps each SSE response's `coroutineContext[Job]` can cancel the
+  call, which ends it.
+
+Before 0.3.0 a client session over HTTP/3 got no events, or only those that had arrived before Ktor handed it the
+response, and ended without an error: the engine released the stream once Ktor completed the call, which the `SSE` plugin
+does before the session reads. HTTP/1.1 was not affected, and HTTP/2, new in 0.3.0, works too.
 
 ### WebSocket compression (experimental)
 
@@ -6262,6 +6292,7 @@ Search this page for the exact text or code you see; the table sends you to the 
 | `"Idle timeout after 30s"`, `StatelessReset`, `ApplicationClosed` | [connections that end](#connections-that-end) |
 | `ConnectionLost.ZeroRttRejected`, `StreamError.EarlyDataRejected`, `fallback = ZeroRttRejected` | [0-RTT is rejected](#0-rtt-is-rejected) |
 | `Http11RequiredException`, `fallback = H2Refused`, `Http2Exception` | [HTTP/2 failures](#calls-over-http2-fail-or-a-server-misbehaves-with-http2) |
+| a Ktor client SSE session (`client.sse {}`, `serverSentEventsSession()`) that gets no events and ends without an error over HTTP/3 | [SSE sessions without events](#an-sse-session-gets-no-events-over-http3) |
 | responses come over HTTP/2 or HTTP/1.1, never HTTP/3 | [another engine](#httpclient-uses-another-engine), then [the client never uses HTTP/3](#the-ktor-client-never-uses-http3-or-stops-using-it) |
 | `response.kuicksilverDiagnostics` is `null` | [another engine](#httpclient-uses-another-engine) |
 | `kuicksilverDiagnostics.fallback`, `ProtocolReason`, `FallbackReason` (every value) | [the client never uses HTTP/3](#the-ktor-client-never-uses-http3-or-stops-using-it) |
@@ -7226,6 +7257,16 @@ offers only `http/1.1` again, as in 0.2; report the server's behaviour (with the
   (64 KiB); raise it only for a server you trust.
 - `Http2Exception.ConnectionClosed` mentioning PING: `pingInterval` is set and the server did not answer a PING within
   it; raise the interval or leave it at `null` (no PINGs, the default).
+
+#### An SSE session gets no events over HTTP/3
+
+A Ktor client before 0.3.0: its SSE sessions over HTTP/3 got no events (at most those that arrived with the response) and
+ended without an error, while the same session over HTTP/1.1, or the same stream read as a plain body, worked. The engine
+released the response's stream as soon as Ktor completed the call, which the `SSE` plugin does before the session reads.
+Fixed in 0.3.0: a session holds its stream until it ends, over HTTP/3 and HTTP/2 alike ([Server-sent
+events](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/realtime.md#server-sent-events)). On 0.2, `engine { http3 { discovery = Http3DiscoveryMode.H1Only } }` keeps a
+client on HTTP/1.1; it applies to every request of that client, so give SSE a client of its own with it and keep HTTP/3
+for the rest.
 
 #### The server serves HTTP/1.1 or HTTP/2 but no HTTP/3
 

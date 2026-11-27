@@ -2160,6 +2160,21 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   (`tools/check/art7-loops.debug.lock`); `docs/spec/art7-deopt-loops.md`. The local gate has one more step (83 by
   default, 88 for a release).
 
+- Ktor client: server-sent events over HTTP/3. A `client.sse {}` or `serverSentEventsSession()` session over HTTP/3 got
+  no events (at most those that had arrived with the response) and ended without an error (0.2.x; HTTP/1.1 worked). Ktor's
+  `SSE` plugin completes the call before its session reads the body, and the engine released the response's stream as
+  soon as the call's job completed: Ktor's own engines and the HTTP/1.1 path keep that job going with the coroutine that
+  produces the body, while the HTTP/3 body is filled by its connection. The response body of an HTTP/3 call, and of an
+  HTTP/2 call (new in this release, where SSE works too), now holds its call until it was read to its end, failed or
+  was cancelled, for any reader that outlives the call's own work (an SSE session, a `ResponseAdapter` body). Leaving the
+  session (the end of the `sse {}` block, its cancellation or its collector's) stops the stream with STOP_SENDING
+  H3_REQUEST_CANCELLED over HTTP/3 (RFC 9114 section 4.1.1) and resets it with RST_STREAM CANCEL over HTTP/2 (RFC 9113
+  section 8.1); an open session holds a closed client's cleanup as over HTTP/1.1. Streamed bodies read in `execute { }`
+  and WebSockets (whose sessions already held their calls) were not affected. The HTTP/3 response of an alternative that
+  answered 421, which the engine drops to send the request again, is now abandoned at once (STOP_SENDING, and
+  RESET_STREAM while its upload still runs, H3_REQUEST_CANCELLED) instead of at the call's end. A session whose caller
+  is cancelled before the response head is left to nobody and holds its call on every Ktor engine, a Ktor issue the
+  guide describes (`ClientSseTest`; [Server-sent events](docs/guide/realtime.md#server-sent-events)).
 - WebSocket (both Ktor engines): the engine answers a Ping itself, as soon as it reads it, with a Pong carrying the
   Ping's data (RFC 6455 sections 5.5.2 and 5.5.3). The Pong goes out at once when nothing else is being sent,
   otherwise right after the frame on the wire, so also between the fragments of a message. Ktor's session's own Pong

@@ -150,9 +150,13 @@ class H2ReleaseFailureTest {
                 .receive()
                 .respond(200, emptyList(), endStream = false)
             runCurrent()
-            assertEquals(HttpStatusCode.OK, response.await().statusCode)
+            val r = response.await()
+            assertEquals(HttpStatusCode.OK, r.statusCode)
             f.armed = true
+            // as Ktor's HttpStatement.cleanup: the call completes, and its unread body is cancelled (the body holds the call
+            // until then: CallHeldBody)
             call.complete() // the handler's exception does not escape it
+            (r.body as ByteReadChannel).cancel(null)
             runCurrent()
             f.assertReleasedOnce()
             f.assertWarned()
