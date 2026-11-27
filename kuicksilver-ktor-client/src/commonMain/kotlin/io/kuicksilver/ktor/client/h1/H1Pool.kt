@@ -59,6 +59,7 @@ import io.kuicksilver.ktor.client.withEchRetry
 import io.kuicksilver.ktor.client.withSocketInactivityTimeout
 import io.kuicksilver.ktor.network.TcpAddress
 import io.kuicksilver.ktor.network.abort
+import io.kuicksilver.ktor.network.bytesSent
 import io.kuicksilver.ktor.network.isAtWebSocketFrameBoundary
 import io.kuicksilver.ktor.network.openDeliveringReadChannel
 import io.kuicksilver.ktor.network.tls
@@ -80,6 +81,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
@@ -210,6 +212,35 @@ internal class H1Connection(
      * is encrypting at that moment is not seen.
      */
     fun outputDrained(): Boolean = output.queuedNothing() && (tcpOut?.queuedNothing() ?: true)
+
+    /**
+     * From now on (a WebSocket's hand-over): a wait until what was handed to [output] since, its first `handed` bytes
+     * (`HeldTransportEnd.handed`), has left the engine. A flush of [output] does not say so: it returns once the socket's
+     * channel holds less than its capacity, with the rest still queued in front of the kernel. Without TLS the kernel's
+     * count says it (the socket's [bytesSent] since now); over TLS, that nothing waits in either channel ([outputDrained]).
+     * Polled while it has not, from 1 ms up to every [OUTPUT_TAKEN_POLL]: the channels say nothing when they empty. The
+     * wait is the caller's to bound (a WebSocket's close wait).
+     */
+    fun outputTakenFromNow(): suspend (handed: Long) -> Unit {
+        val base = if (tls == null) socket.bytesSent else null
+        return { handed ->
+            // the socket's writer usually takes the last bytes within a millisecond: short steps first
+            var step = 1.milliseconds
+            while (!outputTaken(base, handed)) {
+                delay(step)
+                step = minOf(step * 2, OUTPUT_TAKEN_POLL)
+            }
+        }
+    }
+
+    private fun outputTaken(
+        base: Long?,
+        handed: Long,
+    ): Boolean {
+        if (!outputDrained()) return false
+        val sent = socket.bytesSent
+        return base == null || sent == null || sent - base >= handed
+    }
 
     private fun ByteWriteChannel.queuedNothing(): Boolean = (this as? ByteReadChannel)?.availableForRead == 0
 
@@ -1444,6 +1475,7 @@ internal class H1Pool(
                             webSocketKey = webSocketKey,
                             webSocketMaxMessageSize = config.webSocketMaxMessageSize,
                             webSocketCloseWaitMillis = webSocketCloseWaitMillis,
+                            webSocketOutputTaken = conn::outputTakenFromNow,
                             onHandOver = { webSocket = it },
                         ) { after ->
                             fun released(kept: Boolean) =
@@ -2243,6 +2275,9 @@ private val MIN_PING_INTERVAL = 100.milliseconds
 
 /** The bound of an orderly close: the last bytes and close_notify out, and the peer's close_notify awaited, in all. */
 internal val ORDERLY_CLOSE_TIMEOUT = 1.seconds
+
+/** How often [H1Connection.outputTakenFromNow] looks whether what was handed to the connection has left the engine. */
+internal val OUTPUT_TAKEN_POLL = 10.milliseconds
 
 /** [H1Pool]'s answers from the pool: a permit to open a connection, or a change of the route's HTTP/2 connections. */
 private val PERMIT = Any()

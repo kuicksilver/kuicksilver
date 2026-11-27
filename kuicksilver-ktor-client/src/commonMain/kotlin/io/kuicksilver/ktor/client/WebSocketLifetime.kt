@@ -609,11 +609,12 @@ internal class HeldTransportEnd(
     /** Told when the writer ended this channel in order ([WebSocketLifetime.writerEnded]). */
     private val lifetime: WebSocketLifetime? = null,
     /**
-     * Waits, at the writer's end, until [out] handed everything on to the transport: [out]'s flush may return with bytes
-     * still queued in front of the stream (HTTP/2's lead after the session's own Close), and the writer has not written
-     * its Close until they went. Null where a flush already waits for that (HTTP/1.1, HTTP/3).
+     * Waits, at the writer's end, until [out] handed everything on to the transport, given the bytes handed to [out]
+     * ([handed]): [out]'s flush may return with bytes still queued in front of it (HTTP/2's lead after the session's own
+     * Close; HTTP/1.1's socket channel, whose flush returns once it holds less than its capacity), and the writer has not
+     * written its Close until they went. Null where a flush already waits for that (HTTP/3).
      */
-    private val delivered: (suspend () -> Unit)? = null,
+    private val delivered: (suspend (handed: Long) -> Unit)? = null,
 ) : io.ktor.utils.io.ByteWriteChannel {
     @kotlin.concurrent.Volatile var endRequested: Boolean = false
         private set
@@ -641,7 +642,7 @@ internal class HeldTransportEnd(
     override suspend fun flushAndClose() {
         count()
         out.flush()
-        delivered?.invoke()
+        delivered?.invoke(handed)
         endRequested = true
         // in order only: a transport that failed under the writer did not take its Close
         if (out.closedCause == null) lifetime?.writerEnded()

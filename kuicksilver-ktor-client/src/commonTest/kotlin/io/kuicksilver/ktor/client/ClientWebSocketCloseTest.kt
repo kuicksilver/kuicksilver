@@ -9,6 +9,7 @@ import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.availableForRead
 import io.ktor.utils.io.discard
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.readByte
@@ -118,6 +119,106 @@ class ClientWebSocketCloseTest {
                 zeroReaderAttempt(data, frames, closeWait = 2_000, closeAt = 1_500.milliseconds)
             }
         }
+
+    /**
+     * The session's Close waits in the socket's channel, in front of a kernel that takes nothing more (the server reads
+     * nothing), when the engine is closed: it has not been written, so the session keeps its close wait (T1, 3 s here),
+     * is cut at its end and the connection reset. Before, the channel's flush returned with the Close in it (the channel
+     * held less than its capacity), the session counted it as written and ended at the engine's close with the server's
+     * grace (1 s); the Close never left, and the connection's close, cut short by the engine's cleanup, ended the stream
+     * inside a frame with a FIN (the server read `cut`). The connection is filled 64 KiB frame by frame until a frame
+     * stays queued: nothing of it taken for 1 s, the kernel's buffers full; the Close then fits behind it.
+     */
+    @Test fun negative_aCloseQueuedInFrontOfAFullKernelIsNotWritten() =
+        clientTest {
+            val selector = SelectorManager(Dispatchers.IO)
+            val listener = bindTcp(selector, "127.0.0.1", 0)
+            val released = CompletableDeferred<Unit>()
+            val handed = CompletableDeferred<io.kuicksilver.ktor.client.h1.H1Connection>()
+            val closeWait = 3_000L
+            try {
+                coroutineScope {
+                    val served =
+                        async {
+                            listener.accept().use { s ->
+                                val input = s.openReadChannel()
+                                val output = s.openWriteChannel(autoFlush = true)
+                                output.writeStringUtf8(switchingProtocols(input.readWebSocketKey()))
+                                released.await() // reads nothing before the engine's cleanup is over
+                                probing(output) { readClientFrames(input, it) }
+                            }
+                        }
+                    val c = testClient(block = { install(WebSockets) })
+                    val e = c.engine as KuicksilverEngine
+                    e.h1.webSocketCloseWaitMillis = closeWait
+                    e.h1.webSocketConnectionForTest = { handed.complete(it) }
+                    val port = (listener.localAddress as InetSocketAddress).port
+                    val session = c.webSocketSession("ws://127.0.0.1:$port/ws")
+                    val lifetime = session.call.attributes[WebSocketLifetimeKey]
+                    val conn = withTimeout(10.seconds) { handed.await() }
+                    val queued = conn.output as ByteReadChannel
+                    val frame = ByteArray(64 * 1024)
+                    var frames = 0
+                    do {
+                        session.outgoing.send(Frame.Binary(true, frame))
+                        frames++
+                        kotlinx.coroutines.delay(20) // Ktor's writer hands the frame on
+                    } while (!stillQueuedAfter(conn, queued))
+                    // what waits leaves room for the Close in the channel: a writer held in its flush (the channel full)
+                    // has not written it either way, the case of the other tests
+                    val waiting = queued.availableForRead
+                    assertTrue(waiting in 1..(256 * 1024), "$waiting bytes queued in front of the kernel after $frames frames")
+                    val started =
+                        kotlin.time.TimeSource.Monotonic
+                            .markNow()
+                    launch { session.close(CloseReason(4002, "client bye")) }
+                    session.call.coroutineContext[Job]!!.join()
+                    c.close()
+                    val endedEarly =
+                        kotlinx.coroutines.withTimeoutOrNull((closeWait / 2).milliseconds) { e.cleanup.join() } != null
+                    withTimeout((closeWait + 10_000).milliseconds) { e.cleanup.join() }
+                    val took = started.elapsedNow()
+                    released.complete(Unit)
+                    val read = withTimeout(20.seconds) { served.await() }
+                    assertTrue(read.none { it.startsWith("close") }, "a Close queued in front of a full kernel left: $read")
+                    assertTrue(lifetime.cutByCloseWait, "a Close queued in front of the kernel counted as written ($took): $read")
+                    assertEquals(false, endedEarly, "the engine's close cut short a writer that had not written its Close: $read")
+                    assertTrue(read.dropLast(1).all { it == "binary ${frame.size}" }, "only whole frames before the end: $read")
+                    assertTrue(read.size - 1 <= frames, "no more frames than were sent: $read")
+                    assertEquals("reset", read.last(), "the connection was reset, not ended with a FIN: $read")
+                }
+            } finally {
+                listener.close()
+                selector.close()
+            }
+        }
+
+    /**
+     * Whether what [conn] queued stays in front of the kernel: false once the socket's writer took it all ([queued] is
+     * the connection's output); true when it still holds bytes and took none of them for 1 s (polled every 10 ms).
+     */
+    private suspend fun stillQueuedAfter(
+        conn: io.kuicksilver.ktor.client.h1.H1Connection,
+        queued: ByteReadChannel,
+    ): Boolean {
+        var seen = -1
+        var since =
+            kotlin.time.TimeSource.Monotonic
+                .markNow()
+        while (true) {
+            if (conn.outputDrained()) return false
+            val now = queued.availableForRead
+            if (now != seen) {
+                seen = now
+                since =
+                    kotlin.time.TimeSource.Monotonic
+                        .markNow()
+            } else if (since.elapsedNow() >= 1.seconds) {
+                return true
+            }
+            kotlinx.coroutines.delay(10)
+        }
+    }
 
     /**
      * A server that reads slowly but steadily (256 KiB every 10 ms, then every 30 ms) as the client is closed: the writer

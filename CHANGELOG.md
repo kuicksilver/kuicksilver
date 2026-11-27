@@ -1833,7 +1833,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   side the Close may be unread there, so the server still gets 1 s to do so. Over HTTP/2 and HTTP/3, where the stream's
   reset or the connection's close would discard it, a Close the server never answered keeps the rest of its close wait
   instead, at least the grace (over HTTP/2 the Close counts as written only once the stream took it, not once it is
-  queued behind the window). Over HTTP/1.1 the connection closes after the grace: bytes the server still sends then get
+  queued behind the window, over HTTP/1.1 only once it left the engine for the kernel, not once it waits in the
+  socket's channel). Over HTTP/1.1 the connection closes after the grace: bytes the server still sends then get
   a reset from the closed socket, which RFC 6455 sections 5.5.1 and 7.1.1 allow. A session ended before the server's
   Close is not a clean close (section 7.1.5: 1006), though Ktor's `closeReason` reports the client's own code. A session
   whose Close cannot be written (a server that reads slowly or not at all) keeps its close wait, as before. Before, the

@@ -524,6 +524,11 @@ internal suspend fun readResponse(
     webSocketKey: String? = null,
     webSocketMaxMessageSize: Long = DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE,
     webSocketCloseWaitMillis: Long = WEBSOCKET_CLOSE_WAIT_MILLIS,
+    /**
+     * Called at a WebSocket's hand-over: a wait until the bytes handed to [output] from then on have left the engine
+     * (H1Connection.outputTakenFromNow), for the session's Close to count as written; null: [output]'s flush says it.
+     */
+    webSocketOutputTaken: (() -> (suspend (handed: Long) -> Unit))? = null,
     onHandOver: (H1WebSocketHandOver) -> Unit = {},
     onBodyDone: (AfterResponse) -> Unit,
 ): HttpResponseData =
@@ -605,7 +610,8 @@ internal suspend fun readResponse(
                         // the connection's end is the engine's, after the session (RFC 6455 section 7.1.1: the server closes
                         // the TCP connection first); the guard stops reading at the server's Close, the rest is read and
                         // dropped by that end
-                        val held = HeldTransportEnd(output, lifetime)
+                        // the session's Close is written once it left the engine, not once the socket's channel took it
+                        val held = HeldTransportEnd(output, lifetime, webSocketOutputTaken?.invoke())
                         val inputDone = kotlinx.coroutines.CompletableDeferred<Unit>()
                         val handOver = H1WebSocketHandOver(lifetime, held, inputDone)
                         onHandOver(handOver)

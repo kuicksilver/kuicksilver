@@ -187,7 +187,7 @@ internal suspend fun h2WebSocket(
         val serverClosing = CompletableDeferred<Unit>()
         // the session's channel to the stream: its end (END_STREAM) is sent here, after the session, in the order above
         // the writer's Close is written once the stream took it, not once it is behind the lead (WebSocketLifetime.hurry)
-        val held = HeldTransportEnd(output, lifetime) { output.awaitHanded() }
+        val held = HeldTransportEnd(output, lifetime) { _ -> output.awaitHanded() }
 
         // RFC 6455 section 7.1.1: once the client sent its Close it may close when the server does not close "in a
         // reasonable time period": the session's own Close starts the close wait (T1, WebSocketLifetime), and a session

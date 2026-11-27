@@ -4158,7 +4158,8 @@ END_STREAM, a FIN; section 5.5.1: the client "MAY close the connection at any ti
 message"). A session ended so before the server's Close is not a clean close (section 7.1.5: 1006), though Ktor's
 `closeReason` reports the client's own code. Until the server ends its side the Close may be unread there, so the server
 gets 1 s to read it and end, and over HTTP/2 and HTTP/3 a Close it never answered keeps the rest of its close wait (at
-least the grace; over HTTP/2 the Close counts as written only once the stream took it), so that the end of the stream or
+least the grace; over HTTP/2 the Close counts as written only once the stream took it, over HTTP/1.1 once it left
+the engine for the kernel), so that the end of the stream or
 the connection does not discard it. A session whose Close cannot be written (a server that reads slowly or not at all)
 keeps its close wait: the engine's close does not cut it short. Over HTTP/1.1 the connection closes after the grace, and
 bytes the server still sends then get a reset from the closed socket (RFC 6455 sections 5.5.1 and 7.1.1 allow the
