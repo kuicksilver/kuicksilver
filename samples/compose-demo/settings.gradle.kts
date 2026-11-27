@@ -5,12 +5,34 @@
 // Android and iOS), `androidApp` (the Android application around it), `server` (the JVM demo server). They depend on
 // io.kuicksilver:* by coordinates; the composite build below substitutes this repository's modules for them, as in
 // samples/ios. A real application drops includeBuild and takes the published artifacts. Not published.
+// In CI only (kuicksilver.centralMirror=true, set by .github/actions/setup): Google's mirror of Maven Central first,
+// Central the fallback (../../settings.gradle.kts says why). A real application leaves the mirror out.
 pluginManagement {
-    repositories { gradlePluginPortal(); mavenCentral(); google() }
+    repositories {
+        if (providers.gradleProperty("kuicksilver.centralMirror").orNull == "true") {
+            maven("https://maven-central.storage-download.googleapis.com/maven2/") {
+                name = "MavenCentralMirror"
+                mavenContent { releasesOnly() }
+            }
+        }
+        gradlePluginPortal()
+        mavenCentral()
+        google()
+    }
 }
 val fromMavenLocal = providers.gradleProperty("kuicksilver.fromMavenLocal").orNull == "true"
 dependencyResolutionManagement {
-    repositories { if (fromMavenLocal) mavenLocal(); mavenCentral(); google() }
+    repositories {
+        if (fromMavenLocal) mavenLocal()
+        if (providers.gradleProperty("kuicksilver.centralMirror").orNull == "true") {
+            maven("https://maven-central.storage-download.googleapis.com/maven2/") {
+                name = "MavenCentralMirror"
+                mavenContent { releasesOnly() }
+            }
+        }
+        mavenCentral()
+        google()
+    }
 }
 rootProject.name = "kuicksilver-compose-demo"
 
