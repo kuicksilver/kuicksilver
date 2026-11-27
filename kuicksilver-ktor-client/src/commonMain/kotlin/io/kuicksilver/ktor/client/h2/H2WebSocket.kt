@@ -38,7 +38,6 @@ import io.kuicksilver.ktor.client.withSocketTimeout
 import io.kuicksilver.ktor.network.guardWebSocketInput
 import io.kuicksilver.ktor.network.guardWebSocketOutput
 import io.kuicksilver.ktor.network.isAtWebSocketFrameBoundary
-import io.kuicksilver.tls.completedWithin
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
@@ -187,7 +186,8 @@ internal suspend fun h2WebSocket(
         // the server's Close arrived (the input ends there) or its side of the stream ended
         val serverClosing = CompletableDeferred<Unit>()
         // the session's channel to the stream: its end (END_STREAM) is sent here, after the session, in the order above
-        val held = HeldTransportEnd(output)
+        // the writer's Close is written once the stream took it, not once it is behind the lead (WebSocketLifetime.hurry)
+        val held = HeldTransportEnd(output, lifetime) { output.awaitHanded() }
 
         // RFC 6455 section 7.1.1: once the client sent its Close it may close when the server does not close "in a
         // reasonable time period": the session's own Close starts the close wait (T1, WebSocketLifetime), and a session
@@ -211,21 +211,32 @@ internal suspend fun h2WebSocket(
                 // T2: the server's END_STREAM (what it still sends after its Close is read and dropped), then ours
                 webSocketClosingForTest("waiting")
                 // an end read as T2 fires is the end: dropped, a reset stream got END_STREAM and a further close wait
+                // (none at all once the engine was closed: WebSocketLifetime.hurry)
                 val serverEnded =
-                    completedWithin(lifetime.remainingTransportWaitMillis().milliseconds) {
+                    lifetime.serverWithin(lifetime.remainingTransportWaitMillis().milliseconds, afterOwnEnd = false) {
                         serverClosing.await()
                         discardToEnd(stream.body)
                         stream.awaitServerEnd().also { serverEndForTest?.invoke() }
                     }
                 if (serverEnded != false) {
-                    webSocketClosingForTest(if (serverEnded == true) "server ended" else "T2")
+                    webSocketClosingForTest(
+                        when {
+                            serverEnded == true -> "server ended"
+                            lifetime.isHurried -> "engine closed"
+                            else -> "T2"
+                        },
+                    )
                     output.flushAndClose()
-                    // after T2 the server has one close wait more to end its side, then the stream is reset with CANCEL
-                    withTimeoutOrNull(lifetime.closeWait) {
+                    // after T2 the server has one close wait more to end its side, then the stream is reset with CANCEL;
+                    // our END_STREAM still goes out once the engine was closed, the server's is not waited for then (a session
+                    // ended before the server's Close gives it the grace, from the end of what this side sent)
+                    withTimeoutOrNull(lifetime.ownEndBoundMillis()) {
                         sender.join()
                         if (serverEnded == null) {
-                            discardToEnd(stream.body)
-                            stream.awaitServerEnd()
+                            lifetime.serverWithin(kotlin.time.Duration.INFINITE, afterOwnEnd = true, discardsUnread = true) {
+                                discardToEnd(stream.body)
+                                stream.awaitServerEnd()
+                            }
                         }
                     }
                 }

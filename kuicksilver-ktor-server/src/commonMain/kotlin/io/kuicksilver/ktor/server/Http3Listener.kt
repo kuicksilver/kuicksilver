@@ -365,6 +365,7 @@ private suspend fun KuicksilverApplicationEngine.handleHttp3(
                 h3AltSvc,
                 configuration.webSocketMaxMessageSize,
                 connectUdp,
+                this@handleHttp3.stopping,
             )
         events.emit("requestStarted") { requestStarted(HttpProtocolVersion.HTTP_3_0, call) }
         // RFC 9110 section 10.1.1: `Expect: 100-continue` with content to follow gets an immediate 100 (Continue) as the call

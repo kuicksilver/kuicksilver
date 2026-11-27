@@ -605,7 +605,7 @@ internal suspend fun readResponse(
                         // the connection's end is the engine's, after the session (RFC 6455 section 7.1.1: the server closes
                         // the TCP connection first); the guard stops reading at the server's Close, the rest is read and
                         // dropped by that end
-                        val held = HeldTransportEnd(output)
+                        val held = HeldTransportEnd(output, lifetime)
                         val inputDone = kotlinx.coroutines.CompletableDeferred<Unit>()
                         val handOver = H1WebSocketHandOver(lifetime, held, inputDone)
                         onHandOver(handOver)

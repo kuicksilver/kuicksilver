@@ -234,6 +234,45 @@ class ServerWebSocketCloseOrderTest {
         }
     }
 
+    /**
+     * A stop with a long grace period while the server waits for a client's FIN after its own (the close wait, 5 s): the
+     * client is stopped at once with H3_NO_ERROR, as after the close wait, and the stop is over well within it.
+     */
+    @Test fun negative_h3StopEndsTheWaitForTheClientsFin() =
+        h3ServerTest {
+            val (server, port) = tlsServer { routes() }
+            val ep = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))
+            var stopped = false
+            try {
+                val c = ep.connect(InetSocketAddress("127.0.0.1", port), ServerFixtures.clientTls(alpn = listOf("h3")))
+                try {
+                    c.peerSettings.filterNotNull().first()
+                    val st: QuicStream = rawExtendedConnect(c.quic, "websocket", "/ws", listOf("sec-websocket-version" to "13"))
+                    coroutineScope {
+                        val stopSending = async { st.awaitSendStopped() }
+                        assertEquals(1L, readH3Frame(st.input).first, "the 200's HEADERS")
+                        st.output.writeFully(dataFrame(clientClose))
+                        st.output.flush()
+                        // the server's Close, then its FIN
+                        while (runCatching { readH3Frame(st.input) }.isSuccess) continue
+                        assertNull(withTimeoutOrNull(SLOW_CLIENT) { stopSending.await() }, "the server waits for the FIN")
+                        val started = TimeSource.Monotonic.markNow()
+                        val stop = launch(Dispatchers.IO) { server.stop(10_000, 20_000) }
+                        assertEquals(Http3ErrorCode.NO_ERROR, withTimeout(10.seconds) { stopSending.await() })
+                        withTimeout(10.seconds) { stop.join() }
+                        stopped = true
+                        val took = started.elapsedNow()
+                        assertTrue(took < 3.seconds, "the stop took $took, the close wait is 5 s")
+                    }
+                } finally {
+                    c.close()
+                }
+            } finally {
+                ep.close()
+                if (!stopped) server.stop(100, 500)
+            }
+        }
+
     @Test fun h3NoStopSendingWhileTheClientHoldsItsFinClientCloses() =
         h3ServerTest {
             assertEquals(null to null, h3Close("/ws", sendFin = true))

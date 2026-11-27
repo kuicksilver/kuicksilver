@@ -1,6 +1,6 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
 
 package io.kuicksilver.ktor.client
 
@@ -989,7 +989,471 @@ class ClientWebSocketCloseOrderTest {
                 ep.close()
             }
         }
+
+    // ---- the engine's close (client.close()) ends the waits for the server (WebSocketLifetime.hurry) ----
+
+    /**
+     * `client.close()` while a session waits for a server that never answers: in T1 ([answers] false: the server read the
+     * Close and sends nothing) or in T2 (it answered with its Close and keeps the connection). While the client is open the
+     * client waits (60 s here); its close ends the wait (in T1 after the grace for the server to read the Close), and the
+     * connection still ends cleanly: close_notify over TLS, a FIN, no reset before that clean end (RFC 6455 section 5.5.1:
+     * the client "MAY close the connection at any time after sending and receiving a Close message"; sections 7.1.1 and
+     * 7.1.4: in the abnormal case it may initiate the TCP close). The engine's cleanup is over long before the close wait. Before, `client.close()` waited the close wait out (the leak sentinel saw 4990 ms
+     * against Ktor's Netty server).
+     */
+    private fun engineCloseH1(
+        tls: Boolean,
+        answers: Boolean,
+    ) = clientTest {
+        val conns = CompletableDeferred<RawConnection>()
+        val frames = CompletableDeferred<List<String>>()
+        val hook = Events()
+        rawServer(tls, serve = { conn ->
+            conns.complete(conn)
+            frames.complete(readClientFrames(conn.input))
+            if (answers) {
+                conn.output.writeFully(byteArrayOf(0x88.toByte(), 2, 0x03, 0xE8.toByte()))
+                conn.output.flush()
+            }
+            conn.watchEnd()
+        }) { port ->
+            val c = testClient(block = { install(WebSockets) })
+            try {
+                val e = engine(c)
+                e.h1.webSocketClosingForTest = { hook += it }
+                e.h1.webSocketCloseWaitMillis = 60_000
+                e.webSockets.hurryGraceMillis = 200 // a silent server: the grace is waited out, shortened here
+                c.webSocketSession("${scheme(tls)}://127.0.0.1:$port/ws").close(CloseReason(4000, "client bye"))
+                val conn = conns.await()
+                assertEquals("close 4000 client bye", withTimeout(20.seconds) { frames.await() }.last())
+                if (answers) hook.await("waiting")
+                // the client is open: it waits for the server
+                conn.events.assertClientQuietWhileServerHolds()
+                assertEquals(1, e.webSockets.size, "the session is still waiting")
+                c.close()
+                withTimeout(ENGINE_CLOSE_BOUND) { e.cleanup.join() }
+                conn.events.await("client FIN")
+                if (tls) conn.events.await("client close_notify")
+                hook.await("engine closed")
+                assertFalse(hook.has("T2"), "${hook.timed.value}")
+                assertFalse(conn.events.has("client RST"), "a clean close, not a reset: ${conn.events.timed.value}")
+                assertEquals(0, e.webSockets.size)
+            } finally {
+                c.close()
+            }
+        }
+    }
+
+    @Test fun negative_engineCloseEndsT1AgainstASilentPlainServer() = engineCloseH1(tls = false, answers = false)
+
+    @Test fun negative_engineCloseEndsT1AgainstASilentTlsServer() = engineCloseH1(tls = true, answers = false)
+
+    @Test fun negative_engineCloseEndsT2AgainstAPlainServerThatKeepsTheConnection() = engineCloseH1(tls = false, answers = true)
+
+    @Test fun negative_engineCloseEndsT2AgainstATlsServerThatKeepsTheConnection() = engineCloseH1(tls = true, answers = true)
+
+    /**
+     * Several sessions of one client: one in T1 (its server silent), one in T2 (its server answered and keeps the
+     * connection), and one still open. Ktor closes the engine only once the client's open work is done: with the open
+     * session (`webSocketSession()` runs it under the client) `client.close()` does not reach the engine, and the other two
+     * still wait for their servers. Once the application closes the open one, against a silent server too, the engine is
+     * closed and none of the three waits any more: each writes its Close and ends cleanly, and the cleanup is over at once.
+     */
+    @Test fun negative_engineCloseEndsEveryWaitingSession() =
+        clientTest {
+            val tls = true
+            val conns =
+                kotlinx.coroutines.channels.Channel<Pair<RawConnection, List<String>>>(
+                    kotlinx.coroutines.channels.Channel.UNLIMITED,
+                )
+            val opened = kotlinx.coroutines.channels.Channel<RawConnection>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+            val accepted =
+                kotlin.concurrent.atomics
+                    .AtomicInt(0)
+            val hook = Events()
+            rawServer(tls, serve = { conn ->
+                val i = accepted.fetchAndAdd(1)
+                opened.send(conn)
+                val frames = readClientFrames(conn.input)
+                if (i == 1) {
+                    conn.output.writeFully(byteArrayOf(0x88.toByte(), 2, 0x03, 0xE8.toByte()))
+                    conn.output.flush()
+                }
+                conn.watchEnd()
+                conns.send(conn to frames)
+            }) { port ->
+                val c = testClient(block = { install(WebSockets) })
+                try {
+                    val e = engine(c)
+                    e.h1.webSocketClosingForTest = { hook += it }
+                    e.h1.webSocketCloseWaitMillis = 60_000
+                    e.webSockets.hurryGraceMillis = 200 // a silent server: the grace is waited out, shortened here
+                    val url = "${scheme(tls)}://127.0.0.1:$port/ws"
+                    c.webSocketSession(url).close(CloseReason(4000, "t1"))
+                    val (t1, t1Frames) = withTimeout(20.seconds) { conns.receive() }
+                    c.webSocketSession(url).close(CloseReason(4001, "t2"))
+                    val (t2, t2Frames) = withTimeout(20.seconds) { conns.receive() }
+                    hook.await("waiting")
+                    val open = c.webSocketSession(url)
+                    open.outgoing.send(
+                        io.ktor.websocket.Frame
+                            .Text("still open"),
+                    )
+                    repeat(2) { withTimeout(20.seconds) { opened.receive() } } // the connections of t1 and t2
+                    val late = withTimeout(20.seconds) { opened.receive() }
+                    assertEquals(3, e.webSockets.size)
+                    c.close()
+                    // the open session keeps the engine open: the others still wait for their servers
+                    t1.events.assertClientQuietWhileServerHolds()
+                    t2.events.assertClientQuietWhileServerHolds()
+                    assertFalse(e.cleanup.isCompleted)
+                    open.close(CloseReason(4002, "after close()"))
+                    val (lateConn, lateFrames) = withTimeout(20.seconds) { conns.receive() }
+                    assertTrue(lateConn === late)
+                    withTimeout(ENGINE_CLOSE_BOUND) { e.cleanup.join() }
+                    for (conn in listOf(t1, t2, late)) {
+                        conn.events.await("client FIN")
+                        conn.events.await("client close_notify")
+                        assertFalse(conn.events.has("client RST"), "a clean close, not a reset: ${conn.events.timed.value}")
+                    }
+                    assertEquals("close 4000 t1", t1Frames.last())
+                    assertEquals("close 4001 t2", t2Frames.last())
+                    assertEquals(listOf("text 10", "close 4002 after close()"), lateFrames)
+                    assertFalse(hook.has("T2"), "${hook.timed.value}")
+                    assertEquals(0, e.webSockets.size)
+                } finally {
+                    c.close()
+                }
+            }
+        }
+
+    /**
+     * `client.close()` while `webSocket { }` waits in T1 for a server that never answers its Close (the call waits for the
+     * session's coroutines, so the block has not returned): the block returns at once, the connection ends cleanly.
+     */
+    @Test fun negative_engineCloseEndsTheT1OfAWebSocketBlock() =
+        clientTest {
+            val conns = CompletableDeferred<RawConnection>()
+            val frames = CompletableDeferred<List<String>>()
+            rawServer(false, serve = { conn ->
+                conns.complete(conn)
+                frames.complete(readClientFrames(conn.input))
+                conn.watchEnd()
+            }) { port ->
+                val c = testClient(block = { install(WebSockets) })
+                try {
+                    val e = engine(c)
+                    e.h1.webSocketCloseWaitMillis = 60_000
+                    e.webSockets.hurryGraceMillis = 200 // a silent server: the grace is waited out, shortened here
+                    coroutineScope {
+                        val block = launch { c.webSocket("ws://127.0.0.1:$port/ws") { close(CloseReason(4000, "client bye")) } }
+                        assertEquals("close 4000 client bye", withTimeout(20.seconds) { frames.await() }.last())
+                        val conn = conns.await()
+                        conn.events.assertClientQuietWhileServerHolds()
+                        assertTrue(block.isActive, "the block waits for the server's Close")
+                        c.close()
+                        withTimeout(ENGINE_CLOSE_BOUND) {
+                            block.join()
+                            e.cleanup.join()
+                        }
+                        conn.events.await("client FIN")
+                        assertFalse(conn.events.has("client RST"), "${conn.events.timed.value}")
+                    }
+                } finally {
+                    c.close()
+                }
+            }
+        }
+
+    /**
+     * The other side of the bound: with the client open, a server that never answers the Close is waited for the whole
+     * close wait (T1, 600 ms here) before the client ends the connection, cleanly.
+     */
+    @Test fun negative_aSilentServerIsWaitedForWhileTheClientIsOpen() =
+        clientTest {
+            val conns = CompletableDeferred<RawConnection>()
+            rawServer(false, serve = { conn ->
+                conns.complete(conn)
+                readClientFrames(conn.input)
+                conn.watchEnd()
+            }) { port ->
+                testClient(block = { install(WebSockets) }).use { c ->
+                    engine(c).h1.webSocketCloseWaitMillis = 600
+                    val session = c.webSocketSession("ws://127.0.0.1:$port/ws")
+                    val before =
+                        kotlin.time.TimeSource.Monotonic
+                            .markNow()
+                    session.close(CloseReason(4000, "client bye"))
+                    val conn = conns.await()
+                    conn.events.await("client FIN")
+                    val took = before.elapsedNow()
+                    assertTrue(took >= 590.milliseconds, "the client closed after $took, before the close wait")
+                    assertFalse(conn.events.has("client RST"), "${conn.events.timed.value}")
+                }
+            }
+        }
+
+    /**
+     * HTTP/2: `client.close()` while the session waits for a server that never answers its Close ([answers] false) or
+     * never ends its side of the stream: END_STREAM at once (RFC 8441 section 5: the orderly close), the server's waited
+     * for the grace after both Closes, for the rest of the close wait (T1) when it never answered the Close (it may still
+     * be reading it, and the reset would discard it); the stream is let go after it (the server reads the client's side to a clean end, so any RST_STREAM came
+     * after the END_STREAM), and the cleanup is over at once.
+     */
+    private fun engineCloseH2(answers: Boolean) =
+        clientTest {
+            val events = Events()
+            val hook = Events()
+            val frames = CompletableDeferred<List<String>>()
+            tlsH2WithSilentUdp(
+                enableConnectProtocol = true,
+                onRequest = { _, r ->
+                    if (r.method != "CONNECT") return@tlsH2WithSilentUdp ok(r)
+                    r.invokeOnFailure { events += "client RST" }
+                    r.respond(200)
+                    val out = ByteChannel()
+                    launch { runCatching { r.sendBody(out, end = true) } }
+                    frames.complete(readClientFrames(r.body))
+                    if (answers) {
+                        out.writeFully(byteArrayOf(0x88.toByte(), 2, 0x03, 0xE8.toByte()))
+                        out.flush()
+                    }
+                    launch {
+                        runCatching { r.body.discard() }
+                        if (r.body.closedCause == null) events += "client END_STREAM"
+                    }
+                    kotlinx.coroutines.awaitCancellation()
+                },
+            ) { port, _ ->
+                val c = testClient(block = { install(WebSockets) })
+                try {
+                    val e = engine(c)
+                    e.h1.h2WebSocketClosingForTest = { hook += it }
+                    // an unanswered Close keeps the rest of its close wait over HTTP/2 (a short one here)
+                    e.h1.webSocketCloseWaitMillis = if (answers) 60_000 else 1_500
+                    e.webSockets.hurryGraceMillis = 200 // a silent server: the grace is waited out, shortened here
+                    c.get("https://127.0.0.1:$port/")
+                    c.webSocketSession("wss://127.0.0.1:$port/ws").close(CloseReason(4000, "client bye"))
+                    assertEquals("close 4000 client bye", withTimeout(20.seconds) { frames.await() }.last())
+                    if (answers) hook.await("waiting")
+                    events.assertClientQuietWhileServerHolds()
+                    c.close()
+                    withTimeout(ENGINE_CLOSE_BOUND) { e.cleanup.join() }
+                    events.await("client END_STREAM")
+                    hook.await("engine closed")
+                    assertFalse(hook.has("T2"), "${hook.timed.value}")
+                } finally {
+                    c.close()
+                }
+            }
+        }
+
+    /**
+     * The server's Close first, the client's reply, then `client.close()` in T2 against a server that reads slowly (it has
+     * not read the reply yet): our reply is the last frame of the session and may be unread, so after the client's
+     * END_STREAM the server is still given the grace to read it and end its side. Before, END_STREAM and RST_STREAM CANCEL
+     * went back to back, and the reset discarded the unread reply (the server saw no Close: 1006).
+     */
+    @Test fun negative_h2EngineCloseLeavesTheReplyToASlowServer() =
+        clientTest {
+            val hurried = CompletableDeferred<Unit>()
+            val reset = CompletableDeferred<Unit>()
+            val read = CompletableDeferred<List<String>>()
+            tlsH2WithSilentUdp(
+                enableConnectProtocol = true,
+                onRequest = { _, r ->
+                    if (r.method != "CONNECT") return@tlsH2WithSilentUdp ok(r)
+                    r.invokeOnFailure { reset.complete(Unit) }
+                    r.respond(200)
+                    val out = ByteChannel()
+                    launch { runCatching { r.sendBody(out, end = true) } }
+                    out.writeFully(byteArrayOf(0x88.toByte(), 2, 0x03, 0xE8.toByte())) // Close 1000
+                    out.flush()
+                    hurried.await()
+                    // a slow reader: the client's reply stays unread a while after the client was closed
+                    kotlinx.coroutines.withTimeoutOrNull(SLOW_SERVER) { reset.await() }
+                    val resetFirst = reset.isCompleted
+                    read.complete(readClientFrames(r.body) + listOfNotNull("reset before the read".takeIf { resetFirst }))
+                    out.flushAndClose()
+                    kotlinx.coroutines.awaitCancellation()
+                },
+            ) { port, _ ->
+                val c = testClient(block = { install(WebSockets) })
+                try {
+                    val e = engine(c)
+                    e.h1.webSocketCloseWaitMillis = 60_000
+                    c.get("https://127.0.0.1:$port/")
+                    withTimeout(20.seconds) { c.webSocket("wss://127.0.0.1:$port/ws") { for (f in incoming) continue } }
+                    c.close()
+                    hurried.complete(Unit)
+                    // the reply read whole, and no RST_STREAM before it
+                    assertEquals("close 1000 ", withTimeout(20.seconds) { read.await() }.last())
+                    withTimeout(ENGINE_CLOSE_BOUND) { e.cleanup.join() }
+                } finally {
+                    c.close()
+                }
+            }
+        }
+
+    @Test fun negative_h2EngineCloseEndsT1AgainstASilentServer() = engineCloseH2(answers = false)
+
+    @Test fun negative_h2EngineCloseEndsT2AgainstAServerThatKeepsTheStream() = engineCloseH2(answers = true)
+
+    /**
+     * HTTP/3: the same with FIN (RFC 9220 section 3): `client.close()` sends the FIN at once, the server's is waited for
+     * as over HTTP/2, the server is then stopped (STOP_SENDING), and no RESET_STREAM goes: what the client sent is whole.
+     */
+    private fun engineCloseH3(answers: Boolean) =
+        h3Test {
+            val events = Events()
+            val hook = Events()
+            val frames = CompletableDeferred<List<String>>()
+            val ep =
+                Http3Endpoint.bind(
+                    InetSocketAddress("127.0.0.1", 0),
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            server =
+                                QuicServerConfig
+                                    .Builder(
+                                        tlsConfig(TlsRole.Server) {
+                                            alpn = listOf("h3")
+                                            identity = ClientFixtures.identity()
+                                        },
+                                    ).build()
+                        }.build(),
+                    io.kuicksilver.http3.http3Settings { enableConnectProtocol = true },
+                )
+            coroutineScope {
+                val served =
+                    launch {
+                        val conn = ep.accept()
+                        val s = conn.acceptRequest().acceptConnect()
+                        frames.complete(readClientFrames(s.input))
+                        if (answers) {
+                            s.output.writeFully(byteArrayOf(0x88.toByte(), 2, 0x03, 0xE8.toByte()))
+                            s.output.flush()
+                        }
+                        launch {
+                            runCatching { s.input.discard() }
+                            events += if (s.input.closedCause == null) "client FIN" else "client reset"
+                        }
+                        kotlinx.coroutines.awaitCancellation()
+                    }
+                try {
+                    val c =
+                        testClient(
+                            Http3DiscoveryMode.H3Only,
+                            engine = { http3 { qlog = FramesSent(events) } },
+                            block = { install(WebSockets) },
+                        )
+                    try {
+                        val e = engine(c)
+                        e.h3.webSocketClosingForTest = { hook += it }
+                        // an unanswered Close keeps the rest of its close wait over HTTP/3 (a short one here)
+                        e.h3.webSocketCloseWaitMillis = if (answers) 60_000 else 1_500
+                        e.webSockets.hurryGraceMillis = 200 // a silent server: the grace is waited out, shortened here
+                        c.webSocketSession("wss://127.0.0.1:${ep.localAddress.port}/ws").close(CloseReason(4000, "client bye"))
+                        assertEquals("close 4000 client bye", withTimeout(20.seconds) { frames.await() }.last())
+                        if (answers) hook.await("waiting")
+                        events.assertClientQuietWhileServerHolds()
+                        c.close()
+                        withTimeout(ENGINE_CLOSE_BOUND) { e.cleanup.join() }
+                        events.await("client FIN")
+                        hook.await("engine closed")
+                        assertFalse(hook.has("T2"), "${hook.timed.value}")
+                        assertFalse(events.has("client RESET_STREAM"), "${events.timed.value}")
+                    } finally {
+                        c.close()
+                    }
+                } finally {
+                    served.cancel()
+                    ep.close()
+                }
+            }
+        }
+
+    /**
+     * HTTP/3, as [negative_h2EngineCloseLeavesTheReplyToASlowServer]: after the client's FIN the slow server still has the
+     * grace to read the reply. Before, FIN, STOP_SENDING and the engine's CONNECTION_CLOSE followed at once, and the
+     * connection's close discarded the unread reply.
+     */
+    @Test fun negative_h3EngineCloseLeavesTheReplyToASlowServer() =
+        h3Test {
+            val events = Events()
+            val hurried = CompletableDeferred<Unit>()
+            val read = CompletableDeferred<List<String>>()
+            val ep =
+                Http3Endpoint.bind(
+                    InetSocketAddress("127.0.0.1", 0),
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            server =
+                                QuicServerConfig
+                                    .Builder(
+                                        tlsConfig(TlsRole.Server) {
+                                            alpn = listOf("h3")
+                                            identity = ClientFixtures.identity()
+                                        },
+                                    ).build()
+                        }.build(),
+                    io.kuicksilver.http3.http3Settings { enableConnectProtocol = true },
+                )
+            coroutineScope {
+                val served =
+                    launch {
+                        val conn = ep.accept()
+                        val s = conn.acceptRequest().acceptConnect()
+                        s.output.writeFully(byteArrayOf(0x88.toByte(), 2, 0x03, 0xE8.toByte())) // Close 1000
+                        s.output.flush()
+                        hurried.await()
+                        // a slow reader: the client's reply stays unread a while after the client was closed
+                        kotlinx.coroutines.withTimeoutOrNull(SLOW_SERVER) { events.await("client STOP_SENDING") }
+                        val stoppedFirst = events.has("client STOP_SENDING")
+                        read.complete(readClientFrames(s.input) + listOfNotNull("stopped before the read".takeIf { stoppedFirst }))
+                        runCatching { s.output.flushAndClose() }
+                        kotlinx.coroutines.awaitCancellation()
+                    }
+                try {
+                    val c =
+                        testClient(
+                            Http3DiscoveryMode.H3Only,
+                            engine = { http3 { qlog = FramesSent(events) } },
+                            block = { install(WebSockets) },
+                        )
+                    try {
+                        val e = engine(c)
+                        e.h3.webSocketCloseWaitMillis = 60_000
+                        withTimeout(20.seconds) {
+                            c.webSocket("wss://127.0.0.1:${ep.localAddress.port}/ws") { for (f in incoming) continue }
+                        }
+                        c.close()
+                        hurried.complete(Unit)
+                        // the reply read whole, and no STOP_SENDING (nor the connection's close) before it
+                        assertEquals("close 1000 ", withTimeout(20.seconds) { read.await() }.last(), "${events.timed.value}")
+                        withTimeout(ENGINE_CLOSE_BOUND) { e.cleanup.join() }
+                    } finally {
+                        c.close()
+                    }
+                } finally {
+                    served.cancel()
+                    ep.close()
+                }
+            }
+        }
+
+    @Test fun negative_h3EngineCloseEndsT1AgainstASilentServer() = engineCloseH3(answers = false)
+
+    @Test fun negative_h3EngineCloseEndsT2AgainstAServerThatKeepsTheStream() = engineCloseH3(answers = true)
 }
+
+/**
+ * How long the engine's cleanup may take after `client.close()` with sessions waiting for their servers: far below the close
+ * wait (60 s in those tests), which it used to wait out.
+ */
+private val ENGINE_CLOSE_BOUND = 3.seconds
 
 /** How long the slow servers above hold their close once the client waits for it: a behaviour under test, not a wait. */
 private val SLOW_SERVER = 300.milliseconds
