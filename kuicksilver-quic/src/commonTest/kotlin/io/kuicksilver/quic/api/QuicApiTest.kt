@@ -301,14 +301,14 @@ class QuicApiTest {
                     val (c, s) = p.connect()
                     val serverAddr = p.server.localAddress
                     val clientAddr = p.client.localAddress
-                    // set and read on the server's loop only, inside its send
+                    // set and read on the server's loop only, inside its send (the address test below comes before any read)
                     var held = false
                     var clientClosedFirst: QuicException.ConnectionLost? = null
                     var serverDoneThen = true
                     p.net.lose = lose@{ from, to, bytes ->
                         // the first datagram the closing server connection sends: delivered here, then the send is held until
                         // the client has taken it and completed its `closed`
-                        if (held || from != serverAddr || to != clientAddr || s.core.state != ConnectionState.Closing) {
+                        if (from != serverAddr || to != clientAddr || held || s.core.state != ConnectionState.Closing) {
                             return@lose false
                         }
                         held = true
