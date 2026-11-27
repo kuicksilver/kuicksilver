@@ -303,8 +303,8 @@ share of controlled resources; this applies both to sending data and to opening 
   `.negative_aGroupOfLargeDatagramsGetsNoLargerShare`, `.negative_evictionKeepsTheGroupsMoreUrgentDatagrams`,
   `.negative_latestWinsReplacesOnlyWithinItsGroup`, `.negative_manyGroupsNeverShareAdmission`,
   `.negative_aProducerRacingTheGroupsEndStallsNothing`, `.negative_aDrainPassIsBoundedByWhatWasAdmitted`,
-  `.negative_anEndedGroupsLateAdmissionLeavesNoGroupBehind`; `api.DatagramDrainerLatencyJvmTest`: flooding sessions on
-  other threads keep the endpoint loop answering within 500 ms, where one drain held it for minutes before; `.groupsOfOneUrgencyTakeTurns`;
+  `.negative_anEndedGroupsLateAdmissionLeavesNoGroupBehind`, `.groupsOfOneUrgencyTakeTurns`; `api.DatagramDrainerLatencyJvmTest`:
+  flooding sessions on other threads keep the endpoint loop answering within 500 ms, where one drain held it for minutes before;
   `api.DatagramFairnessJvmTest.negative_aFloodDoesNotTakeAPacedSendersDatagrams`: a paced session puts at least 48 of
   its 50 datagrams on the wire against another session's flood from another thread, where 3 of 50 arrived before)
 - a draft-14 peer that declares flow control only by `SETTINGS_WT_MAX_SESSIONS` gives no initial credit (its section
