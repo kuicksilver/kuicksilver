@@ -8,8 +8,8 @@
 # any other; publishing is release.yml and interop-image.yml, both dispatch-only.
 #
 #   lint ──────────────────────────────────────────────── pins, SPDX, script syntax
-#   gradle-deps: every configuration resolved and verified once, its dependency cache saved for the jobs below (all but
-#     the Windows ones, openssl-docker and openssl-next need it; none waits for it to succeed)
+#   gradle-deps: every configuration resolved and verified once, its dependency cache saved for the jobs below (every job
+#     but lint, openssl-docker, the Windows ones and openssl-next needs it; none waits for it to succeed)
 #   openssl-docker (linux-x64, linux-arm64, mingw-x64 + the Windows JNI dll) ─┬─ linux (x64, arm64): manylinux C tests, .so, JVM suites, system OpenSSL
 #                                                        ├─ linux-native: -kn OpenSSL, test.kexe x64 + arm64, mingw test.exe + ksl_test.exe ── windows
 #                                                        ├─ apple (macOS arm64): ABI dumps, ASan C tests, JVM + macosArm64 suites, Intel-Mac dylib, repro
@@ -216,17 +216,36 @@ jobs:
 
   gradle-deps:
     # The Gradle dependencies of the whole build, resolved once per run before the matrix asks for them: Maven Central
-    # answers 429 Too Many Requests when many jobs resolve at once (runs 44892895905, 45958310638). Every configuration of
-    # every project is resolved with verification on (the check below), then the dependency cache this job resolved into
-    # (modules-2 of its Gradle user home, without lock files and gc.properties) is saved under one key per dependency set,
-    # gradle-deps-v1-<hash> (.github/actions/setup, "gradle-deps key"), not one per job or run. The matrix jobs restore it
-    # as Gradle's read-only dependency cache (the setup action's gradle-deps: restore) and download only what it lacks,
-    # through the mirror of Central (settings.gradle.kts); their own setup-gradle entries (build cache, transforms) are
-    # unchanged. Like the setup action's own cache, only main (push and schedule) and manual runs write the entry, once
-    # per dependency set; other runs read the newest one main wrote. This job's own Gradle user home is its setup-gradle
-    # entry, so it downloads only what changed since. A failure here (a verification gap, a repository that refused every
-    # retry) fails the run but holds no job back: the jobs that need it run anyway and resolve on their own. Windows jobs
-    # resolve on their own (the entry's path is on another drive there).
+    # answers 429 Too Many Requests when many jobs resolve at once (runs 44892895905, 45958310638, 45987232788). Every
+    # configuration of every project is resolved with verification on (the check below), then the dependency cache this
+    # job resolved into (modules-2 of its Gradle user home, without lock files and gc.properties) is saved under one key
+    # per dependency set, gradle-deps-v1-<hash> (.github/actions/setup, "gradle-deps key"), not one per job or run. The
+    # matrix jobs restore it as Gradle's read-only dependency cache (the setup action's gradle-deps: restore) and
+    # download only what it lacks, through the mirror of Central (settings.gradle.kts); their own setup-gradle entries
+    # (build cache, transforms) are unchanged. Like the setup action's own cache, only main (push and schedule) and
+    # manual runs write the entry, once per dependency set; other runs read the newest one main wrote. This job's own
+    # Gradle user home is its setup-gradle entry, so it downloads only what changed since. A failure here (a
+    # verification gap, a repository that refused every retry) fails the run but holds no job back: the jobs that need
+    # it run anyway and resolve on their own. Windows jobs resolve on their own (the entry's path is on another drive
+    # there). A manual run whose `only` names none of the jobs that read the entry or this job's check (only Windows
+    # jobs and openssl-next, say) skips this job; the jobs that need it check the results of their other needs
+    # themselves (!cancelled()), so a skipped gradle-deps skips none of them, and they restore the newest entry main
+    # wrote. The list below is every job that needs gradle-deps, lint (whose dependency verification check moved here)
+    # and gradle-deps itself: a new job that restores the entry belongs in it. The entry is a copy of this job's whole
+    # modules-2, which setup-gradle carries over from run to run: files of earlier dependency sets that are still there
+    # go into it too (Gradle drops a file from its user home 30 days after its last use; keeping only what this run
+    # resolved would need Gradle's binary access journal or a second resolution into an empty home, which is the
+    # download this job exists to avoid). Its size is printed, and a warning raised above 4 GiB: GitHub keeps 10 GB of
+    # caches per repository, evicting the least recently used entries beyond that, setup-gradle's entries and the
+    # OpenSSL caches included, so an oversized entry pushes those out first.
+    if: >-
+      ${{ inputs.only == '' || contains(format(',{0},', inputs.only), ',gradle-deps,')
+      || contains(format(',{0},', inputs.only), ',lint,') || contains(format(',{0},', inputs.only), ',linux,')
+      || contains(format(',{0},', inputs.only), ',linux-native,')
+      || contains(format(',{0},', inputs.only), ',apple,') || contains(format(',{0},', inputs.only), ',apple-native,')
+      || contains(format(',{0},', inputs.only), ',android,') || contains(format(',{0},', inputs.only), ',jdk-compat,')
+      || contains(format(',{0},', inputs.only), ',interop-images,') || contains(format(',{0},', inputs.only), ',jvm-jar,')
+      || contains(format(',{0},', inputs.only), ',consumer-smoke,') }}
     runs-on: ubuntu-24.04
     permissions: { contents: read }
     timeout-minutes: 45
@@ -261,6 +280,10 @@ jobs:
           mkdir -p "$HOME/gradle-deps-ro/modules-2"
           rsync -a --exclude '*.lock' --exclude gc.properties "$src/" "$HOME/gradle-deps-ro/modules-2/"
           echo "gradle-deps: $(find "$HOME/gradle-deps-ro/modules-2/files-2.1" -type f | wc -l) files, $(du -sh "$HOME/gradle-deps-ro/modules-2" | cut -f1)"
+          # the whole of this job's modules-2, older dependency sets included (the job's comment); 10 GB for all cache entries
+          kib=$(du -sk "$HOME/gradle-deps-ro/modules-2" | cut -f1)
+          [ "$kib" -le $((4 * 1024 * 1024)) ] ||
+            echo "::warning::the gradle-deps entry is $((kib / 1024)) MiB: GitHub keeps 10 GB of caches per repository, the least recently used go first"
       - name: 'gradle-deps: save'
         if: steps.saved.outcome == 'success' && steps.saved.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -840,6 +863,7 @@ jobs:
     if: ${{ !cancelled() && (inputs.only == '' || contains(format(',{0},', inputs.only), ',android,')) }}
     # AAR with libksl.so for arm64-v8a, x86_64 and armeabi-v7a (pinned NDK), the size, 16 KiB page and consumer keep rule gates, then the device tests on the
     # x86_64 emulator at minSdk 24 and at compileSdk 35 (KVM on the Linux runner; Apple-silicon runners cannot nest it).
+    # gradle-deps also on a pull request, where it saves nothing: minutes of waiting, no runner minutes, off the critical path
     needs: gradle-deps
     strategy:
       fail-fast: false

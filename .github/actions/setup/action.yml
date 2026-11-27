@@ -70,12 +70,12 @@ runs:
     # build.yml's gradle-deps job resolved every configuration once and saved its dependency cache (modules-2, without lock
     # files) under one key per dependency set, for every job of the run: restored here as Gradle's read-only dependency
     # cache, so the matrix does not ask Maven Central for the same files at once (run 45958310638: android (35) refused with
-    # 429 on all three retries). Gradle takes what it finds there and downloads the rest into this job's own user home, which
-    # setup-gradle restores and saves as before (the build cache and transforms are that home's). The path is one string for
-    # every runner OS (the cache version hashes it), at the same depth below the workspace on Linux and macOS; Windows
-    # (another drive) does not take part. An older entry (another dependency set) is still worth restoring; no entry, or a
-    # cache service that fails, leaves the job resolving on its own. Every file still passes gradle/verification-metadata.xml
-    # when it is used.
+    # 429 on all three retries; run 45987232788 too). Gradle takes what it finds there and downloads the rest into this
+    # job's own user home, which setup-gradle restores and saves as before (the build cache and transforms are that home's).
+    # The path is one string for every runner OS (the cache version hashes it), at the same depth below the workspace on
+    # Linux and macOS; Windows (another drive) does not take part. An older entry (another dependency set) is still worth
+    # restoring; no entry, or a cache service that fails, leaves the job resolving on its own. Every file still passes
+    # gradle/verification-metadata.xml when it is used.
     - name: Gradle dependencies of the gradle-deps job (read-only)
       id: gradle-deps
       if: inputs.gradle-deps == 'restore' && runner.os != 'Windows'
@@ -120,7 +120,7 @@ runs:
         # gradle/verification-metadata.xml, in the daemon the later steps reuse. gradlew-retry.sh runs it once more with
         # --refresh-dependencies after a dependency was not found, and up to four more times after growing, randomly spread
         # pauses when a repository answered 429 or 5xx (runs 44892895905: four fuzz jobs refused here, also on the one retry
-        # it had then; 45958310638: android (35), on all three),
+        # it had then; 45958310638: android (35), on all three; 45987232788),
         # never after a dependency verification failure, as $G does for every later Gradle step. Every job that uses this
         # action runs Gradle.
         KSL_GRADLE_RETRY_QUIET=1 bash tools/ci/gradlew-retry.sh --max-workers=2 -q help

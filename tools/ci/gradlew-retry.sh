@@ -25,14 +25,14 @@
 # kotlin-stdlib 2.4.0 behind the Gradle Plugin Portal's redirect, ktor-server-core 3.6.1, kotlin-scripting-compiler-
 # embeddable 2.4.20, kover-jvm-agent 0.9.11, in four jobs), and 429 to a matrix of jobs that resolve at once (run
 # 44892895905: four fuzz jobs, the kotlin-gradle-plugin, kotlin-sam-with-receiver and annotations POMs, still 429 on the
-# one retry 30 s later; run 45958310638: android (35), org.jetbrains:annotations:13.0 for build-logic's class path, still
-# 429 after three retries 30-60 s, 60-90 s and 120-150 s apart). CI now asks Google's mirror of Central first
-# (settings.gradle.kts) and shares one resolution between the jobs (build.yml, gradle-deps); these retries are the last
-# line. A module missing from every repository is asked for again by the next build, and settings.gradle.kts falls back
-# from the mirror of Central to Central for it; a missing file of a module whose metadata was found (a jar) is neither:
-# Gradle asks only the repository the metadata came from, and records the miss for 24 hours in the Gradle user home
-# (DefaultCachePolicy), which setup-gradle saves at the end of the job, failed or not, and the next jobs restore.
-# --refresh-dependencies ignores that record and asks again.
+# one retry 30 s later; run 45958310638: android (35), org.jetbrains:annotations:13.0 for build-logic's class path,
+# still 429 after three retries 30-60 s, 60-90 s and 120-150 s apart; run 45987232788 too). CI now asks Google's mirror
+# of Central first (settings.gradle.kts) and shares one resolution between the jobs (build.yml, gradle-deps); these
+# retries are the last line. A module missing from every repository is asked for again by the next build, and
+# settings.gradle.kts falls back from the mirror of Central to Central for it; a missing file of a module whose metadata
+# was found (a jar) is neither: Gradle asks only the repository the metadata came from, and records the miss for 24
+# hours in the Gradle user home (DefaultCachePolicy), which setup-gradle saves at the end of the job, failed or not, and
+# the next jobs restore. --refresh-dependencies ignores that record and asks again.
 #
 # Usage: tools/ci/gradlew-retry.sh [gradle args...] (from the root of the build, which has ./gradlew; KSL_GRADLEW names
 # another wrapper, KSL_GRADLE_RETRY_DELAY the shortest pause before a retry in seconds, default 30 (0: no pauses);

@@ -54,11 +54,13 @@ matches neither fails the build, the release included. The same holds for every 
 belongs to the artifact (group, name, version, file), never to the repository that served it.
 
 In CI (`kuicksilver.centralMirror=true`, set by `.github/actions/setup`) the builds ask Google's mirror of Maven Central
-(`https://maven-central.storage-download.googleapis.com/maven2/`, Google's official copy of Central, over HTTPS and
-without credentials) before Central itself, in `settings.gradle.kts`, `build-logic/settings.gradle.kts` and the samples.
-Central answers 429 Too Many Requests to GitHub's runners when many jobs resolve at once, and the Gradle documentation
-recommends this mirror for exactly that. Central stays the fallback: a module the mirror does not have (yet) is asked of
-Central next, and Central's occasional 404 for a file it has is no longer the first answer. The mirror is held to the
+(`https://maven-central.storage-download.googleapis.com/maven2/`, Google's official mirror of Maven Central, over HTTPS
+and without credentials) before Central itself, in `settings.gradle.kts`, `build-logic/settings.gradle.kts` and the
+samples. Central answers 429 Too Many Requests to GitHub's runners when many jobs resolve at once (runs 45958310638,
+45987232788). Central stays the fallback: a module the mirror does not have (yet) is asked of Central next, and
+Central's occasional 404 for a file it has is no longer the first answer. Gradle asks the next repository only after a
+404, so the mirror is never asked for what Central does not serve (plugin markers, the Plugin Portal's own plugins,
+Google's own groups): a 403, 429 or 5xx from the mirror would fail the resolution instead. The mirror is held to the
 same verification file, so it changes no trust: a file it served that differs from Central's fails the build. Builds
 outside CI, the release included, leave the mirror out (a machine behind a filter may not reach it, and an unreachable
 repository fails the resolution); repositories in settings files are never published, so neither the POMs nor the Gradle
