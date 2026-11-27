@@ -55,9 +55,16 @@ runs:
       shell: bash
       env:
         # what decides the dependency set and the cache layout: every dependency is in the verification metadata, the
-        # repositories in the settings (Gradle keeps cached metadata per repository), the layout follows the Gradle version
+        # repositories in the settings and whether the mirror of Central is one of them (Gradle keeps cached metadata per
+        # repository), the layout follows the Gradle version
         HASH: ${{ hashFiles('gradle/verification-metadata.xml', 'gradle/libs.versions.toml', 'gradle/wrapper/gradle-wrapper.properties', 'settings.gradle.kts', 'build-logic/settings.gradle.kts', 'build-logic/build.gradle.kts') }}
-      run: echo "key=gradle-deps-v1-$HASH" >> "$GITHUB_OUTPUT"
+        # the kill switch: the repository variable KSL_CENTRAL_MIRROR=off leaves Google's mirror of Central out of every
+        # job (CONTRIBUTING.md, "Dependency verification"); unset or any other value keeps it
+        MIRROR: ${{ vars.KSL_CENTRAL_MIRROR != 'off' }}
+      run: |
+        case "$MIRROR" in true) mode=mirror ;; false) mode=central ;; *) echo "::error::mirror switch '$MIRROR' is neither true nor false"; exit 1 ;; esac
+        echo "gradle-deps: Maven Central $([ "$mode" = mirror ] && echo "behind Google's mirror" || echo "alone (KSL_CENTRAL_MIRROR=off)")"
+        { echo "mirror=$MIRROR"; echo "prefix=gradle-deps-v1-$mode-"; echo "key=gradle-deps-v1-$mode-$HASH"; } >> "$GITHUB_OUTPUT"
     - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
       with:
         distribution: temurin
@@ -73,9 +80,9 @@ runs:
     # 429 on all three retries; run 45987232788 too). Gradle takes what it finds there and downloads the rest into this
     # job's own user home, which setup-gradle restores and saves as before (the build cache and transforms are that home's).
     # The path is one string for every runner OS (the cache version hashes it), at the same depth below the workspace on
-    # Linux and macOS; Windows (another drive) does not take part. An older entry (another dependency set) is still worth
-    # restoring; no entry, or a cache service that fails, leaves the job resolving on its own. Every file still passes
-    # gradle/verification-metadata.xml when it is used.
+    # Linux and macOS; Windows (another drive) does not take part. An older entry (another dependency set, never the other
+    # mirror mode) is still worth restoring; no entry, or a cache service that fails, leaves the job resolving on its own.
+    # Every file still passes gradle/verification-metadata.xml when it is used.
     - name: Gradle dependencies of the gradle-deps job (read-only)
       id: gradle-deps
       if: inputs.gradle-deps == 'restore' && runner.os != 'Windows'
@@ -84,7 +91,7 @@ runs:
       with:
         path: ~/gradle-deps-ro
         key: ${{ steps.gradle-deps-key.outputs.key }}
-        restore-keys: gradle-deps-v1-
+        restore-keys: ${{ steps.gradle-deps-key.outputs.prefix }}
     - name: Gradle read-only dependency cache
       if: steps.gradle-deps.outputs.cache-matched-key != ''
       shell: bash
@@ -101,13 +108,16 @@ runs:
         fi
     - name: Gradle properties for CI
       shell: bash
+      env:
+        MIRROR: ${{ steps.gradle-deps-key.outputs.mirror }}   # vars.KSL_CENTRAL_MIRROR != 'off'
       run: |
         # OpenSSL builds downloaded from another job (or restored from the cache) are reused, never rebuilt (kuicksilver-native/openssl.gradle.kts)
         mkdir -p "${GRADLE_USER_HOME:-$HOME/.gradle}"
-        # and Google's mirror of Maven Central before Central (settings.gradle.kts); a dependency verification failure
+        # and Google's mirror of Maven Central before Central (settings.gradle.kts) unless the repository variable
+        # KSL_CENTRAL_MIRROR is off (the "gradle-deps key" step); a dependency verification failure
         # names its reason for every artifact (a missing checksum, an untrusted key, a mismatch), so it can be told apart
         # in the log (gradlew-retry.sh never retries one)
-        printf 'kuicksilver.openssl.prebuilt=true\norg.gradle.java.installations.auto-download=false\nkuicksilver.centralMirror=true\norg.gradle.dependency.verification.console=verbose\n' >> "${GRADLE_USER_HOME:-$HOME/.gradle}/gradle.properties"
+        printf 'kuicksilver.openssl.prebuilt=true\norg.gradle.java.installations.auto-download=false\nkuicksilver.centralMirror=%s\norg.gradle.dependency.verification.console=verbose\n' "$MIRROR" >> "${GRADLE_USER_HOME:-$HOME/.gradle}/gradle.properties"
     - name: Gradle plugin class path (a dependency not found is asked for once more, a refused one after a pause)
       shell: bash
       run: |

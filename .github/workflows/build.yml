@@ -219,7 +219,7 @@ jobs:
     # answers 429 Too Many Requests when many jobs resolve at once (runs 44892895905, 45958310638, 45987232788). Every
     # configuration of every project is resolved with verification on (the check below), then the dependency cache this
     # job resolved into (modules-2 of its Gradle user home, without lock files and gc.properties) is saved under one key
-    # per dependency set, gradle-deps-v1-<hash> (.github/actions/setup, "gradle-deps key"), not one per job or run. The
+    # per dependency set, gradle-deps-v1-<mirror|central>-<hash> (.github/actions/setup, "gradle-deps key"), not one per job or run. The
     # matrix jobs restore it as Gradle's read-only dependency cache (the setup action's gradle-deps: restore) and
     # download only what it lacks, through the mirror of Central (settings.gradle.kts); their own setup-gradle entries
     # (build cache, transforms) are unchanged. Like the setup action's own cache, only main (push and schedule) and
