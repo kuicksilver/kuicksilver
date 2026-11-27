@@ -95,6 +95,7 @@ done
 : "${ADB_INSTALL_TIMEOUT:=10}"
 [[ $ADB_INSTALL_TIMEOUT =~ ^[1-9][0-9]{0,2}$ ]] || { echo "android-connected-check.sh: ADB_INSTALL_TIMEOUT must be whole minutes, 1-999" >&2; exit 2; }
 export ADB_INSTALL_TIMEOUT
+# AGP warns that an experimental option is set: expected, this one has no stable name
 args+=("-Pandroid.experimental.testOptions.installApkTimeout=$(( (ADB_INSTALL_TIMEOUT + 5) * 60 ))")
 max_retries=2
 log=$(mktemp) stamp=$(mktemp)
