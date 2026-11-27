@@ -173,6 +173,7 @@ jobs:
       - name: 'fuzz: clang with libFuzzer (ksl harness)'
         if: startsWith(matrix.target, 'ksl.')
         run: |
+          { grep -lrs packages.microsoft.com /etc/apt/sources.list.d || true; } | xargs -r sudo rm -f   # not needed; a broken Microsoft source fails apt-get update
           sudo apt-get update -q
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends clang libclang-rt-18-dev
           clang --version | head -1

@@ -294,7 +294,10 @@ jobs:
           name: 'openssl-${{ matrix.target }}'
           path: 'build/openssl/${{ matrix.target }}'
       - name: LLVM binutils for the checks
-        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends llvm
+        # the image's Microsoft source is not needed here; when it breaks (403, unsigned) apt-get update fails
+        run: |
+          { grep -lrs packages.microsoft.com /etc/apt/sources.list.d || true; } | xargs -r sudo rm -f
+          sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends llvm
       - name: 'docker: image ${{ matrix.target }}'
         run: bash tools/openssl/build-docker.sh --image ${{ matrix.target }}
       # the ICMP error-queue tests (udp_recverr_*) run in a user and network namespace: Ubuntu 24.04 restricts unprivileged user
