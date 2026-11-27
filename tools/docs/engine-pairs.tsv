@@ -14,6 +14,7 @@ OkHttpToServerH2Test	*	Ktor OkHttp	Kuicksilver	h2
 JavaToServerH1Test	*	Ktor Java	Kuicksilver	h1/TLS
 JavaToServerH2Test	*	Ktor Java	Kuicksilver	h2
 ClientToNettyWebSocketTest	*	Kuicksilver	Ktor Netty	wss
+NettyWebSocketTeardownTest	*	Kuicksilver	Ktor Netty	wss
 ClientToCioWebSocketTest	*	Kuicksilver	Ktor CIO	ws
 CioToServerWebSocketTest	*	Ktor CIO	Kuicksilver	ws
 OkHttpToServerWebSocketTest	*	Ktor OkHttp	Kuicksilver	wss
