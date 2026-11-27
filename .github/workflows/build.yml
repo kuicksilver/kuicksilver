@@ -952,6 +952,11 @@ jobs:
           # runs the tasks again, at most twice, without the modules that passed, when every failed task is the connected
           # test task of a module whose install stalled (Gradle calls the stall "There were failing tests" too) and no test
           # case failed; any other failure fails at once.
+          # The emulator booted the API 24 image with 1024 MB ("Increasing RAM size to 1024MB": the image's default is
+          # below the emulator's floor) for test APKs of 11-14 MB and runs of 1300 tests in one process; 2 GiB for API 24,
+          # as the local gate's API 24 AVD has (tools/ci/avd-api24.sh, hw.ramSize=2048M); API 35 keeps its image's default
+          # (an empty ram-size leaves the AVD as it is).
+          ram-size: ${{ matrix.api == 24 && '2048M' || '' }}
           # the device's /data before the tests and, on failure, again with the logs: PackageManager's refusals are in the
           # system buffer, an instrumentation "Process crashed" in crash and main. Runs 2 of main c1cac36ca and b3e621916
           # (API 24, ServerH2FloodTest): ART's abort dump for "Tried to mark 0xebadde09" was cut by logd's pruning of the
