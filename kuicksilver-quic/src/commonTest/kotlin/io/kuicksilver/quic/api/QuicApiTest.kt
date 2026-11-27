@@ -12,14 +12,17 @@ import io.kuicksilver.quic.ConnectionState
 import io.kuicksilver.quic.CoreFixtures
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicClientConfig
+import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.TimeoutKind
 import io.kuicksilver.quic.quicConfig
+import io.kuicksilver.quic.runtime.ConnectionRuntime
 import io.kuicksilver.quic.runtime.KslRandom
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.test.BeforeTest
@@ -327,6 +330,10 @@ class QuicApiTest {
             }
         }
 
+    /** Makes the server side of [s]'s connection throw out of its next datagram; set on the loop that reads it. */
+    private suspend fun armServerFailure(s: QuicConnection) =
+        withContext((s as ConnectionRuntime).loopDispatcherForTest) { s.core.testInjectFailure = IllegalStateException("boom") }
+
     private fun assertServerClosedByEndpoint(sr: QuicException.ConnectionLost) {
         assertIs<QuicException.ConnectionLost.ApplicationClosed>(sr, "the server connection ends with the close it sent: $sr")
         assertEquals(Initiator.Local, sr.initiator)
@@ -339,9 +346,12 @@ class QuicApiTest {
                 withTimeout(20.seconds) {
                     val (c1, s1) = p.connect()
                     val (c2, s2) = p.connect()
-                    // the server side of connection 1 throws out of its next datagram
-                    s1.core.testInjectFailure = IllegalStateException("boom")
+                    // the stream is opened before the failure is armed: once armed, any client packet fails connection 1, also the
+                    // client's late ACK of the server's post-handshake flight, and the reset a later one draws would make a later
+                    // openBidi throw (openAfterTheServerForgotTheConnectionThrowsTheReset)
                     val st = c1.openBidi()
+                    // the server side of connection 1 throws out of its next datagram
+                    armServerFailure(s1)
                     st.output.writeFully(byteArrayOf(1), 0, 1)
                     // the server forgot connection 1 silently, so it answers the client's next packets with a Stateless Reset
                     // (RFC 9000 section 10.3): this flush may already see connection 1 reset, which is connection 1's fate, not 2's
@@ -378,8 +388,8 @@ class QuicApiTest {
                 withTimeout(20.seconds) {
                     val (c1, s1) = p.connect()
                     val (c2, s2) = p.connect()
-                    s1.core.testInjectFailure = IllegalStateException("boom")
-                    val st = c1.openBidi()
+                    val st = c1.openBidi() // before the arming, as in the test above
+                    armServerFailure(s1)
                     st.output.writeFully(byteArrayOf(1), 0, 1)
                     runCatching { st.output.flush() } // the datagram that makes the server fail connection 1; may already see the reset
                     assertIs<QuicException.ConnectionLost.StatelessReset>(c1.closed.await())
@@ -391,6 +401,35 @@ class QuicApiTest {
                         }
                     val chain = generateSequence(e) { it.cause }.toList()
                     assertTrue(chain.any { it is QuicException.ConnectionLost.StatelessReset }, "$chain")
+                    assertFalse(c2.closed.isCompleted)
+                    assertFalse(s2.closed.isCompleted)
+                    c2.close()
+                }
+            }
+        }
+
+    /**
+     * The interleaving the two tests above avoid by opening their stream first, forced: with the failure armed, a client
+     * packet that is not ours to wait for (here a PING; on a slow runner the late ACK of the server's post-handshake flight)
+     * fails the server's connection 1, the next one draws a Stateless Reset (RFC 9000 section 10.3), and a stream asked for
+     * after it gets the connection's reason (QuicConnection.openBidi).
+     */
+    @Test fun openAfterTheServerForgotTheConnectionThrowsTheReset() =
+        runBlocking {
+            ApiPair.open().use { p ->
+                withTimeout(20.seconds) {
+                    val (c1, s1) = p.connect()
+                    val (c2, s2) = p.connect()
+                    armServerFailure(s1)
+                    c1.ping() // false when the late ACK already drew the reset
+                    assertIs<QuicException.ConnectionLost.Internal>(s1.closed.await())
+                    c1.ping()
+                    val r = c1.closed.await()
+                    assertIs<QuicException.ConnectionLost.StatelessReset>(r)
+                    for (e in listOf(assertFailsWith<QuicException.ConnectionLost> { c1.openBidi() }, assertFailsWith { c1.openUni() })) {
+                        assertIs<QuicException.ConnectionLost.StatelessReset>(e)
+                        assertEquals(r.message, e.message)
+                    }
                     assertFalse(c2.closed.isCompleted)
                     assertFalse(s2.closed.isCompleted)
                     c2.close()
