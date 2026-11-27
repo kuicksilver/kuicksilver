@@ -58,7 +58,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   image by digest, both checked by `tools/check/pins.sh`), records the number of cases, and fails on any case that
   does not pass except the ones it lists with the RFC text that allows them; the verification pages show their counts.
   Their server and client are one executable of `kuicksilver-soak` (`conformanceMain`). Results in
-  `docs/spec/interop.md`. The local gate has two more steps (82 by default, 87 for a release).
+  `docs/spec/interop.md`. The local gate has two more steps (83 by default, 88 for a release).
 - Ktor client (experimental): `TcpConnectionSnapshot.tlsVersion`, the TLS version a call's TCP connection negotiated
   (`TlsVersion.Tls12` or `Tls13`; null without TLS or after a failed handshake), also in its `toString()`.
 - WebTransport (experimental): `WebTransportSession.maxStreamErrorCode`, the highest application code of the session's
@@ -904,8 +904,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `bind` refuses a preferred address that is the endpoint's own, and a failed preferred socket takes the preferred address
   down on every loop (no more offers, moved connections closed, validations under way failed,
   `EndpointStats.preferredAddressFailures`) instead of ending the endpoint.
-- QUIC: clients follow a server's preferred address (experimental `QuicConfig.followPreferredAddress`, on by default; RFC
-  9000 section 9.6): after the handshake is confirmed they validate the path to the address of their family and move
+- QUIC: clients follow a server's preferred address (experimental `quicConfig { migration { followPreferredAddress } }`,
+  on by default; RFC 9000 section 9.6): after the handshake is confirmed they validate the path to the address of their family and move
   there, closing the original path; a failed validation keeps the connection where it was, and a public server cannot
   send the client to a local, unspecified, multicast or broadcast address. `disable_active_migration` does not stop the
   move, and after it the client may migrate.
@@ -2102,8 +2102,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   arriving after its response was encoded made the server fail the connection with `QPACK_DECODER_STREAM_ERROR`) and
   repeats each early request once.
 - Ktor client: requests now follow the platform's proxy settings by default (`proxies { resolver = ProxyResolvers.System }`):
-  where the system, the JVM's properties or (on Linux) the environment name a proxy, requests go through it over
-  HTTP/1.1, without HTTP/3 or Alt-Svc. Before, only an explicit `proxy` was used. `proxies { resolver = ProxyResolvers.None }`
+  where the system, the JVM's properties or (on Linux) the environment name a proxy, requests go through it over TCP
+  (`https` in a tunnel, over HTTP/2 or HTTP/1.1 as the origin's ALPN decides; `http` over HTTP/1.1, h2c with prior
+  knowledge in a tunnel), without HTTP/3 or Alt-Svc. Before, only an explicit `proxy` was used. `proxies { resolver = ProxyResolvers.None }`
   restores direct connections.
 - Ktor client: a `ws://` WebSocket through an HTTP proxy now goes in a CONNECT tunnel (RFC 6455 section 4.1), as
   browsers do, instead of an absolute-form Upgrade the proxy may not forward. A CONNECT the proxy refuses fails with
@@ -2120,7 +2121,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   (section 10.1: "servers SHOULD allocate some amount of bandwidths to streams acting as tunnels"). A `priority` header on a request now schedules the client's own stream too, and a
   `priority` field in a server's response is merged into the client's signal and applied to the response's scheduling.
 - QUIC client: a server's `preferred_address` is now followed (validated, then moved to) instead of ignored; set
-  `QuicConfig.followPreferredAddress = false` to keep the old behaviour.
+  `quicConfig { migration { followPreferredAddress = false } }` to keep the old behaviour.
 - QUIC: `ConnectionAdmission.default()` lets in every attempt whose address a token already validated
   (`ConnectionAttempt.addressValidated`: a Retry token, or from 0.3.0 a NEW_TOKEN token), whatever the handshakes in
   flight and their buffers. Before, under load it asked such a client for a Retry: a NEW_TOKEN holder lost the round

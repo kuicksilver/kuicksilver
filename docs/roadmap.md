@@ -226,6 +226,9 @@ what the peers really do, and is delivered whole or not at all.
 - The GSSAPI method of SOCKS5, a MUST of [RFC 1928 §3](spec/rfc/1928-1929.md#s3-gssapi): where the platform has a GSS-API
   (JGSS on the JVM, GSS.framework on Apple, SSPI on Windows, libgssapi on Linux); Android has none, so there it stays
   unavailable, documented.
+- An OkHttp and Retrofit bridge, `kuicksilver-okhttp`: an `OkHttpClient`'s calls, and so Retrofit's, served through
+  Kuicksilver, for apps that cannot move their calls to the Ktor client yet; its shape is not final
+  ([Migrating from OkHttp and Retrofit](guide/migrating-from-okhttp.md#retrofit)).
 - Optional: permessage-deflate on the JVM with a window below 15 bits. java.util.zip's Deflater has a fixed 15-bit
   window, so the JVM server declines an offer of `server_max_window_bits` below 15 (RFC 7692 section 7.1.2.1 allows it to)
   and the client never offers `client_max_window_bits` (a MAY of section 7.1.2.2). Compressing such a message Huffman-only

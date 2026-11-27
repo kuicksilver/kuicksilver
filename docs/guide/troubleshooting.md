@@ -778,7 +778,8 @@ is blocked, `NoAlternative` without `Alt-Svc`, `BrokenAlternative`, `TlsFailure`
 the `FallbackReason` table below; with
 `engine { observability { logger = KuicksilverLogger.platform(LogLevel.Info) } }` the engine logs one line per call that
 HTTP/3 could have served and did not (at `observability { protocolChoiceLogLevel }`, `Info` by default, which the
-default logger at `Warn` leaves out). An origin whose responses advertise no HTTP/3 gets one line of its own, on its
+default logger at `Warn` leaves out; `engine { observability { protocolChoiceLogLevel = LogLevel.Warn } }` instead
+logs those lines at `Warn`, so the default logger shows them). An origin whose responses advertise no HTTP/3 gets one line of its own, on its
 first call: "<origin>: no usable HTTP/3 alternative, using <protocol>" means the server sends no `Alt-Svc`, while
 a line with `HandshakeTimeout` or `marked broken` means it announces HTTP/3 and the client cannot reach it. The
 first time an alternative is marked broken on a network the engine also logs one warning that the default logger shows:

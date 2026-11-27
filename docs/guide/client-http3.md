@@ -16,7 +16,10 @@ connection migration between networks.
   next request races HTTP/3 against the open TCP connection (TCP usually wins that one), and from then on the HTTP/3
   connection serves the requests; when HTTP/3 fails, the request goes over TCP.
 - The imports of the code blocks: [Ktor engines: Imports](ktor.md#imports). When a request does not use HTTP/3 and you do not know why:
-  [Observability: Why did this request not use HTTP/3?](observability.md#why-did-this-request-not-use-http3).
+  [Observability: Why did this request not use HTTP/3?](observability.md#why-did-this-request-not-use-http3). The engine
+  logs one line per call that HTTP/3 could have served and did not, at `Info`, which the default logger (`Warn` and up)
+  leaves out: `engine { observability { logger = KuicksilverLogger.platform(LogLevel.Info) } }` shows them, as does
+  `observability { protocolChoiceLogLevel = LogLevel.Warn }` with the default logger.
 
 ## HTTP/3 on the client
 
