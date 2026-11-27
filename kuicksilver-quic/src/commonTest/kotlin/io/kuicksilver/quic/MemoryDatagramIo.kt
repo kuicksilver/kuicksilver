@@ -74,16 +74,19 @@ internal class MemoryNetwork {
         checkNotNull(heldCounts[addr]) { "$addr is not held" }.first { it >= n }
     }
 
-    /** Delivers what [hold] kept for [addr], in order, and lets later datagrams through again. */
-    fun release(addr: InetSocketAddress) {
-        val q = held[addr] ?: return
+    /** Delivers what [hold] kept for [addr], in order, and lets later datagrams through again; returns how many it kept. */
+    fun release(addr: InetSocketAddress): Int {
+        val q = held[addr] ?: return 0
         held = held - addr
         heldCounts = heldCounts - addr
         q.close()
+        var n = 0
         while (true) {
             val (from, bytes) = q.tryReceive().getOrNull() ?: break
             deliver(from, addr, bytes)
+            n++
         }
+        return n
     }
 
     internal fun deliver(
