@@ -1517,6 +1517,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.BindOnSamePort
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.BindOnSamePortTest.aFailureThatIsNoTakenPortIsThrownAtOnce
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.BindOnSamePortTest.aTakenPortIsRetried
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.BindOnSamePortTest.aTakenTwinGoesToTheOtherOrder
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.BindOnSamePortTest.aTakenTwinOfTheOtherOrderGoesBackToTheFirst
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.BindOnSamePortTest.afterAllAttemptsTheLastFailureIsTheCause
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.BindOnSamePortTest.attemptsAlternateWhichSideTakesAFreePort
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.BindOnSamePortTest.cancellationOfTheFreeSideStops

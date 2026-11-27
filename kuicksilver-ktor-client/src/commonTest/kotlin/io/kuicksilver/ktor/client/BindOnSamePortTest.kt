@@ -131,53 +131,97 @@ class BindOnSamePortTest {
 
     /**
      * Real sockets: the UDP-first attempt finds its TCP twin taken (by a listener of ours) and the second attempt binds TCP
-     * on a free port and UDP on that number ([udpOn] honours the port it is given). Where our listener cannot take the
-     * twin (already taken by another, as on the Windows CI), only the pair on one port is asserted.
+     * on a free port and UDP on that number ([udpOn] honours the port it is given). That UDP twin may be taken too (by
+     * another socket of this run: Windows hands out the free ports of both kinds one after the other, as on the Windows CI
+     * of 2026-11-27), so the pair may come from any later attempt, of either order ([pairPastTakenTwins]).
      */
-    @Test fun aTakenTwinGoesToTheOtherOrder() =
-        clientTest {
-            val selector = SelectorManager(Dispatchers.IO)
-            var blocker: io.ktor.network.sockets.ServerSocket? = null
-            try {
-                val calls = mutableListOf<String>()
-                val (u, t, port) =
-                    bindOnSamePort(
-                        first = { p ->
-                            calls += "udp$p"
-                            udpOn(selector, p)
-                        },
-                        releaseFirst = { it.close() },
-                        second = { p ->
-                            calls += "tcp$p"
-                            if (calls.size == 2) {
-                                // a twin someone else already holds leaves no blocker; a cancellation still ends the test
-                                blocker =
-                                    runCatching { bindTcp(selector, "127.0.0.1", p) }
-                                        .onFailure { if (it is CancellationException) throw it }
-                                        .getOrNull()
-                            }
-                            tcpOn(selector, p)
-                        },
-                        releaseSecond = { it.close() },
-                    )
-                try {
-                    assertTrue(port != 0)
-                    assertEquals(port, (u.localAddress as InetSocketAddress).port)
-                    assertEquals(port, (t.localAddress as InetSocketAddress).port)
-                    if (blocker != null) {
-                        // the second attempt went TCP-first (later ones may follow where its UDP twin is taken too)
-                        assertEquals(listOf("udp0", "tcp0"), listOf(calls[0], calls[2]), "$calls")
-                        assertEquals("udp$port", calls.last())
-                    }
-                } finally {
-                    u.close()
-                    t.close()
+    @Test fun aTakenTwinGoesToTheOtherOrder() = clientTest { pairPastTakenTwins(1) }
+
+    /** Real sockets: the twins of both orders taken (by sockets of ours), the third attempt, UDP-first again, pairs. */
+    @Test fun aTakenTwinOfTheOtherOrderGoesBackToTheFirst() = clientTest { pairPastTakenTwins(2) }
+
+    /**
+     * [bindOnSamePort] on real sockets, with the twins of its first [taken] attempts held by sockets of ours just before
+     * the attempt binds them. Asserted: the pair on one port; the attempts alternate, UDP-first first, each a free port then
+     * its twin on that number ([attempts]); the last one bound its twin on the port returned; an attempt whose twin we held
+     * did not pair. Where we cannot take a twin (already taken by another, as on the Windows CI) nothing is said about that
+     * attempt: the other holder may let it go before the twin's bind.
+     */
+    private suspend fun pairPastTakenTwins(taken: Int) {
+        val selector = SelectorManager(Dispatchers.IO)
+        val blockers = mutableListOf<Pair<Int, () -> Unit>>() // attempt index, close
+        try {
+            val calls = mutableListOf<String>()
+            var attempt = -1
+
+            suspend fun record(
+                kind: String,
+                p: Int,
+            ) {
+                calls += "$kind$p"
+                if (p == 0) {
+                    attempt++
+                } else if (attempt < taken) {
+                    // a twin someone else already holds leaves no blocker; a cancellation still ends the test
+                    runCatching {
+                        if (kind == "tcp") {
+                            bindTcp(selector, "127.0.0.1", p).let { s -> { s.close() } }
+                        } else {
+                            udpOn(selector, p).first.let { s -> { s.close() } }
+                        }
+                    }.onFailure { if (it is CancellationException) throw it }
+                        .onSuccess { blockers += attempt to it }
                 }
-            } finally {
-                blocker?.close()
-                selector.close()
             }
+            val (u, t, port) =
+                bindOnSamePort(
+                    first = { p ->
+                        record("udp", p)
+                        udpOn(selector, p)
+                    },
+                    releaseFirst = { it.close() },
+                    second = { p ->
+                        record("tcp", p)
+                        tcpOn(selector, p)
+                    },
+                    releaseSecond = { it.close() },
+                )
+            try {
+                assertTrue(port != 0)
+                assertEquals(port, (u.localAddress as InetSocketAddress).port)
+                assertEquals(port, (t.localAddress as InetSocketAddress).port)
+                val attempts = attempts(calls)
+                attempts.forEachIndexed { i, (free, twin) ->
+                    assertEquals(if (i % 2 == 0) "udp0" else "tcp0", free, "attempt $i of $calls")
+                    assertTrue(twin != null || i < attempts.lastIndex, "attempt $i of $calls has no twin")
+                }
+                assertEquals(if (attempts.lastIndex % 2 == 0) "tcp$port" else "udp$port", attempts.last().second, "$calls")
+                for ((i, _) in blockers) assertTrue(i < attempts.lastIndex, "attempt $i paired on a twin we held: $calls")
+            } finally {
+                u.close()
+                t.close()
+            }
+        } finally {
+            blockers.forEach { (_, close) -> close() }
+            selector.close()
         }
+    }
+
+    /**
+     * The [calls] of [bindOnSamePort] as its attempts: a bind of a free port ("udp0", "tcp0"), then the bind of its twin on
+     * that number unless the free bind failed (an entry with a port, or none).
+     */
+    private fun attempts(calls: List<String>): List<Pair<String, String?>> {
+        val out = mutableListOf<Pair<String, String?>>()
+        var k = 0
+        while (k < calls.size) {
+            val free = calls[k++]
+            val twin = calls.getOrNull(k)?.takeIf { it != "udp0" && it != "tcp0" }
+            if (twin != null) k++
+            out += free to twin
+        }
+        return out
+    }
 
     /** A taken port fails [tcpOn] and [testServer] with a failure [mayBeTaken] retries. */
     @Test fun aTakenPortIsRetried() =
