@@ -287,11 +287,13 @@ kuicksilver-http2/src/commonTest	io.kuicksilver.http2.message.HttpFieldVectorsTe
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.message.HttpFieldVectorsTest.responses
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.message.HttpFieldVectorsTest.trailers
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.message.HttpFieldVectorsTest.values
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2BodyCancelTest.aCancelAfterThePeersResetSendsNoRstStream
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2BodyCancelTest.cancelAfterTheEndChangesNothing
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2BodyCancelTest.cancelDuringAReadLeavesTheReadersBytes
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2BodyCancelTest.cancelTwiceKeepsTheFirstCause
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2BodyCancelTest.cancelWakesAWaitingReaderWithItsCause
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2BodyCancelTest.cancelWithoutACauseFailsTheBody
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2BodyCancelTest.thePeersResetAfterACancelChangesNothing
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2ExtendedConnectTest.contentLengthOfASuccessfulConnectResponseIsIgnored
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2ExtendedConnectTest.negative_contentLengthInASuccessfulConnectResponseIsNeverSent
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2ExtendedConnectTest.negative_headersOnAConnectedStreamAreAStreamError
@@ -5419,6 +5421,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogWriterTest.firstRec
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogWriterTest.lossAndMetricsEvents
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogWriterTest.packetSentFields
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogWriterTest.resetAndStopSendingNameTheirStream
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogWriterTest.stopSendingAskedThreeTimesSendsOneFrame
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogWriterTest.stopsAtCapWithoutError
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.recovery.AckTrackerTest.ackAfterTwoAckElicitingPackets
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.recovery.AckTrackerTest.ackDeadlineIs25ms

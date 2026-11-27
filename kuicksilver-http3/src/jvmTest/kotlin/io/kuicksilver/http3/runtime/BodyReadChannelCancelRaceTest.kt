@@ -19,6 +19,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 import kotlin.test.Test
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
@@ -26,8 +27,10 @@ import kotlin.time.Duration.Companion.seconds
 /**
  * The HTTP/3 body ([BodyReadChannel]) against the HTTP/2 body's race (H2BodyCancelRaceTest): cancels from several threads
  * while the reader reads and the pump writes. Its buffer is a ktor-io `ByteChannel`, whose cancel only closes it (an
- * atomic close token) and leaves the reader's buffer alone: every cancel returns, the reader fails, the stream is
- * stopped (STOP_SENDING is sent once, whatever the number of cancels: the QUIC stream ignores a second).
+ * atomic close token) and leaves the reader's buffer alone: every cancel returns, the reader fails, and the stream is
+ * asked to stop. The body's `onCancel` runs for every cancel (here counted, at least one); one STOP_SENDING goes on the
+ * wire however often a stream is asked (StreamManager.stopSending marks the stream stopped once, the QUIC loop runs the
+ * calls in turn), which QlogWriterTest.stopSendingAskedThreeTimesSendsOneFrame checks on the wire.
  */
 class BodyReadChannelCancelRaceTest {
     @Test fun cancelsRacingAReaderAndThePumpNeverThrow() {
@@ -64,7 +67,10 @@ class BodyReadChannelCancelRaceTest {
                                 thrown.compareAndSet(null, e)
                             }
                         }
-                    }.forEach { it.join() }
+                    }.forEach {
+                        it.join(10_000) // bounded: a cancel stuck for good fails the round instead of hanging the run
+                        assertFalse(it.isAlive, "round $round: a cancel did not return within 10 s")
+                    }
                     thrown.get()?.let { throw AssertionError("round $round: cancel threw", it) }
                     assertNotNull(withTimeout(10.seconds) { reader.await() }, "round $round: a cancelled body fails its reader")
                     assertTrue(stops.get() >= 1, "round $round: the stream is stopped")

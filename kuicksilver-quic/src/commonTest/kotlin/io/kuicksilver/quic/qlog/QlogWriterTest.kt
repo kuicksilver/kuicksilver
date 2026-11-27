@@ -171,6 +171,29 @@ class QlogWriterTest {
         }
     }
 
+    /**
+     * A stream asked to stop three times (an HTTP/3 body cancelled from three threads: its `onCancel` asks each time) sends
+     * one STOP_SENDING (RFC 9000 section 3.5): the stream is stopped once, a second ask finds it stopped.
+     */
+    @Test fun stopSendingAskedThreeTimesSendsOneFrame() {
+        val sink = MemorySink()
+        val p = pair(sink)
+        try {
+            assertTrue(p.handshake())
+            val id = p.client.openStream(true, StreamPriority.Default)
+            p.client.writeStream(id, ByteArray(10), 0, 10, false)
+            repeat(3) { p.client.stopSending(id, 9) }
+
+            fun stops() = records(sink, "client").sumOf { Regex("\"frame_type\":\"stop_sending\"").findAll(it).count() }
+            assertTrue(p.runUntil(limit = 5_000.milliseconds) { stops() > 0 })
+            p.client.stopSending(id, 9) // once more after the frame went
+            p.runUntil(limit = 1_000.milliseconds) { false }
+            assertEquals(1, stops(), "one STOP_SENDING on the wire")
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun lossAndMetricsEvents() {
         val sink = MemorySink()
         val p = pair(sink)
