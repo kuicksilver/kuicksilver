@@ -40,7 +40,12 @@ public enum class Http3Role {
 public class Http3Connection private constructor(
     internal val session: H3Session,
 ) : AutoCloseable {
-    /** The QUIC connection this HTTP/3 connection runs on (paths, statistics, transport close). */
+    /**
+     * The QUIC connection this HTTP/3 connection runs on (paths, statistics, transport close). A stream opened on it
+     * directly is outside the HTTP/3 session: it is no exchange, so it neither keeps the connection open once a GOAWAY
+     * came (a client with no exchange left closes, RFC 9114 section 5.2) nor counts in the GOAWAY's limit; an Extended
+     * CONNECT goes through [connect].
+     */
     public val quic: QuicConnection get() = session.quic
 
     /** Our side: [request] and [connect] are client-only, [acceptRequest] is server-only. */
