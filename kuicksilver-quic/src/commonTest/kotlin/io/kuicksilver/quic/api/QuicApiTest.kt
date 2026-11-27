@@ -352,11 +352,14 @@ class QuicApiTest {
                     val st = c1.openBidi()
                     // the server side of connection 1 throws out of its next datagram
                     armServerFailure(s1)
-                    st.output.writeFully(byteArrayOf(1), 0, 1)
                     // the server forgot connection 1 silently, so it answers the client's next packets with a Stateless Reset
-                    // (RFC 9000 section 10.3): this flush may already see connection 1 reset, which is connection 1's fate, not 2's
-                    runCatching { st.output.flush() }.exceptionOrNull()?.let {
-                        assertIs<QuicException.ConnectionLost.StatelessReset>(c1.closed.await(), "flush failed with $it")
+                    // (RFC 9000 section 10.3): the write (a stream already closed by it) or this flush may already see connection 1
+                    // reset, which is connection 1's fate, not 2's
+                    runCatching {
+                        st.output.writeFully(byteArrayOf(1), 0, 1)
+                        st.output.flush()
+                    }.exceptionOrNull()?.let {
+                        assertIs<QuicException.ConnectionLost.StatelessReset>(c1.closed.await(), "write or flush failed with $it")
                     }
                     val r = withTimeoutOrNull(10.seconds) { s1.closed.await() }
                     assertIs<QuicException.ConnectionLost.Internal>(r, "connection 1 failed internally: $r")
@@ -390,8 +393,13 @@ class QuicApiTest {
                     val (c2, s2) = p.connect()
                     val st = c1.openBidi() // before the arming, as in the test above
                     armServerFailure(s1)
-                    st.output.writeFully(byteArrayOf(1), 0, 1)
-                    runCatching { st.output.flush() } // the datagram that makes the server fail connection 1; may already see the reset
+                    // the datagram that makes the server fail connection 1; the write or the flush may already see the reset
+                    runCatching {
+                        st.output.writeFully(byteArrayOf(1), 0, 1)
+                        st.output.flush()
+                    }.exceptionOrNull()?.let {
+                        assertIs<QuicException.ConnectionLost.StatelessReset>(c1.closed.await(), "write or flush failed with $it")
+                    }
                     assertIs<QuicException.ConnectionLost.StatelessReset>(c1.closed.await())
                     // the write side reports the reset itself or a ClosedWriteChannelException caused (possibly through a copy) by it
                     val e =
