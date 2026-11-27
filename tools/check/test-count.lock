@@ -3057,6 +3057,7 @@ kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketAbortT
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketAddressAfterCloseTest.addressesStayReadableAfterClose
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketTlsTest.clientServerEchoOverRealSockets
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketTlsTest.closePropagatesShutdown
+kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketTlsTest.negative_aCancelledSocketContextEndsTheRelayAndThePump
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketTlsTest.negative_aCloseDuringTheReadAttachIsALocalClose
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketTlsTest.negative_aCloseDuringTheWriteAttachStaysGraceful
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.SocketTlsTest.negative_aDeliveringReadAfterTheAbortIsALocalClose

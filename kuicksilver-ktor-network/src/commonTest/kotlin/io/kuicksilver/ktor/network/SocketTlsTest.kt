@@ -15,6 +15,7 @@ import io.ktor.network.sockets.openWriteChannel
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
+import io.ktor.utils.io.InternalAPI
 import io.ktor.utils.io.LineEnding
 import io.ktor.utils.io.ReaderJob
 import io.ktor.utils.io.WriterJob
@@ -48,6 +49,7 @@ import kotlinx.coroutines.IO
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -127,7 +129,8 @@ internal class LoopbackServer private constructor(
     suspend fun client(
         cfg: TlsConfig = clientConfig(),
         reference: String = "127.0.0.1",
-    ): TlsSocket = connectTcp(selector, InetSocketAddress(reference, port)).tls(cfg)
+        context: CoroutineContext = kotlin.coroutines.EmptyCoroutineContext,
+    ): TlsSocket = connectTcp(selector, InetSocketAddress(reference, port)).tls(cfg, context)
 
     fun close() {
         job.cancel()
@@ -385,9 +388,11 @@ class SocketTlsTest {
         }
 
     /**
-     * A close that comes while a write channel attaches finds no pump to close: the attach ends it, the write fails with
-     * the write side's LocalClose, and nothing is written into the closed session: the close stays graceful, the peer
-     * reads close_notify (a clean end), not internal_error (RFC 9846 section 6.1).
+     * A close that comes while a write channel attaches: nothing is written into the closed session, the close stays
+     * graceful, and the peer reads close_notify (a clean end), not internal_error (RFC 9846 section 6.1). The write
+     * fails either way, but how depends on who came first: when the close found the pump already published, it closed
+     * the channel in order (what was queued still goes out) and the write fails as on any closed channel
+     * (ClosedWriteChannelException without a cause); when the attach ended the pump itself, with the LocalClose.
      */
     @Test fun negative_aCloseDuringTheWriteAttachStaysGraceful(): Unit =
         runBlocking {
@@ -466,6 +471,55 @@ class SocketTlsTest {
                     "the read reports this side's end for the peer's reset: ${r.closedCause}",
                 )
                 c.close()
+                srv.awaitHandler(true)
+            } finally {
+                srv.close()
+            }
+        }
+
+    /**
+     * The socket's context cancelled (its scope ended) while the relay waits for room for unread inbound data and a write
+     * pump is attached: both end promptly, their channels with the typed LocalClose (the relay and the pump run under jobs
+     * of their own, linked to the socket's cancellation), and nothing holds the native session.
+     */
+    @OptIn(InternalAPI::class)
+    @Test
+    fun negative_aCancelledSocketContextEndsTheRelayAndThePump(): Unit =
+        runBlocking {
+            val sent = CompletableDeferred<Unit>()
+            val srv =
+                LoopbackServer.start { s ->
+                    val w = s.openWriteChannel(autoFlush = true)
+                    runCatching {
+                        val data = ByteArray(4 shl 20)
+                        w.writeFully(data, 0, data.size)
+                        sent.complete(Unit)
+                        s.openReadChannel().readAvailable(ByteArray(1), 0, 1)
+                    }
+                }
+            val scope = Job()
+            try {
+                val c = withTimeout(20.seconds) { srv.client(context = scope) }
+                try {
+                    val inbound = ByteChannel()
+                    val relay = c.attachForReading(inbound)
+                    val outbound = ByteChannel()
+                    val pump = c.attachForWriting(outbound)
+                    // unread inbound data: the relay has filled the application's channel and waits for room
+                    withTimeout(20.seconds) { inbound.awaitContent(64 shl 10) }
+                    assertTrue(relay.job.isActive && pump.job.isActive)
+                    scope.cancel()
+                    withTimeout(10.seconds) {
+                        relay.job.join()
+                        pump.job.join()
+                    }
+                    for ((name, cause) in listOf("read" to inbound.closedCause, "write" to outbound.closedCause)) {
+                        val end = generateSequence(cause) { it.cause }.filterIsInstance<ConnectionEndedException>().firstOrNull()
+                        assertIs<ConnectionEndedException.LocalClose>(end, "the $name side ended with $cause")
+                    }
+                } finally {
+                    c.abort()
+                }
                 srv.awaitHandler(true)
             } finally {
                 srv.close()

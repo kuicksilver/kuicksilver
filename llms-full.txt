@@ -3665,7 +3665,10 @@ harness or an app need not match messages:
   the cut is a plain `IOException`: nothing says whose side stalled.
 - `LocalClose`: this client closed or aborted the connection, or read or wrote after that (`Socket closed`, `The
   connection was aborted`; over TLS `the TLS socket is closed: nothing more is read`, `... nothing more is written`),
-  whatever the timing: never a raw coroutine cancellation.
+  whatever the timing: never a raw coroutine cancellation. One exception on the write side: a TLS write channel already
+  attached when `close()` begins is closed in order, so that what was queued still goes out, and a write after that fails
+  like one on any closed channel (`ClosedWriteChannelException` without a cause); a write channel opened after the close
+  began, or one an abort ends, fails with `LocalClose`.
 
 A reset is not typed: it stays the platform's exception (a `SocketException` on the JVM and Android, the receive error
 on Kotlin/Native), as does any other failure of the socket. An HTTP/2 call usually fails with

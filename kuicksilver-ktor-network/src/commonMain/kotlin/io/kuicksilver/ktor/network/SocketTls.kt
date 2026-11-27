@@ -31,7 +31,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableJob
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.DisposableHandle
 import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -218,8 +220,20 @@ public class TlsSocket private constructor(
         // other's). It cannot read alongside the close's drop either way: the close cancels the session's input
         // (TlsConnection.cancelInput) once the relay it saw has ended, and a relay that came after reads only that input
         ended()?.let { endRelay(job, it) }
+        // the relay's job is its own, so the socket's cancellation (its scope cancelled, its job failed) reaches it here; the
+        // link goes with the relay
+        val link = onSocketCancelled { c -> endRelay(job, ended() ?: if (c is CancellationException) readEnd() else c) }
+        job.job.invokeOnCompletion { link?.dispose() }
         return job
     }
+
+    /**
+     * Runs [action] with the cause once the socket's job is cancelled or fails (at once when it is already), not when it
+     * completes normally; null when the context has no job.
+     */
+    @OptIn(InternalCoroutinesApi::class)
+    private fun onSocketCancelled(action: (Throwable) -> Unit): DisposableHandle? =
+        coroutineContext[Job]?.invokeOnCompletion(onCancelling = true) { c -> if (c != null) action(c) }
 
     /** Why the socket ended, once it did: this side's end ([readEnd]) or the transport's failure; null while it stands. */
     private fun ended(): Throwable? = if (closeBegun || localEnd) readEnd() else transportFailure
@@ -275,6 +289,9 @@ public class TlsSocket private constructor(
             }
             source.closedCause?.let { throw it }
         } catch (e: CancellationException) {
+            // the close cancels the session's input under a relay that came after it (TlsConnection.cancelInput), and the
+            // socket's end cancels the relay: the channel takes this side's end, not that cancellation
+            if (localEnd) readDelivery.fail(channel, readEnd())
             throw e
         } catch (e: Throwable) {
             // this side ended the socket ([abortTls] ends the session under the relay, a failed stream of the application's
@@ -375,7 +392,12 @@ public class TlsSocket private constructor(
                 } catch (e: Throwable) {
                     val ours = pumpEnd?.let { end -> generateSequence(e) { it.cause }.any { it === end } } ?: false
                     when {
-                        e is CancellationException || ours -> {}
+                        ours -> {}
+
+                        e is CancellationException -> {
+                            // ended for the socket's end: the channel takes that end, not the pump's cancellation
+                            if (closeBegun || localEnd) channel.cancel(pumpEndCause())
+                        }
 
                         appFailure -> {
                             failTls(e, applicationFailure = true)
@@ -402,6 +424,9 @@ public class TlsSocket private constructor(
         // an end that came meanwhile may have looked for the pump before it was set: it ends here then, without a failed
         // stream (the pump writes nothing into the ended session, and a graceful close stays one)
         writeEnded()?.let { endPump(pump, it) }
+        // as for the relay: the socket's cancellation ends the pump, without a failed stream
+        val link = onSocketCancelled { c -> endPump(pump, writeEnded() ?: if (c is CancellationException) writeEnd() else c) }
+        pump.job.invokeOnCompletion { link?.dispose() }
         return pump
     }
 
@@ -545,7 +570,9 @@ public class TlsSocket private constructor(
         if (applicationFailure) {
             localEnd = true
         } else if (transportFailure == null) {
-            transportFailure = cause
+            // as the relay reports a session failure: from under ktor's wrappers, so the reader's error has one shape
+            // whichever side saw the reset first
+            transportFailure = if (cause is ClosedByteChannelException) cause.sessionFailure() else cause
         }
         val alerted = runCatching { tls.abortOutput(cause, ALERT_CLOSE_TIMEOUT) }.getOrDefault(false)
         if (!alerted) {
