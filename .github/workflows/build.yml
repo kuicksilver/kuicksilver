@@ -945,10 +945,10 @@ jobs:
           # 46008475587 and 46038965099, ktor-network and http3) was ddmlib's own limit: UTP installs through the overload
           # without a timeout, so ddmlib allows IDeviceSharedImpl.INSTALL_TIMEOUT_MINUTES without output, read from the
           # environment variable ADB_INSTALL_TIMEOUT and 4 minutes when unset, the exact gap in every failed run (17:14:59 ->
-          # 17:19:01, 17:28:58 -> 17:33:00). android-connected-check.sh exports ADB_INSTALL_TIMEOUT=10 and raises UTP's own
-          # limit for the whole install (android.experimental.testOptions.installApkTimeout, 360 s when unset) to 15
-          # minutes; the DSL installation.timeOutInMs reaches neither. A healthy install takes 2-8 s, so a stall that
-          # still lasts 10 minutes is a hang: the script then prints the device's memory and package manager lines and
+          # 17:19:01, 17:28:58 -> 17:33:00). android-connected-check.sh keeps ADB_INSTALL_TIMEOUT at that 4 and raises UTP's own
+          # limit for the whole install (android.experimental.testOptions.installApkTimeout, 360 s when unset) to 9
+          # minutes; the DSL installation.timeOutInMs reaches neither. A healthy install takes 2-8 s, and run 46051828817
+          # with 10 minutes showed the stall lasting all 10, so it is a hang: the script then prints the device's memory and package manager lines and
           # runs the tasks again, at most twice, without the modules that passed, when every failed task is the connected
           # test task of a module whose install stalled (Gradle calls the stall "There were failing tests" too) and no test
           # case failed; any other failure fails at once.

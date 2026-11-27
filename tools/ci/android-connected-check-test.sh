@@ -5,7 +5,7 @@
 # connected test task of a module whose test APK install stalled and no test case failed, also when Gradle reported the
 # stall as "There were failing tests" (run 46008475587); a retry leaves out the connected test tasks of the modules that
 # passed in an earlier run (a result XML of that run, a task that did not fail), never a stalled one, a module that has
-# not run or one whose results are older; every run gets ADB_INSTALL_TIMEOUT (10 minutes unless set, whole minutes
+# not run or one whose results are older; every run gets ADB_INSTALL_TIMEOUT (4 minutes, ddmlib's own default, unless set, whole minutes
 # only) and UTP's install timeout 5 minutes above it (runs 46008475587 and 46038965099: ddmlib's default of 4 minutes);
 # -q never reaches Gradle. The lines are those of runs 46008475587 (a stall) and 45987232788 (a test that failed,
 # FAILED in ANSI color). Then
@@ -16,7 +16,7 @@ here="$(cd "$(dirname "$0")" && pwd)"
 fails=0; unset KSL_CONNECTED_TASKS ADB_INSTALL_TIMEOUT
 case_run() {   # case_run <name> <expected exit> <expected runs> <outputs, one per run: ok|stall|test|... (the fake below)>
   # with $want_args set, every run's arguments must be those, with $want_last the last run's; $script_args are the
-  # script's own arguments; $want_timeout is the ADB_INSTALL_TIMEOUT every run must see (default 10); $old_results names
+  # script's own arguments; $want_timeout is the ADB_INSTALL_TIMEOUT every run must see (default 4); $old_results names
   # modules with a result XML from before the script ran. No run may get -q or --quiet.
   local name=$1 want_rc=$2 want_runs=$3
   shift 3
@@ -132,11 +132,11 @@ G
   touch "$dir/args" "$dir/env"
   [ -z "${want_args:-}" ] || ! grep -qvxF -- "$want_args" "$dir/args" || bad_args=$(grep -vxF -- "$want_args" "$dir/args" | head -1)
   [ -z "${want_last:-}" ] || [ "$(tail -n 1 "$dir/args")" = "$want_last" ] || bad_args="last run: $(tail -n 1 "$dir/args")"
-  ! grep -qvxF -- "${want_timeout:-10}" "$dir/env" || bad_env=$(grep -vxF -- "${want_timeout:-10}" "$dir/env" | head -1)
+  ! grep -qvxF -- "${want_timeout:-4}" "$dir/env" || bad_env=$(grep -vxF -- "${want_timeout:-4}" "$dir/env" | head -1)
   local quiet_re='(^| )(--quiet|-[qwidsSmauvt]*q[qwidsSmauvt]*|[^ ]*org[.]gradle[.]logging[.]level=(quiet|lifecycle))( |$)'
   [ -n "$bad_args" ] || ! grep -qiE "$quiet_re" "$dir/args" || bad_args=$(grep -iE "$quiet_re" "$dir/args" | head -1)
   if [ "$rc" -ne "$want_rc" ] || [ "$runs" -ne "$want_runs" ] || [ -n "$bad_args" ] || [ -n "$bad_env" ]; then
-    echo "FAIL $name: exit $rc (want $want_rc), runs $runs (want $want_runs)${bad_args:+, arguments '$bad_args' (want '${want_last:-${want_args:-no -q}}')}${bad_env:+, ADB_INSTALL_TIMEOUT '$bad_env' (want '${want_timeout:-10}')}"; fails=$((fails + 1))
+    echo "FAIL $name: exit $rc (want $want_rc), runs $runs (want $want_runs)${bad_args:+, arguments '$bad_args' (want '${want_last:-${want_args:-no -q}}')}${bad_env:+, ADB_INSTALL_TIMEOUT '$bad_env' (want '${want_timeout:-4}')}"; fails=$((fails + 1))
   else
     echo "ok $name"
   fi
@@ -165,33 +165,33 @@ case_run "negative_a stalled install with a FAILED test case is not repeated" 1 
 case_run "negative_a stalled install with a count of failures is not repeated" 1 1 stallcount ok
 case_run "negative_a stalled install with failed tests in the progress is not repeated" 1 1 stallprogress ok
 case_run "negative_a stalled install with an Execute ... FAILED is not repeated" 1 1 stallexecute ok
-script_args="--max-workers=2 -q -Pkotlin.incremental=false" want_args="--stacktrace androidConnectedCheck --max-workers=2 -w -Pkotlin.incremental=false -Pandroid.experimental.testOptions.installApkTimeout=900" \
+script_args="--max-workers=2 -q -Pkotlin.incremental=false" want_args="--stacktrace androidConnectedCheck --max-workers=2 -w -Pkotlin.incremental=false -Pandroid.experimental.testOptions.installApkTimeout=540" \
   case_run "-q (the local gate's) reaches Gradle as -w, on the retry too" 0 2 stall ok
-script_args="--quiet" want_args="--stacktrace androidConnectedCheck -w -Pandroid.experimental.testOptions.installApkTimeout=900" case_run "--quiet reaches Gradle as -w" 1 1 test
-script_args="-qS" want_args="--stacktrace androidConnectedCheck -w -S -Pandroid.experimental.testOptions.installApkTimeout=900" case_run "-qS reaches Gradle as -w -S" 1 1 test
-script_args="-Sq" want_args="--stacktrace androidConnectedCheck -w -S -Pandroid.experimental.testOptions.installApkTimeout=900" case_run "-Sq reaches Gradle as -w -S" 1 1 test
-script_args="-qq --info" want_args="--stacktrace androidConnectedCheck -w --info -Pandroid.experimental.testOptions.installApkTimeout=900" case_run "-qq is dropped, -w once" 1 1 test
-script_args="-Dorg.gradle.logging.level=quiet -q" want_args="--stacktrace androidConnectedCheck -w -Pandroid.experimental.testOptions.installApkTimeout=900" \
+script_args="--quiet" want_args="--stacktrace androidConnectedCheck -w -Pandroid.experimental.testOptions.installApkTimeout=540" case_run "--quiet reaches Gradle as -w" 1 1 test
+script_args="-qS" want_args="--stacktrace androidConnectedCheck -w -S -Pandroid.experimental.testOptions.installApkTimeout=540" case_run "-qS reaches Gradle as -w -S" 1 1 test
+script_args="-Sq" want_args="--stacktrace androidConnectedCheck -w -S -Pandroid.experimental.testOptions.installApkTimeout=540" case_run "-Sq reaches Gradle as -w -S" 1 1 test
+script_args="-qq --info" want_args="--stacktrace androidConnectedCheck -w --info -Pandroid.experimental.testOptions.installApkTimeout=540" case_run "-qq is dropped, -w once" 1 1 test
+script_args="-Dorg.gradle.logging.level=quiet -q" want_args="--stacktrace androidConnectedCheck -w -Pandroid.experimental.testOptions.installApkTimeout=540" \
   case_run "-Dorg.gradle.logging.level=quiet and -q reach Gradle as one -w" 1 1 test
-script_args="-D org.gradle.logging.level=LIFECYCLE -s" want_args="--stacktrace androidConnectedCheck -w -s -Pandroid.experimental.testOptions.installApkTimeout=900" \
+script_args="-D org.gradle.logging.level=LIFECYCLE -s" want_args="--stacktrace androidConnectedCheck -w -s -Pandroid.experimental.testOptions.installApkTimeout=540" \
   case_run "-D org.gradle.logging.level=LIFECYCLE reaches Gradle as -w" 1 1 test
-script_args="--system-prop=org.gradle.logging.level=quiet" want_args="--stacktrace androidConnectedCheck -w -Pandroid.experimental.testOptions.installApkTimeout=900" \
+script_args="--system-prop=org.gradle.logging.level=quiet" want_args="--stacktrace androidConnectedCheck -w -Pandroid.experimental.testOptions.installApkTimeout=540" \
   case_run "--system-prop=org.gradle.logging.level=quiet reaches Gradle as -w" 1 1 test
-script_args="--system-prop org.gradle.logging.level=quiet" want_args="--stacktrace androidConnectedCheck -w -Pandroid.experimental.testOptions.installApkTimeout=900" \
+script_args="--system-prop org.gradle.logging.level=quiet" want_args="--stacktrace androidConnectedCheck -w -Pandroid.experimental.testOptions.installApkTimeout=540" \
   case_run "--system-prop org.gradle.logging.level=quiet reaches Gradle as -w" 1 1 test
-script_args="-Dorg.gradle.logging.level=info -Pq=1 -Dx=quiet" want_args="--stacktrace androidConnectedCheck -Dorg.gradle.logging.level=info -Pq=1 -Dx=quiet -Pandroid.experimental.testOptions.installApkTimeout=900" \
+script_args="-Dorg.gradle.logging.level=info -Pq=1 -Dx=quiet" want_args="--stacktrace androidConnectedCheck -Dorg.gradle.logging.level=info -Pq=1 -Dx=quiet -Pandroid.experimental.testOptions.installApkTimeout=540" \
   case_run "other levels and properties pass unchanged" 1 1 test
 case_run "the root task by default, on the retry too" 0 2 stall ok
-KSL_CONNECTED_TASKS=":a:androidConnectedCheck :b:androidConnectedCheck" want_args="--stacktrace :a:androidConnectedCheck :b:androidConnectedCheck -Pandroid.experimental.testOptions.installApkTimeout=900" \
+KSL_CONNECTED_TASKS=":a:androidConnectedCheck :b:androidConnectedCheck" want_args="--stacktrace :a:androidConnectedCheck :b:androidConnectedCheck -Pandroid.experimental.testOptions.installApkTimeout=540" \
   case_run "KSL_CONNECTED_TASKS replaces the root task, on the retry too" 0 2 stall ok
 I=-Pandroid.experimental.testOptions.installApkTimeout
-old_results="kuicksilver-quic" want_last="--stacktrace androidConnectedCheck $I=900 -x :kuicksilver-http2:connectedAndroidDeviceTest" \
+old_results="kuicksilver-quic" want_last="--stacktrace androidConnectedCheck $I=540 -x :kuicksilver-http2:connectedAndroidDeviceTest" \
   case_run "a retry leaves out the module that passed, not the stalled one nor one with older results" 0 2 passstall ok
-want_last="--stacktrace androidConnectedCheck $I=900 -x :kuicksilver-http2:connectedAndroidDeviceTest -x :kuicksilver-http3:connectedAndroidDeviceTest" \
+want_last="--stacktrace androidConnectedCheck $I=540 -x :kuicksilver-http2:connectedAndroidDeviceTest -x :kuicksilver-http3:connectedAndroidDeviceTest" \
   case_run "the second retry leaves out the modules that passed in both earlier runs" 0 3 passstall passstallnet ok
-want_last="--stacktrace androidConnectedCheck $I=900 -x :kuicksilver-http2:connectedAndroidDeviceTest" \
+want_last="--stacktrace androidConnectedCheck $I=540 -x :kuicksilver-http2:connectedAndroidDeviceTest" \
   case_run "negative_a retry whose tests fail fails, also without the passed module" 1 2 passstall realtest
-want_args="--stacktrace androidConnectedCheck $I=900" case_run "a stall with no module passed retries everything" 0 2 stall ok
+want_args="--stacktrace androidConnectedCheck $I=540" case_run "a stall with no module passed retries everything" 0 2 stall ok
 ADB_INSTALL_TIMEOUT=7 want_timeout=7 want_args="--stacktrace androidConnectedCheck $I=720" \
   case_run "a caller's ADB_INSTALL_TIMEOUT is kept, UTP's timeout 5 minutes above it" 1 1 test
 for bad in 0 1.5 10m 07 1000; do

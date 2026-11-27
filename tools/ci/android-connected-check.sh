@@ -17,13 +17,13 @@
 # InstallOption.install_apk_timeout; 360 s when unset, DdmlibAndroidDeviceController.execute). The DSL
 # `installation { timeOutInMs }`, which the KMP androidDeviceTest also has, does not reach either: AGP gives it to its
 # own ConnectedDeviceProvider, and UTP's controller sets ddmlib's DdmPreferences timeout to Int.MAX_VALUE anyway.
-# This script therefore exports ADB_INSTALL_TIMEOUT=10 (unless the caller set it; whole minutes, as ddmlib parses it)
-# and passes -Pandroid.experimental.testOptions.installApkTimeout=<that + 5 minutes>, so ddmlib's limit fires first, with
-# the message the retry rule below knows. UTP runs inside the Gradle daemon (Launcher.launchRunner in a class loader of
-# its own), and the daemon takes the environment of each build's client, so the variable reaches it also when a daemon
-# was already running. Bounded on purpose: an install that healthy runs finish in 2-8 s (task start to "Starting N
-# tests") and that stays silent for 10 minutes is hung, not slow. Whether the stalls were slow I/O (then they now pass)
-# or a hang (then each one costs 10 minutes and is retried) is what the next API 24 logs tell; on each retry this script
+# This script exports ADB_INSTALL_TIMEOUT (4, ddmlib's own default, unless the caller set it; whole minutes, as ddmlib
+# parses it) and passes -Pandroid.experimental.testOptions.installApkTimeout=<that + 5 minutes>, so ddmlib's limit fires
+# first, with the message the retry rule below knows. UTP runs inside the Gradle daemon (Launcher.launchRunner in a class
+# loader of its own), and the daemon takes the environment of each build's client, so the variable reaches it also when a
+# daemon was already running. Run 46051828817 raised it to 10 minutes: the stalled install of http3 then stayed silent for
+# exactly 10 (18:55:17 -> 19:05:20) and passed in 3 s on the retry, so a stall is a hang, not slow I/O (healthy installs
+# take 2-8 s), and a longer limit only makes each stall cost more; the retry is what recovers. On each retry this script
 # prints the device's memory and its PackageManager, installd and low-memory-killer lines for that.
 #
 # Any other failure, and a third failure, fails the step. A retry runs the same tasks less the connected test tasks of
@@ -92,7 +92,7 @@ while [ $# -gt 0 ]; do
 done
 # ddmlib's no-output limit for install-create, install-write and install-commit, and UTP's limit for the whole install
 # (see the header)
-: "${ADB_INSTALL_TIMEOUT:=10}"
+: "${ADB_INSTALL_TIMEOUT:=4}"
 [[ $ADB_INSTALL_TIMEOUT =~ ^[1-9][0-9]{0,2}$ ]] || { echo "android-connected-check.sh: ADB_INSTALL_TIMEOUT must be whole minutes, 1-999" >&2; exit 2; }
 export ADB_INSTALL_TIMEOUT
 # AGP warns that an experimental option is set: expected, this one has no stable name
