@@ -235,9 +235,14 @@ jobs:
         with: { persist-credentials: false }
       - uses: ./.github/actions/setup
         id: setup
+      - name: 'check: ksResolveAll negative controls (local fake repository)'
+        # the check below fails on a 429, a 5xx or a refused connection (printed as Gradle wrote it, so $G retries it), not
+        # only on a verification gap: a cache saved after a refused request would lack what it left out (127.0.0.1 only)
+        run: bash tools/check/resolve-all-test.sh
       - name: 'check: dependency verification (every configuration)'
         # resolves every configuration of every project with verification on: an artifact gradle/verification-metadata.xml does
-        # not cover fails here, not in the one late job that happens to resolve it (CONTRIBUTING.md, "Dependency verification")
+        # not cover fails here, not in the one late job that happens to resolve it (CONTRIBUTING.md, "Dependency verification");
+        # so does a request a repository refused (429, 5xx) or could not answer, so that no partial cache is saved below
         run: $G --max-workers=2 -I tools/check/resolve-all.init.gradle.kts -Pkuicksilver.resolveAll.strict=true --continue :build-logic:ksResolveAll ksResolveAll
       - name: 'gradle-deps: is this dependency set saved already'
         id: saved
