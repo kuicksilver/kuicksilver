@@ -10,7 +10,11 @@
 // them) are only reported, except a repository that could not be reached or answered an HTTP error (a 429 Too Many Requests,
 // a 5xx, a refused connection): that cause is printed as Gradle wrote it ("Could not GET '...'. Received status code 429
 // from server: ...", which tools/ci/gradlew-retry.sh retries) and fails the task in strict mode, so the gradle-deps job of
-// build.yml never saves a cache that misses what a refused request left out. A plain 404 is "not found" and stays benign.
+// build.yml never saves a cache that misses what a refused request left out. So does a missing file of a module whose
+// metadata was found ("Could not find lib-1.0.jar (g:a:1.0)."): Gradle asks for that file only the repository that served
+// the metadata, never the next one, and records the miss in the cache, so a read-only cache saved with it fails every job
+// that reads it, without a request; printed as Gradle wrote it, it gets gradlew-retry.sh's one refreshed retry. A module
+// no repository has ("Could not find g:a:1.0.") stays benign, as does every variant no consumer asks for.
 val strict = gradle.startParameter.projectProperties["kuicksilver.resolveAll.strict"] == "true"
 
 /** True when [e] or one of its causes is a dependency verification failure. */
@@ -27,6 +31,15 @@ fun httpFailure(e: Throwable?): Throwable? =
             "Received status code" in m || "Could not GET" in m || "Could not HEAD" in m
     }
 
+/** The cause of [e] that is a missing file of a found module (Gradle's "Could not find <file> (<g:a:v>)."), or null. */
+val missingFileLine = Regex("""Could not find [^ ]+ \([^ ]+:[^ ]+:[^ ]+\)\.""")
+
+fun missingFile(e: Throwable?): Throwable? =
+    generateSequence(e) { it.cause }.firstOrNull {
+        it.javaClass.simpleName == "ArtifactNotFoundException" ||
+            missingFileLine.matches(it.message?.lineSequence()?.firstOrNull().orEmpty().trim())
+    }
+
 allprojects {
     tasks.register("ksResolveAll") {
         notCompatibleWithConfigurationCache("resolves configurations at execution time")
@@ -35,7 +48,15 @@ allprojects {
             var failed = 0
             val unverified = ArrayList<String>()
             val unreachable = ArrayList<String>()
+            val missingFiles = ArrayList<String>()
             fun reportHttp(c: Configuration, e: Throwable) {
+                missingFile(e)?.let { cause ->
+                    // verbatim, on a line of its own: gradlew-retry.sh reads "Could not find <file> (<g:a:v>)." as not found
+                    val line = cause.message?.lineSequence()?.firstOrNull().orEmpty().trim()
+                    logger.lifecycle("ksResolveAll ${project.path}:${c.name} file missing:\n> $line")
+                    missingFiles += "${project.path}:${c.name}: $line"
+                    return
+                }
                 val cause = httpFailure(e) ?: return
                 // verbatim, on a line of its own: gradlew-retry.sh reads "Could not GET '...'. Received status code 429"
                 val line = cause.message?.lineSequence()?.firstOrNull().orEmpty()
@@ -65,7 +86,7 @@ allprojects {
             // is printed on every run
             logger.lifecycle(
                 "ksResolveAll ${project.path}: $ok resolved, $failed failed, ${unverified.size} unverified, " +
-                    "${unreachable.size} with a failed request",
+                    "${unreachable.size} with a failed request, ${missingFiles.size} missing a file",
             )
             if (strict && unverified.isNotEmpty()) {
                 // Gradle lists each failed artifact as "  - <file> (<coordinates>) from repository <name>"; one line per artifact
@@ -83,6 +104,12 @@ allprojects {
                 throw GradleException(
                     "a repository request failed in ${unreachable.size} configuration(s) of ${project.path}, so not everything " +
                         "was resolved:\n" + unreachable.toSortedSet().joinToString("\n"),
+                )
+            }
+            if (strict && missingFiles.isNotEmpty()) {
+                throw GradleException(
+                    "a file of a found module is missing in ${missingFiles.size} configuration(s) of ${project.path} (asked " +
+                        "only of the repository that served its metadata):\n" + missingFiles.toSortedSet().joinToString("\n"),
                 )
             }
         }
