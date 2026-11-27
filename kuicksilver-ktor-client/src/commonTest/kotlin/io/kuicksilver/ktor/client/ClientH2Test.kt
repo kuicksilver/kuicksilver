@@ -419,6 +419,45 @@ class ClientH2Test {
         }
 
     /**
+     * RFC 9113 section 8.7: a pooled connection that is lost under a reserved stream (the server fails its side: its TLS
+     * layer sends internal_error, and the client's TLS layer reports the loss) never carried the request, which is
+     * repeated on a new connection and succeeds. The connection had worked (the server's SETTINGS came), so a TLS failure
+     * among the loss's causes is no reason to give up, unlike a handshake refusal (ClientMissingCertificateTest).
+     */
+    @Test fun aPooledConnectionLostUnderAReservedStreamIsRepeated() =
+        clientTest {
+            val drop = CompletableDeferred<Unit>()
+            tlsWithSilentUdp(listOf("h2"), silentUdp = false, handler = { index, _, input, output ->
+                if (index == 0) {
+                    launch {
+                        drop.await()
+                        output.cancel(kotlinx.io.IOException("the server's handler failed")) // internal_error, then FIN
+                    }
+                }
+                rawH2Server(input, output)
+            }) { port ->
+                val listener = EventRecorder()
+                testClient(engine = { observability { eventListener = listener } }).use { c ->
+                    assertEquals(200, c.get("https://127.0.0.1:$port/1").status.value)
+                    val pool = engine(c).h1
+                    val first = pool.h2.connectionsForTest().single()
+                    val once = AtomicInt(0)
+                    pool.obtainedForTest = {
+                        // the second call holds its reserved stream on the pooled connection while that connection is lost
+                        if (once.addAndFetch(1) == 1) {
+                            drop.complete(Unit)
+                            withTimeout(10.seconds) { first.client.awaitClosed() }
+                        }
+                    }
+                    val r = c.get("https://127.0.0.1:$port/2")
+                    assertEquals(200, r.status.value)
+                    assertEquals(2, r.kuicksilverDiagnostics!!.attempts, "the request went again on a new connection")
+                    assertEquals(1, listener.retries.size, "${listener.retries}")
+                }
+            }
+        }
+
+    /**
      * A repeat must not wait for its own first attempt: the refused stream is released before the request goes again, so
      * with one stream and one connection allowed the repeat takes that stream (not a connect timeout).
      */

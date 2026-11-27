@@ -1851,6 +1851,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2FloodT
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2FloodTest.negative_settingsFloodFromTheServer
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2Test.aConnectionRegisteredWhileWaitingForAPermitIsUsed
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2Test.aHardCloseByTheClientIsALocalClose
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2Test.aPooledConnectionLostUnderAReservedStreamIsRepeated
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2Test.burstBeforeTheServerSettingsStaysWithinTheirLimit
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2Test.cancelSendsRstStreamCancel
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2Test.concurrentFirstRequestsOpenOneConnection
