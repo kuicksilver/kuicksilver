@@ -10,8 +10,13 @@
 #    as an app would (the stock JNI rule of proguard-android-optimize.txt, an app that reaches the library only through
 #    KslLoader): with proguard.txt every native and PacketBuffer.buffer must survive under their names; without it the same
 #    check must fail (negative control: the check can see the breakage). Otherwise this part is skipped and says so.
-# Env: KSL_R8_JAR, ANDROID_HOME (else sdk.dir from local.properties, else ~/Library/Android/sdk), KSL_R8_REQUIRED=1 fails
-#      instead of skipping when R8 or android.jar is missing.
+#    The kotlin-stdlib jar R8 reads with them comes from Gradle too (./gradlew -q ksKotlinStdlibJar: the build's Kotlin
+#    version, verified, wherever Gradle keeps it: CI's Gradle reads the read-only dependency cache of GRADLE_RO_DEP_CACHE in
+#    place and never copies it into the Gradle user home); only when Gradle cannot say is the newest one in
+#    $GRADLE_RO_DEP_CACHE/modules-2 or ${GRADLE_USER_HOME:-~/.gradle}/caches/modules-2 taken.
+# Env: KSL_R8_JAR, KSL_KOTLIN_STDLIB_JAR (the jars, instead of asking Gradle), ANDROID_HOME (else sdk.dir from
+#      local.properties, else ~/Library/Android/sdk), KSL_R8_REQUIRED=1 fails instead of skipping when R8, android.jar or
+#      kotlin-stdlib is missing. tools/check/android-keep-rules-test.sh tests where the jars are looked for.
 set -uo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 aar="${1:?usage: android-keep-rules.sh <aar>}"; [ -f "$aar" ] || { echo "FAIL: no AAR at $aar"; exit 2; }
@@ -40,7 +45,17 @@ else echo "FAIL: proguard.txt does not keep KslNative's native methods (Register
 r8="${KSL_R8_JAR:-$( (cd "$root" && ./gradlew -q ksR8Jar 2>/dev/null) | tail -1)}"   # the R8 pinned in gradle/libs.versions.toml
 sdk="${ANDROID_HOME:-$(sed -n 's/^sdk\.dir=//p' "$root/local.properties" 2>/dev/null)}"; sdk="${sdk:-$HOME/Library/Android/sdk}"
 android_jar=$( (ls "$sdk"/platforms/android-*/android.jar 2>/dev/null || true) | sort -V | tail -1)
-stdlib=$( (ls "$HOME"/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib/*/*/kotlin-stdlib-[0-9]*.jar 2>/dev/null || true) | grep -v sources | sort -V | tail -1)
+if [ -n "${KSL_KOTLIN_STDLIB_JAR:-}" ]; then
+  stdlib=$KSL_KOTLIN_STDLIB_JAR; [ -f "$stdlib" ] || { echo "FAIL: KSL_KOTLIN_STDLIB_JAR $stdlib is not a file"; exit 2; }
+else
+  stdlib=$( (cd "$root" && ./gradlew -q ksKotlinStdlibJar 2>/dev/null) | tail -1)   # the build's Kotlin
+  [ -f "$stdlib" ] || stdlib=""
+fi
+if [ -z "$stdlib" ]; then   # Gradle could not say (offline without it, a broken build): the newest one in either cache
+  stdlib=$(for c in "${GRADLE_RO_DEP_CACHE:+$GRADLE_RO_DEP_CACHE/modules-2}" "${GRADLE_USER_HOME:-$HOME/.gradle}/caches/modules-2"; do
+    [ -n "$c" ] && ls "$c"/files-2.1/org.jetbrains.kotlin/kotlin-stdlib/*/*/kotlin-stdlib-[0-9]*.jar 2>/dev/null
+  done | grep -v -- '-sources\.jar$' | awk -F/ '{ print $(NF-2) "\t" $0 }' | sort -V -k1,1 | tail -1 | cut -f2-)
+fi
 if [ -z "$r8" ] || [ -z "$android_jar" ] || [ -z "$stdlib" ]; then
   echo "R8 smoke run skipped: r8=${r8:-none} android.jar=${android_jar:-none} kotlin-stdlib=${stdlib:-none}"
   [ "${KSL_R8_REQUIRED:-0}" = 1 ] && { echo "FAIL: KSL_R8_REQUIRED=1"; exit 1; }
@@ -53,7 +68,7 @@ cat > "$tmp/app.pro" <<'EOF'
 -keep class io.kuicksilver.native.KslLoader { public *; }
 -dontwarn **
 EOF
-echo "R8: $r8 (version $(java -cp "$r8" com.android.tools.r8.R8 --version 2>/dev/null | head -1)); android.jar: $android_jar"
+echo "R8: $r8 (version $(java -cp "$r8" com.android.tools.r8.R8 --version 2>/dev/null | head -1)); android.jar: $android_jar; kotlin-stdlib: $stdlib"
 natives_before=$(javap -cp "$tmp/aar/classes.jar" -p io.kuicksilver.native.KslNative | grep -c ' native ')
 # r8_run <name> <extra R8 options...>: shrinks to class files (javap reads them), then answers 0 when every native and
 # PacketBuffer.buffer kept their names, 1 when not, 2 when R8 itself failed

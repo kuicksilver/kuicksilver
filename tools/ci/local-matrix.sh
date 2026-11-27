@@ -237,7 +237,7 @@ step "lint: doc refs, test gates, commit types" bash -c 'rc=0
 # unasked fails here as there
 step "lint: doc refs and test gates, negatives" bash -c 'rc=0
   KSL_FUZZ_FORMATS_BASE=$(git merge-base HEAD main 2>/dev/null || true); export KSL_FUZZ_FORMATS_BASE
-  for t in ar-diff llvm-tool doc-refs code-refs test-discovery test-bytecode test-count test-sleeps env-apis rfc-tests reproducers fuzz-formats commit-msg deadline-sites test-hooks select-races race-tests wall-bounds tracked-hashes wildcard-binds sentinel; do
+  for t in ar-diff llvm-tool android-keep-rules doc-refs code-refs test-discovery test-bytecode test-count test-sleeps env-apis rfc-tests reproducers fuzz-formats commit-msg deadline-sites test-hooks select-races race-tests wall-bounds tracked-hashes wildcard-binds sentinel; do
     bash "tools/check/$t-test.sh" || rc=1
   done
   bash tools/ci/race-repeat-test.sh || rc=1
