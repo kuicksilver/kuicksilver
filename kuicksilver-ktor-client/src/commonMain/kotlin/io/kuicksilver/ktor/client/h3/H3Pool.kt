@@ -83,7 +83,6 @@ import io.kuicksilver.quic.activePath
 import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.quic.loopbackLocalFor
 import io.kuicksilver.quic.unmappedLiteral
-import io.kuicksilver.tls.completedWithin
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineName
@@ -2558,7 +2557,7 @@ internal class H3Pool(
         val lifetime = WebSocketLifetime(data, callContext, webSocketCloseWaitMillis)
         // the session's channel to the stream: its FIN is sent here, after the session; the frame guard stops reading at
         // the server's Close, and what follows it is read and dropped here
-        val heldEnd = HeldTransportEnd(stream.output)
+        val heldEnd = HeldTransportEnd(stream.output, lifetime)
         val inputDone = CompletableDeferred<Unit>()
         // the stream ends as RFC 9220 section 3 maps RFC 6455's TCP close onto it ("Orderly TCP-level closures are
         // represented as a FIN bit on the stream ... RST exceptions are represented with a stream error ... of type
@@ -2588,8 +2587,9 @@ internal class H3Pool(
                     // true: the server's FIN; false: the server reset its direction, an abort (RFC 9220 section 3: "RST
                     // exceptions are represented with a stream error"), which gets no clean FIN after it but a reset, as
                     // over HTTP/2; null: T2 passed. An end read as T2 fires is the end: dropped, a reset was answered with a FIN
+                    // (none at all once the engine was closed: WebSocketLifetime.hurry)
                     val serverEnded =
-                        completedWithin(lifetime.remainingTransportWaitMillis().milliseconds) {
+                        lifetime.serverWithin(lifetime.remainingTransportWaitMillis().milliseconds, afterOwnEnd = false) {
                             inputDone.join()
                             discardToEnd(stream.input).also { webSocketServerEndForTest?.invoke() }
                         }
@@ -2597,14 +2597,20 @@ internal class H3Pool(
                         when (serverEnded) {
                             true -> "server ended"
                             false -> "server reset"
-                            null -> "T2"
+                            null -> if (lifetime.isHurried) "engine closed" else "T2"
                         },
                     )
                     if (serverEnded == false) {
                         stream.reset(io.kuicksilver.http3.Http3ErrorCode.REQUEST_CANCELLED)
                     } else {
                         withTimeoutOrNull(lifetime.closeWait) { runCatching { stream.output.flushAndClose() } }
-                        if (serverEnded == null && withTimeoutOrNull(lifetime.closeWait) { discardToEnd(stream.input) } == null) {
+                        // our FIN still goes out once the engine was closed; the server's is not waited for then
+                        if (serverEnded == null &&
+                            lifetime.serverWithin(lifetime.closeWait.milliseconds, afterOwnEnd = true, discardsUnread = true) {
+                                discardToEnd(stream.input)
+                            } ==
+                            null
+                        ) {
                             stream.stopSending(io.kuicksilver.http3.Http3ErrorCode.REQUEST_CANCELLED)
                         }
                     }

@@ -37,7 +37,7 @@ internal enum class ClientEngine(
  * (ALPN `http/1.1` only), [h3Only] puts Kuicksilver's client on HTTP/3 alone. [deflate] offers permessage-deflate:
  * PerMessageDeflate on ours, Ktor's WebSocketDeflateExtension on CIO. [quicIdleTimeout] gives Kuicksilver's client that
  * QUIC idle timeout with keep-alive PINGs at a third of it, so the connection is lost only when the peer stops
- * answering, never because a healthy one had nothing to send.
+ * answering, never because a healthy one had nothing to send. [listener] is Kuicksilver's client's event listener.
  */
 internal fun ktorClient(
     engine: ClientEngine,
@@ -47,6 +47,7 @@ internal fun ktorClient(
     deflate: Boolean = false,
     quicIdleTimeout: Duration? = null,
     qlog: io.kuicksilver.quic.QlogSink? = null,
+    listener: io.kuicksilver.ktor.client.KuicksilverEventListener? = null,
     block: HttpClientConfig<*>.() -> Unit = {},
 ): HttpClient {
     val common: HttpClientConfig<*>.() -> Unit = {
@@ -78,6 +79,7 @@ internal fun ktorClient(
                             }
                     }
                     qlog?.let { http3 { this.qlog = it } }
+                    listener?.let { eventListener = it }
                 }
                 common()
             }

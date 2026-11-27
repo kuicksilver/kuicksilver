@@ -70,6 +70,8 @@ internal class H3UpgradeResponse(
     private val beforeUpgradeForTest: (() -> Unit)? = null,
     /** The engine's `webSocketMaxMessageSize`: the largest WebSocket message a client may send (RFC 6455 section 10.4). */
     private val webSocketMaxMessageSize: Long = DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE,
+    /** The engine's stop request: from then on the client's FIN is not waited for (the close wait). */
+    private val stopping: Job? = null,
 ) : H3Response(call, h3) {
     override suspend fun respondOutgoingContent(content: OutgoingContent) {
         // before anything is committed, so the refusal can still be an ordinary error response: a handshake without
@@ -164,8 +166,10 @@ internal class H3UpgradeResponse(
                 try {
                     currentCoroutineContext().ensureActive()
                     stream.output.flushAndClose()
+                    // not once the server is stopping: the client is then stopped at once (H3_NO_ERROR, as after the close
+                    // wait), so the stop's grace period is not spent waiting for it
                     val clientEnded =
-                        withTimeoutOrNull(WebSocketOverH2.CLOSE_WAIT) {
+                        io.kuicksilver.tls.completedWithinUnless(stopping ?: WebSocketOverH2.NEVER_STOPS, WebSocketOverH2.CLOSE_WAIT) {
                             guardStopped.await() // the guard's last read is over: the input is this coroutine's now
                             try {
                                 stream.input.discard()

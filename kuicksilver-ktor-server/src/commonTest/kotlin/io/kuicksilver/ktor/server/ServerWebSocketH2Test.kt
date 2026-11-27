@@ -776,6 +776,65 @@ class ServerWebSocketH2Test {
         }
 
     /**
+     * A stop with a long grace period while a session that ended in order waits for its client's END_STREAM (the close wait,
+     * 5 s): the stop does not spend its grace period on it. The client, which never ends its side, is stopped at once
+     * (RST_STREAM NO_ERROR after the server's END_STREAM, as after the close wait, RFC 9113 section 8.1, sent before the
+     * stream counts as done, so it comes ahead of the connection's end) and the stop is over well within the close wait.
+     * Before, the stop waited it out.
+     */
+    @Test fun negative_stopEndsTheWaitForTheClientsEndStream() =
+        serverTest {
+            val (server, port) = h2TlsServer { echo() }
+            var stopped = false
+            try {
+                RawH2Client.connect(port).use { raw ->
+                    raw.preface()
+                    raw.headers(1, extendedConnect(), endStream = false)
+                    assertNotNull(raw.await { it.stream == 1 && it.type == RawFrame.HEADERS })
+                    // a masked Close 1000 (key 1, 2, 3, 4); the server answers with its Close and END_STREAM
+                    raw.data(1, byteArrayOf(0x88.toByte(), 0x82.toByte(), 1, 2, 3, 4, 0x02, 0xEA.toByte()), endStream = false)
+                    assertNotNull(raw.await { it.stream == 1 && it.type == RawFrame.DATA && it.endStream })
+                    // the client never ends its side: the server waits for it (no reset within a while) ...
+                    assertNull(
+                        kotlinx.coroutines.withTimeoutOrNull(300.milliseconds) {
+                            raw.await {
+                                it.stream == 1 &&
+                                    it.type == RawFrame.RST_STREAM
+                            }
+                        },
+                    )
+                    // ... until the server stops
+                    val started =
+                        kotlin.time.TimeSource.Monotonic
+                            .markNow()
+                    kotlinx.coroutines.coroutineScope {
+                        val stop = launch(Dispatchers.IO) { server.stop(10_000, 20_000) }
+                        // to the connection's end, the PING of the two-step GOAWAY answered (RFC 9113 section 6.8)
+                        var reset: RawFrame? = null
+                        withTimeout(10.seconds) {
+                            while (true) {
+                                val f = raw.readFrame() ?: break
+                                if (f.type == RawFrame.PING &&
+                                    f.flags and 1 == 0
+                                ) {
+                                    raw.write(RawH2Client.frame(RawFrame.PING, 1, 0, f.payload))
+                                }
+                                if (f.stream == 1 && f.type == RawFrame.RST_STREAM) reset = f
+                            }
+                        }
+                        assertEquals(Http2ErrorCode.NO_ERROR.code, assertNotNull(reset).errorCode)
+                        withTimeout(10.seconds) { stop.join() }
+                    }
+                    stopped = true
+                    val took = started.elapsedNow()
+                    assertTrue(took < 3.seconds, "the stop took $took, the close wait is 5 s")
+                }
+            } finally {
+                if (!stopped) server.stop(100, 500)
+            }
+        }
+
+    /**
      * A connection that carries only a WebSocket is in use: the stream counts as an open request, which the idle close
      * (`connectionIdleTimeoutSeconds`) waits to be 0, and the WebSocket keeps it until the session ends.
      */

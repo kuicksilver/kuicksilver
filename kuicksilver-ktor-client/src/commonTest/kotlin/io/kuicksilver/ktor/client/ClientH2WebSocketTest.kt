@@ -787,58 +787,127 @@ class ClientH2WebSocketTest {
         }
 
     /**
-     * `close(reason)` and then `client.close()` at once, the writer held at the server's window: the engine's cleanup (the
-     * HTTP/2 connections, the selector) waits for the session to write its Close and end. Before, the cleanup closed the
-     * connection under it and the server never saw the Close.
+     * `close(reason)` and then `client.close()` at once, the writer held at the server's window, which the server opens
+     * right after: the engine's cleanup (the HTTP/2 connections, the selector) waits for the session to write its Close
+     * and end. Before, the cleanup closed the connection under it and the server never saw the Close.
      */
-    @Test fun clientCloseWaitsForTheSessionsClose() =
-        clientTest {
-            val reading = CompletableDeferred<Unit>()
-            val serverSawClose = CompletableDeferred<CloseReason?>()
-            tlsH2WithSilentUdp(
-                settings = Http2Settings(initialStreamWindow = 1_024),
-                enableConnectProtocol = true,
-                onRequest = { _, r ->
-                    if (r.method != "CONNECT") return@tlsH2WithSilentUdp ok(r)
-                    r.invokeOnFailure { serverSawClose.completeExceptionally(it) }
-                    r.respond(200)
-                    reading.await() // reads nothing (no WINDOW_UPDATE) before the client's call is over
-                    val out = ByteChannel()
-                    val sender = launch { runCatching { r.sendBody(out) } }
-                    val ws = RawWebSocket(r.body, out, masking = false, coroutineContext = coroutineContext)
-                    try {
-                        for (frame in ws.incoming) {
-                            if (frame is Frame.Close) {
-                                serverSawClose.complete(frame.readReason())
-                                ws.outgoing.send(Frame.Close())
-                            }
+    @Test fun clientCloseWaitsForTheSessionsClose() = clientCloseWithAHeldWriter(serverReads = true)
+
+    /**
+     * The same against a server that takes nothing (it never opens its window): the session
+     * has not written its Close, so the engine's close does not cut it short; it keeps its close wait (T1, 1 s here), and
+     * only then is it cut and the stream reset with CANCEL. The cleanup waits for that, not longer. Its Close never left: the
+     * server took none of the stream.
+     */
+    @Test fun negative_clientCloseLeavesAWriterTheServerTakesNothingFromItsCloseWait() =
+        clientCloseWithAHeldWriter(serverReads = false, closeWait = 1_000)
+
+    /**
+     * The same with `client.close()` late in T1 (1.5 s into a 2 s close wait): the session still ends at its T1, counted
+     * from its own Close, and the stream reset with CANCEL; the engine's close starts no close wait of its own.
+     */
+    @Test fun negative_aLateClientCloseEndsAWriterTheServerTakesNothingFromAtItsT1() =
+        clientCloseWithAHeldWriter(serverReads = false, closeWait = 2_000, closeAt = 1_500.milliseconds)
+
+    /**
+     * A server that reads slowly but steadily as the client is closed (a 1 KiB window, 4 KiB taken every 150 ms, then
+     * every 600 ms as a server that batches its WINDOW_UPDATEs): the sender is not cut (the engine's close cuts no writer
+     * that has not written its Close; the close wait bounds it), so the frame arrives whole and the Close after it, with
+     * no reset.
+     */
+    @Test fun clientCloseLetsAServerReading4KiBPer150msTakeTheFrameAndTheClose() =
+        clientCloseWithAHeldWriter(serverReads = true, size = 64_000, throttle = 4_096 to 150.milliseconds)
+
+    @Test fun clientCloseLetsAServerReading4KiBPer600msTakeTheFrameAndTheClose() =
+        clientCloseWithAHeldWriter(serverReads = true, size = 32_000, throttle = 4_096 to 600.milliseconds)
+
+    private fun clientCloseWithAHeldWriter(
+        serverReads: Boolean,
+        size: Int = 300_000,
+        throttle: Pair<Int, kotlin.time.Duration>? = null,
+        closeWait: Long = 60_000,
+        closeAt: kotlin.time.Duration? = null,
+    ) = clientTest {
+        val reading = CompletableDeferred<Unit>()
+        val serverSawClose = CompletableDeferred<CloseReason?>()
+        val received = ArrayList<String>()
+        tlsH2WithSilentUdp(
+            settings = Http2Settings(initialStreamWindow = 1_024),
+            enableConnectProtocol = true,
+            onRequest = { _, r ->
+                if (r.method != "CONNECT") return@tlsH2WithSilentUdp ok(r)
+                r.invokeOnFailure { serverSawClose.completeExceptionally(it) }
+                r.respond(200)
+                reading.await() // reads nothing (no WINDOW_UPDATE) before the client's call is over
+                val out = ByteChannel()
+                val sender = launch { runCatching { r.sendBody(out) } }
+                val body = throttle?.let { (n, p) -> throttled(r.body, n, p) } ?: r.body
+                val ws = RawWebSocket(body, out, masking = false, coroutineContext = coroutineContext)
+                try {
+                    for (frame in ws.incoming) {
+                        if (frame is Frame.Binary) received += "binary ${frame.data.size}"
+                        if (frame is Frame.Close) {
+                            serverSawClose.complete(frame.readReason())
+                            ws.outgoing.send(Frame.Close())
                         }
-                    } finally {
-                        ws.outgoing.close()
-                        sender.join()
                     }
-                },
-            ) { port, _ ->
-                client().let { c ->
-                    engine(c).h1.webSocketCloseWaitMillis = 60_000
-                    c.get("https://127.0.0.1:$port/")
-                    val session = c.webSocketSession("wss://127.0.0.1:$port/ws")
-                    assertEquals(HttpProtocolVersion.HTTP_2_0, session.call.response.version)
-                    session.outgoing.send(Frame.Binary(true, ByteArray(300_000)))
-                    kotlinx.coroutines.coroutineScope {
-                        launch { session.close(CloseReason(4002, "client bye")) } // close() also waits for the writer
-                        session.call.coroutineContext[kotlinx.coroutines.Job]!!.join()
-                        c.close()
-                        // a cleanup that does not wait for the session is over well within this
-                        val cleanedFirst = kotlinx.coroutines.withTimeoutOrNull(1.seconds) { engine(c).cleanup.join() } != null
+                } finally {
+                    ws.outgoing.close()
+                    sender.join()
+                }
+            },
+        ) { port, _ ->
+            client().let { c ->
+                engine(c).h1.webSocketCloseWaitMillis = closeWait
+                c.get("https://127.0.0.1:$port/")
+                val session = c.webSocketSession("wss://127.0.0.1:$port/ws")
+                assertEquals(HttpProtocolVersion.HTTP_2_0, session.call.response.version)
+                session.outgoing.send(Frame.Binary(true, ByteArray(size)))
+                kotlinx.coroutines.coroutineScope {
+                    val started =
+                        kotlin.time.TimeSource.Monotonic
+                            .markNow()
+                    launch { session.close(CloseReason(4002, "client bye")) } // close() also waits for the writer
+                    session.call.coroutineContext[kotlinx.coroutines.Job]!!.join()
+                    closeAt?.let { kotlinx.coroutines.delay(it) } // a close late in T1
+                    c.close()
+                    if (serverReads) {
                         reading.complete(Unit)
-                        assertEquals(CloseReason(4002, "client bye"), withTimeout(20.seconds) { serverSawClose.await() })
-                        assertEquals(false, cleanedFirst, "the cleanup ran before the session wrote its Close")
+                        assertEquals(CloseReason(4002, "client bye"), withTimeout(30.seconds) { serverSawClose.await() })
+                        assertEquals(listOf("binary $size"), received)
                         withTimeout(20.seconds) { engine(c).cleanup.join() }
+                    } else {
+                        // not cut short by the engine's close: the session keeps its close wait
+                        kotlin.test.assertNull(
+                            kotlinx.coroutines.withTimeoutOrNull(
+                                (
+                                    if (closeAt ==
+                                        null
+                                    ) {
+                                        closeWait / 2
+                                    } else {
+                                        0L
+                                    }
+                                ).milliseconds,
+                            ) { engine(c).cleanup.join() },
+                        )
+                        withTimeout((closeWait + 10_000).milliseconds) { engine(c).cleanup.join() }
+                        // a close late in T1 ends the session at its T1 all the same, not a close wait after the engine's close
+                        if (closeAt != null) {
+                            val took = started.elapsedNow()
+                            assertTrue(
+                                took < (closeWait + 1_000).milliseconds,
+                                "the cleanup ended $took after the own Close; T1 is $closeWait ms",
+                            )
+                        }
+                        reading.complete(Unit)
+                        val seen = runCatching { withTimeout(20.seconds) { serverSawClose.await() } }
+                        assertTrue(seen.isFailure, "the Close of a cut writer left after all: $seen")
                     }
                 }
             }
         }
+    }
 
     /**
      * The client's writer is held at the server's window plus the engine's lead (RFC 9113 section 5.2): against a server

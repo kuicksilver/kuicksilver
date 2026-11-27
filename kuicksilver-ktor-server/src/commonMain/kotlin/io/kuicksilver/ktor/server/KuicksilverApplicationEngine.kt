@@ -670,6 +670,12 @@ public class KuicksilverApplicationEngine(
     private val startupJob: CompletableDeferred<Unit> = CompletableDeferred()
     private val stopRequest: CompletableJob = Job()
 
+    /**
+     * Completes once a stop was asked for: a WebSocket that ended in order waits for its client's end of the stream no
+     * longer then (WebSocketOverH2.CLOSE_WAIT), so the stop's grace period is not spent on a client that never ends it.
+     */
+    internal val stopping: Job get() = stopRequest
+
     @Volatile
     private var serverJob: Job = Job()
 

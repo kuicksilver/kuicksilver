@@ -1808,6 +1808,23 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   connection input (a socket timeout's cancel during a body read) and the request body's activity counter had the same
   buffer race and are fixed the same way; the HTTP/3 body (a ktor-io channel, whose cancel never touches the buffer)
   did not.
+- WebSocket: `client.close()` no longer waits out the close wait of a session whose server does not answer. Once the
+  engine is closed, a session whose Close is written ends without waiting for the server's Close or its close of the
+  transport (T1, T2, and the wait for its END_STREAM or FIN), on HTTP/1.1, HTTP/2 and HTTP/3. Its transport ends
+  cleanly: close_notify and a FIN, END_STREAM, a FIN, with no reset before the clean end (RFC 6455 section 5.5.1: the
+  client "MAY close the connection at any time after sending and receiving a Close message"). Until the server ends its
+  side the Close may be unread there, so the server still gets 1 s to do so. Over HTTP/2 and HTTP/3, where the stream's
+  reset or the connection's close would discard it, a Close the server never answered keeps the rest of its close wait
+  instead, at least the grace (over HTTP/2 the Close counts as written only once the stream took it, not once it is
+  queued behind the window). Over HTTP/1.1 the connection closes after the grace: bytes the server still sends then get
+  a reset from the closed socket, which RFC 6455 sections 5.5.1 and 7.1.1 allow. A session ended before the server's
+  Close is not a clean close (section 7.1.5: 1006), though Ktor's `closeReason` reports the client's own code. A session
+  whose Close cannot be written (a server that reads slowly or not at all) keeps its close wait, as before. Before, the
+  engine's cleanup waited up to the 5 s close wait for each such session. The leak sentinel caught this as 4990 ms
+  against Ktor's Netty server (`ClientToNettyWebSocketTest`, whose teardown stopped the server under closing sessions;
+  it now waits for each closing handshake and for the client's end first). The server engine's stop likewise no longer
+  waits for a client's END_STREAM or FIN after a WebSocket over HTTP/2 or HTTP/3 that ended in order; the client gets
+  RST_STREAM NO_ERROR or STOP_SENDING H3_NO_ERROR. Before, a stop with a grace period waited up to 5 s for it.
 - QUIC client, rejected 0-RTT: the server's 0.5-RTT flight was read before the rejection. A 1-RTT packet held for its
   key was replayed when the key arrived, a step before the handshake's end settled the 0-RTT (RFC 9001 section 4.6.2).
   The rejection then restarted the connection's credit and stream limits at the server's transport parameters, so a

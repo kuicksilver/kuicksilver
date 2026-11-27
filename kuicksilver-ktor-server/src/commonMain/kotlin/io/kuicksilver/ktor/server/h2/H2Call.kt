@@ -56,6 +56,8 @@ internal class H2Call(
     webSocketMaxMessageSize: Long,
     /** The connection's scheme: `https` over TLS, `http` over h2c (RFC 9113 section 3.3). */
     scheme: String = "https",
+    /** The engine's stop request (KuicksilverApplicationEngine.stopping), for an Extended CONNECT for `websocket`. */
+    stopping: kotlinx.coroutines.Job? = null,
 ) : BaseApplicationCall(application),
     CoroutineScope {
     override val request =
@@ -72,7 +74,7 @@ internal class H2Call(
         )
     override val response: H2Response =
         if (webSocket) {
-            H2UpgradeResponse(this, h2, sendStallMillis, engineDispatcher, userDispatcher, webSocketMaxMessageSize)
+            H2UpgradeResponse(this, h2, sendStallMillis, engineDispatcher, userDispatcher, webSocketMaxMessageSize, stopping)
         } else {
             H2Response(this, h2, sendStallMillis, altSvc)
         }
