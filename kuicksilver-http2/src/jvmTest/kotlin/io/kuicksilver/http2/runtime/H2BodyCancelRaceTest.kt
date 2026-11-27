@@ -57,8 +57,11 @@ class H2BodyCancelRaceTest {
                     val r = server.requests.receive()
                     try {
                         r.respond(200)
-                        // more than the windows hold: the server sends as the reader reads, up to the cancel
-                        val e = runCatching { r.sendBody(ByteReadChannel(ByteArray(8 shl 20)), end = false) }.exceptionOrNull()
+                        // without end: the server sends as the reader reads until the cancel. A finite body could be read
+                        // to its end on a loaded host before the cancellers start, and the handler's release would then
+                        // reset the stream itself (found by the flake hunt: the reader saw the server's CANCEL)
+                        val chunk = ByteArray(1 shl 20)
+                        val e = runCatching { while (true) r.sendBody(ByteReadChannel(chunk), end = false) }.exceptionOrNull()
                         reset.complete((e as? Http2Exception.StreamReset)?.code)
                     } finally {
                         r.release()
