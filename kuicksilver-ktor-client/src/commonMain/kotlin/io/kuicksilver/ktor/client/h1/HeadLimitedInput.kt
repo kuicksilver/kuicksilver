@@ -5,7 +5,10 @@ package io.kuicksilver.ktor.client.h1
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.InternalAPI
 import kotlinx.io.Buffer
+import kotlinx.io.IOException
 import kotlinx.io.Source
+import kotlin.concurrent.atomics.AtomicReference
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
 // The same class as kuicksilver-ktor-server's h1/HeadLimitedInput.kt (request heads there): the two engines share no
 // module above ktor-network.
@@ -19,7 +22,7 @@ import kotlinx.io.Source
  * The bytes pass through a buffer of this channel, which takes from [source] only what a read asks for (at least
  * [CHUNK] bytes outside a head), so what is already buffered when the next head starts stays small.
  */
-@OptIn(InternalAPI::class)
+@OptIn(InternalAPI::class, ExperimentalAtomicApi::class)
 internal class HeadLimitedInput(
     private val source: ByteReadChannel,
     private val maxHeadBytes: Int,
@@ -27,6 +30,9 @@ internal class HeadLimitedInput(
     private val cancelSource: (Throwable?) -> Unit = { source.cancel(it) },
 ) : ByteReadChannel {
     private val buffer = Buffer()
+
+    /** Set once by [cancel], from any thread; the buffer stays the reader's (see [cancel]). */
+    private val cancelCause = AtomicReference<Throwable?>(null)
 
     /** Bytes the current head may still take from [source]; negative outside a head. */
     private var headBudget = -1L
@@ -52,7 +58,7 @@ internal class HeadLimitedInput(
      * as having them.
      */
     val hasUnread: Boolean
-        get() = !buffer.exhausted() || runCatching { !source.readBuffer.exhausted() }.getOrDefault(true)
+        get() = cancelCause.load() != null || !buffer.exhausted() || runCatching { !source.readBuffer.exhausted() }.getOrDefault(true)
 
     /**
      * Returns once bytes wait to be read or [source] ended (or failed), taking none of them: for an idle connection, whose
@@ -62,15 +68,23 @@ internal class HeadLimitedInput(
         if (buffer.exhausted()) source.awaitContent(1)
     }
 
-    override val closedCause: Throwable? get() = source.closedCause
+    override val closedCause: Throwable? get() = cancelCause.load() ?: source.closedCause
 
     override val isClosedForRead: Boolean
-        get() = buffer.exhausted() && (exceeded || source.isClosedForRead)
+        get() = cancelCause.load() != null || (buffer.exhausted() && (exceeded || source.isClosedForRead))
 
-    override val readBuffer: Source get() = buffer
+    override val readBuffer: Source get() {
+        cancelCause.load()?.let { throw it }
+        return buffer
+    }
 
     override suspend fun awaitContent(min: Int): Boolean {
-        while (buffer.size < min) {
+        while (true) {
+            cancelCause.load()?.let {
+                buffer.clear() // on the reader's own thread
+                throw it
+            }
+            if (buffer.size >= min) break
             val want =
                 if (headBudget >= 0) {
                     if (headBudget == 0L) {
@@ -90,8 +104,14 @@ internal class HeadLimitedInput(
         return true
     }
 
+    /**
+     * Ends the input for its reader, from any thread (the socket timeout's [H1Connection.cancelInput] lands while the body
+     * parser reads): a cancel that emptied the buffer under a read threw out of `Buffer.clear` and corrupted the read (as
+     * HTTP/2's body did). Every read fails with the first cancel's cause from now on; the reader drops the buffer at its
+     * next [awaitContent], a read under way keeps what it took.
+     */
     override fun cancel(cause: Throwable?) {
-        buffer.clear()
+        cancelCause.compareAndSet(null, cause ?: IOException("the connection's input was cancelled"))
         cancelSource(cause)
     }
 
