@@ -109,7 +109,7 @@ class ErrorModelTest {
                     val (c, s) = p.connect()
                     if (afterServerFlightAcked) awaitNothingInFlight(s)
                     armClientHandshakeDone(c)
-                    // no write of ours: the PING (or an ACK the client still owed) carries the frame; false when the close already landed
+                    // no write of ours: the PING carries the frame; false when the close already landed
                     c.ping()
                     val r = c.closed.await()
                     assertPeerHandshakeDoneViolation(r)
