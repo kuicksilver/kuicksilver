@@ -8,6 +8,7 @@ import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.ConnectionState
 import io.kuicksilver.quic.CoreFixtures
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicClientConfig
@@ -261,22 +262,76 @@ class QuicApiTest {
             }
         }
 
+    /**
+     * `QuicEndpoint.close()` is asynchronous (its KDoc): the loop sends each connection's CONNECTION_CLOSE first and ends the
+     * connection's application side right after (EndpointLoop.flushBody), so the peer may learn of the close before the
+     * server's own `closed` completes. The server side is awaited, not sampled; its reason is the close it sent.
+     */
     @Test fun endpointCloseSendsConnectionCloseToPeers() =
         runBlocking {
-            val p = ApiPair.open()
-            withTimeout(20.seconds) {
-                val (c, s) = p.connect()
-                p.server.close()
-                val r = c.closed.await()
-                assertIs<QuicException.ConnectionLost.ApplicationClosed>(
-                    r,
-                    "the peer learns about the close at once, not by idle timeout: $r",
-                )
-                assertEquals(Initiator.Peer, r.initiator)
-                assertTrue(s.closed.isCompleted)
-                p.client.close()
+            ApiPair.open().use { p ->
+                withTimeout(20.seconds) {
+                    val (c, s) = p.connect()
+                    p.server.close()
+                    val r = c.closed.await()
+                    assertIs<QuicException.ConnectionLost.ApplicationClosed>(
+                        r,
+                        "the peer learns about the close at once, not by idle timeout: $r",
+                    )
+                    assertEquals(Initiator.Peer, r.initiator)
+                    assertEquals(0L, r.code)
+                    assertServerClosedByEndpoint(s.closed.await())
+                }
             }
         }
+
+    /**
+     * The order the test above must allow, built deterministically (CI's API 24 emulator hit it by scheduling): the server's
+     * CONNECTION_CLOSE reaches the client and the client's `closed` completes while the server's loop is still inside the
+     * send, before it ends the server connection's application side. The server's `closed` completes after that, with
+     * the reason of the close it sent.
+     */
+    @Test fun peerMayLearnOfAnEndpointCloseBeforeTheServerApplicationDoes() =
+        runBlocking {
+            ApiPair.open().use { p ->
+                withTimeout(20.seconds) {
+                    val (c, s) = p.connect()
+                    val serverAddr = p.server.localAddress
+                    val clientAddr = p.client.localAddress
+                    // set and read on the server's loop only, inside its send
+                    var held = false
+                    var clientClosedFirst: QuicException.ConnectionLost? = null
+                    var serverDoneThen = true
+                    p.net.lose = lose@{ from, to, bytes ->
+                        // the first datagram the closing server connection sends: delivered here, then the send is held until
+                        // the client has taken it and completed its `closed`
+                        if (held || from != serverAddr || to != clientAddr || s.core.state != ConnectionState.Closing) {
+                            return@lose false
+                        }
+                        held = true
+                        p.net.lose = null
+                        p.net.deliver(from, to, bytes)
+                        clientClosedFirst = runBlocking { withTimeoutOrNull(10.seconds) { c.closed.await() } }
+                        serverDoneThen = s.closed.isCompleted
+                        true // delivered above
+                    }
+                    p.server.close()
+                    val sr = s.closed.await()
+                    val r = assertIs<QuicException.ConnectionLost.ApplicationClosed>(c.closed.await())
+                    assertTrue(held, "the server's CONNECTION_CLOSE went through the hook")
+                    assertIs<QuicException.ConnectionLost.ApplicationClosed>(clientClosedFirst, "the client closed while the send was held")
+                    assertEquals(Initiator.Peer, r.initiator)
+                    assertFalse(serverDoneThen, "precondition: the server's `closed` was still open when the client's completed")
+                    assertServerClosedByEndpoint(sr)
+                }
+            }
+        }
+
+    private fun assertServerClosedByEndpoint(sr: QuicException.ConnectionLost) {
+        assertIs<QuicException.ConnectionLost.ApplicationClosed>(sr, "the server connection ends with the close it sent: $sr")
+        assertEquals(Initiator.Local, sr.initiator)
+        assertEquals(0L, sr.code)
+    }
 
     @Test fun oneConnectionsInternalErrorLeavesTheOthersRunning() =
         runBlocking {

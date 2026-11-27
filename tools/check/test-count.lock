@@ -4333,6 +4333,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.QuicApiTest.keyUpdateSus
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.QuicApiTest.oneConnectionsInternalErrorLeavesTheOthersRunning
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.QuicApiTest.openBidiSuspendsAtMaxStreamsAndResumes
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.QuicApiTest.openedStreamReportsItsPriority
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.QuicApiTest.peerMayLearnOfAnEndpointCloseBeforeTheServerApplicationDoes
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.QuicApiTest.runtimeRandomIsKslBacked
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.QuicApiTest.uniStreamFromServer
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.QuicSniApiTest.aDrainedConnectionsCoreStillNamesTheChosenIdentity
