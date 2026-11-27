@@ -1031,7 +1031,10 @@ public class ConnectionCore internal constructor(
             timers.effectiveIdle(config.maxIdleTimeout, peerIdleMs, pto()),
         )
 
-    /** Test hook: thrown out of the next [handleDatagram] to exercise the endpoint's per-connection isolation. */
+    /**
+     * Test hook: thrown out of the next [handleDatagram] to exercise the endpoint's per-connection isolation. Written on the
+     * connection's loop (a runtime test: `ConnectionRuntime.loopDispatcherForTest`) or from the one thread of a sans-IO test.
+     */
     internal var testInjectFailure: Throwable? = null
 
     /** Feeds one received datagram; the buffer is only read during the call. */
