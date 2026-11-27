@@ -941,10 +941,17 @@ jobs:
           disk-size: ${{ matrix.api == 24 && '4096M' || '' }}
           # the action hides the emulator's own exit message; free space before the AVD is created is the first suspect
           pre-emulator-launch-script: df -h / | tail -1
-          # a test APK whose install stalls (ddmlib "Failed to install-write all apks" with ShellCommandUnresponsiveException,
-          # four runs on API 24) gets one more run, logged, when every failed task is the connected test task of a module
-          # whose install stalled (Gradle calls the stall "There were failing tests" too, run 46008475587) and no test case
-          # failed; any other failure fails at once (android-connected-check.sh).
+          # The API 24 install stall (ddmlib "Failed to install-write all apks" with ShellCommandUnresponsiveException; runs
+          # 46008475587 and 46038965099, ktor-network and http3) was ddmlib's own limit: UTP installs through the overload
+          # without a timeout, so ddmlib allows IDeviceSharedImpl.INSTALL_TIMEOUT_MINUTES without output, read from the
+          # environment variable ADB_INSTALL_TIMEOUT and 4 minutes when unset, the exact gap in every failed run (17:14:59 ->
+          # 17:19:01, 17:28:58 -> 17:33:00). android-connected-check.sh exports ADB_INSTALL_TIMEOUT=10 and raises UTP's own
+          # limit for the whole install (android.experimental.testOptions.installApkTimeout, 360 s when unset) to 15
+          # minutes; the DSL installation.timeOutInMs reaches neither. A healthy install takes 2-8 s, so a stall that
+          # still lasts 10 minutes is a hang: the script then prints the device's memory and package manager lines and
+          # runs the tasks again, at most twice, without the modules that passed, when every failed task is the connected
+          # test task of a module whose install stalled (Gradle calls the stall "There were failing tests" too) and no test
+          # case failed; any other failure fails at once.
           # the device's /data before the tests and, on failure, again with the logs: PackageManager's refusals are in the
           # system buffer, an instrumentation "Process crashed" in crash and main. Runs 2 of main c1cac36ca and b3e621916
           # (API 24, ServerH2FloodTest): ART's abort dump for "Tried to mark 0xebadde09" was cut by logd's pruning of the

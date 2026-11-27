@@ -1,12 +1,36 @@
 #!/usr/bin/env bash
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
-# Runs `./gradlew androidConnectedCheck` on the CI emulator, and once more only when the first run failed because a test
-# APK could not be installed: ddmlib's "Failed to install-write all apks" after the `pm install-write` shell stream
-# stalled (ShellCommandUnresponsiveException). Runs 40636584799, 40645584772, 43654092978 and 46008475587 (API 24): the
-# device logged nothing for the 4 minutes of the upload and /data was 2% used, so the adb stream stalled; the APKs had not
-# grown. Any other failure, and a second failure, fails the step. The tasks of the retried run are the same; only the
-# install is the flaky part, and a test failure is never retried, also when an install stalled in the same run.
+# Runs `./gradlew androidConnectedCheck` on the CI emulator with install timeouts that a slow API 24 emulator can meet,
+# and again, at most twice, only when a run failed because a test APK could not be installed: ddmlib's "Failed to
+# install-write all apks" after the `cmd package install-write` shell stream stalled (ShellCommandUnresponsiveException).
+#
+# Where the stall's 4 minutes came from (runs 40636584799, 40645584772, 43654092978, 46008475587 and 46038965099, API 24;
+# read from AGP 9.3.3, UTP 32.3.3 and ddmlib 32.3.3): UTP's AndroidTestApkInstallerPlugin installs the test APK through
+# DdmlibAndroidDevice.installPackages(apks, reinstall, options), the overload without a timeout, so ddmlib's
+# DeviceImpl.installPackages passes IDeviceSharedImpl.INSTALL_TIMEOUT_MINUTES, and SplitApkInstaller.uploadApk gives it to
+# executeRemoteCommand as the longest time without output. That constant is read once, in IDeviceSharedImpl's static
+# initializer, from the environment variable ADB_INSTALL_TIMEOUT (minutes), default 4: the stall surfaced 4 minutes after
+# the task started in every run (46038965099: http3 17:14:59 -> 17:19:01, ktor-network 17:28:58 -> 17:33:00; 46008475587:
+# ktor-network 13:58:10 -> 14:02:11). UTP waits for the whole install command at most
+# android.experimental.testOptions.installApkTimeout seconds (AGP's IntegerOption INSTALL_APK_TIMEOUT, UTP's
+# InstallOption.install_apk_timeout; 360 s when unset, DdmlibAndroidDeviceController.execute). The DSL
+# `installation { timeOutInMs }`, which the KMP androidDeviceTest also has, does not reach either: AGP gives it to its
+# own ConnectedDeviceProvider, and UTP's controller sets ddmlib's DdmPreferences timeout to Int.MAX_VALUE anyway.
+# This script therefore exports ADB_INSTALL_TIMEOUT=10 (unless the caller set it; whole minutes, as ddmlib parses it)
+# and passes -Pandroid.experimental.testOptions.installApkTimeout=<that + 5 minutes>, so ddmlib's limit fires first, with
+# the message the retry rule below knows. UTP runs inside the Gradle daemon (Launcher.launchRunner in a class loader of
+# its own), and the daemon takes the environment of each build's client, so the variable reaches it also when a daemon
+# was already running. Bounded on purpose: an install that healthy runs finish in 2-8 s (task start to "Starting N
+# tests") and that stays silent for 10 minutes is hung, not slow. Whether the stalls were slow I/O (then they now pass)
+# or a hang (then each one costs 10 minutes and is retried) is what the next API 24 logs tell; on each retry this script
+# prints the device's memory and its PackageManager, installd and low-memory-killer lines for that.
+#
+# Any other failure, and a third failure, fails the step. A retry runs the same tasks less the connected test tasks of
+# the modules that passed in an earlier run of this script: those whose task did not fail and that wrote a result XML
+# under <module>/build/outputs/androidTest-results/connected during that run (-x :<module>:connectedAndroidDeviceTest);
+# the stalled modules and the ones Gradle had not reached yet run again. Only the install is the flaky part, and a test
+# failure is never retried, also when an install stalled in the same run.
 #
 # The retry is decided by the tasks that failed, not by Gradle's "There were failing tests": run 46008475587 printed that
 # for the stalled install alone ("Starting 0 tests"). Every failure Gradle lists under "* What went wrong:" (ERROR level,
@@ -66,13 +90,15 @@ while [ $# -gt 0 ]; do
   fi
   args+=("$a")
 done
-log=$(mktemp)
-trap 'rm -f "$log" "$log.plain"' EXIT
-bash "$here/gradlew-retry.sh" --stacktrace "${tasks[@]}" ${args[@]+"${args[@]}"} 2>&1 | tee "$log"
-rc=${PIPESTATUS[0]}
-[ "$rc" -eq 0 ] && exit 0
-# a colored console wraps FAILED in ANSI escapes (run 45987232788): the rules read the output without them
-LC_ALL=C sed $'s/\x1b\\[[0-9;?]*[ -/]*[@-~]//g' "$log" > "$log.plain"
+# ddmlib's no-output limit for install-create, install-write and install-commit, and UTP's limit for the whole install
+# (see the header)
+: "${ADB_INSTALL_TIMEOUT:=10}"
+[[ $ADB_INSTALL_TIMEOUT =~ ^[1-9][0-9]{0,2}$ ]] || { echo "android-connected-check.sh: ADB_INSTALL_TIMEOUT must be whole minutes, 1-999" >&2; exit 2; }
+export ADB_INSTALL_TIMEOUT
+args+=("-Pandroid.experimental.testOptions.installApkTimeout=$(( (ADB_INSTALL_TIMEOUT + 5) * 60 ))")
+max_retries=2
+log=$(mktemp) stamp=$(mktemp)
+trap 'rm -f "$log" "$log.plain" "$stamp"' EXIT
 only_stalled_tasks_failed() {   # every failure is a connected test task of a module whose test APK install stalled
   local what line t m n=0 stalled
   # the modules with a stall of their own (see the header); a module with any other install failure is not among them
@@ -115,11 +141,42 @@ tests_failed() {
     grep -Eq 'Tests [0-9]+/[0-9]+ completed[.] .*\(0*[1-9][0-9]* failed\)' "$log.plain" ||
     grep -Eq 'Execute .+: FAILED[[:space:]]*$' "$log.plain"
 }
-if grep -q "Failed to install-write all apks" "$log.plain" && grep -q "ShellCommandUnresponsiveException" "$log.plain" &&
-  only_stalled_tasks_failed && ! tests_failed; then
-  echo "::warning::androidConnectedCheck: a test APK install stalled (ShellCommandUnresponsiveException); running it once more"
-  adb shell df /data || true
-  bash "$here/gradlew-retry.sh" --stacktrace "${tasks[@]}" ${args[@]+"${args[@]}"}
-  exit $?
-fi
-exit "$rc"
+passed_modules() {   # the modules whose connected test task passed in this run: a result XML newer than the run's start,
+  # and no failure of their task (a stalled module may write one too)
+  local d m failed
+  failed=$(grep -oE "Execution failed for task '[^']+'" "$log.plain" | sed -E "s/^[^']*'([^']+)'$/\\1/")
+  for d in */build/outputs/androidTest-results/connected; do
+    [ -d "$d" ] || continue
+    m=${d%%/*}
+    [ -n "$(find "$d" -name '*.xml' -newer "$stamp" -print -quit)" ] || continue
+    printf '%s\n' "$failed" | grep -xF -- ":$m:connectedAndroidDeviceTest" > /dev/null && continue
+    printf '%s\n' "$m"
+  done
+}
+excludes=() retry=0
+while :; do
+  touch "$stamp"
+  # find -newer is strict: a second between the stamp and the run keeps a result file of this run newer than the stamp
+  # also on a file system with whole-second times
+  sleep 1
+  bash "$here/gradlew-retry.sh" --stacktrace "${tasks[@]}" ${args[@]+"${args[@]}"} ${excludes[@]+"${excludes[@]}"} 2>&1 | tee "$log"
+  rc=${PIPESTATUS[0]}
+  [ "$rc" -eq 0 ] && exit 0
+  # a colored console wraps FAILED in ANSI escapes (run 45987232788): the rules read the output without them
+  LC_ALL=C sed $'s/\x1b\\[[0-9;?]*[ -/]*[@-~]//g' "$log" > "$log.plain"
+  if [ "$retry" -lt "$max_retries" ] && grep -q "Failed to install-write all apks" "$log.plain" &&
+    grep -q "ShellCommandUnresponsiveException" "$log.plain" && only_stalled_tasks_failed && ! tests_failed; then
+    retry=$((retry + 1))
+    while IFS= read -r m; do
+      [ -n "$m" ] && excludes+=(-x ":$m:connectedAndroidDeviceTest")
+    done <<< "$(passed_modules)"
+    echo "::warning::androidConnectedCheck: a test APK install stalled (ShellCommandUnresponsiveException, ADB_INSTALL_TIMEOUT=$ADB_INSTALL_TIMEOUT min); retry $retry of $max_retries${excludes[*]:+, without the passed ${excludes[*]}}"
+    # what the device was doing: /data, memory, and the package manager's, installd's and the low memory killer's lines
+    adb shell df /data || true
+    adb shell cat /proc/meminfo 2> /dev/null | head -n 4 || true
+    adb logcat -d -v time -b main -b system 2> /dev/null |
+      grep -E 'PackageManager|PackageInstaller|installd|lowmemorykiller|Watchdog|dex2oat' | tail -n 60 || true
+    continue
+  fi
+  exit "$rc"
+done
