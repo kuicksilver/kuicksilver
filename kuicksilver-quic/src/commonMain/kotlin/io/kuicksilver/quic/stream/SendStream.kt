@@ -40,8 +40,24 @@ internal class SendStream(
     /** In the manager's list of streams blocked at their own flow-control limit (STREAM_DATA_BLOCKED reported). */
     internal var streamBlockedListed = false
 
-    /** Queued in [StreamManager]'s list of streams whose last write did not fit the send buffer. */
-    internal var writeRefused = false
+    /** The scheduling group (a WebTransport session) this stream belongs to, or null ([StreamScheduler]). */
+    internal var group: SchedGroup? = null
+
+    /** For a group's token in an incremental list: the group, and the queue whose members it stands for. */
+    internal var tokenFor: SchedGroup? = null
+    internal var tokenQ = -1
+
+    /** The scheduler's heap key: the id, or for an incremental group member its turn. */
+    internal var schedSeq = 0L
+
+    /** The last write was cut short at the peer's credit for the stream: a writer waits for MAX_STREAM_DATA. */
+    internal var creditRefused = false
+
+    /** In [StreamManager]'s set of writers refused for the connection's credit (MAX_DATA). */
+    internal var connRefused = false
+
+    /** In [StreamManager]'s set of writers refused for room in the shared send buffer. */
+    internal var bufferRefused = false
 
     /** The final size reported for it (ConnectionEvent.StreamFinalSize, raised once), or -1 before. */
     internal var reportedFinalSize = -1L

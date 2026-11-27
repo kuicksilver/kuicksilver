@@ -21,6 +21,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -312,6 +313,151 @@ class StreamManagerGapsTest {
         }
     }
 
+    /**
+     * A write takes no byte past the peer's credit for the stream or the connection (RFC 9000 section 4.1), as quinn's
+     * `write_limit`: a stream whose peer stops reading it without STOP_SENDING (Firefox 161 after a WebTransport
+     * `reader.cancel`) holds only bytes the peer may take, never the shared send buffer the other streams need. Before, its
+     * writer filled the whole buffer and no other stream of the connection could write until that stream ended. The refused
+     * writer says it is blocked (STREAM_DATA_BLOCKED once its credit went out, section 19.13) and wakes on MAX_STREAM_DATA.
+     */
+    @Test fun negative_aStreamWithoutCreditTakesNoRoomFromTheOthers() {
+        val m = manager(streamWindow = 1000)
+        val a = m.open(bidi = true, StreamPriority.Default)
+        val b = m.open(bidi = true, StreamPriority.Default)
+        assertEquals(1000, m.write(a, ByteArray(bufferSize), 0, bufferSize, fin = false), "its credit, not the buffer")
+        assertEquals(1000L, m.sendBufferedBytes)
+        assertEquals(0, m.write(a, ByteArray(10), 0, 10, fin = false))
+        assertEquals(1000, m.write(b, ByteArray(bufferSize), 0, bufferSize, fin = false), "another stream writes its credit")
+        assertTrue(
+            generateSequence { m.takeControlFrame() }.none { it.kind == ControlKind.StreamDataBlocked },
+            "nothing blocked yet: the credit has not gone out",
+        )
+        @Suppress("ControlFlowWithEmptyBody")
+        while (sendOnce(m) != null) {
+        }
+        val blocked = generateSequence { m.takeControlFrame() }.filter { it.kind == ControlKind.StreamDataBlocked }.map { it.id }.toSet()
+        assertEquals(setOf(a, b), blocked, "STREAM_DATA_BLOCKED once each stream's credit went out")
+        m.events.clear()
+        assertTrue(m.onMaxStreamData(a, 5000))
+        assertEquals(1, writablesOf(m, a), "the refused writer learns of the credit")
+        assertEquals(0, writablesOf(m, b))
+        assertEquals(4000, m.write(a, ByteArray(bufferSize), 0, bufferSize, fin = false))
+        // a FIN alone always goes
+        assertEquals(0, m.write(b, ByteArray(0), 0, 0, fin = true))
+        assertNull(m.invariantViolationForTest())
+    }
+
+    /**
+     * The connection's credit counts too (quinn's `write_limit`): what the streams hold unsent never goes past MAX_DATA, so a
+     * stream within its own credit cannot fill the buffer while the connection is blocked. The writer refused for it gets
+     * DATA_BLOCKED once the credit went out, and MAX_DATA wakes every refused writer, the most urgent first (RFC 9218).
+     */
+    @Test fun negative_writesTakeNoBytePastTheConnectionsCredit() {
+        val m = manager(peerMaxData = 1500, streamWindow = 100_000)
+        val low = m.open(bidi = true, StreamPriority(urgency = 6, incremental = false))
+        val high = m.open(bidi = true, StreamPriority(urgency = 1, incremental = false))
+        assertEquals(1000, m.write(low, ByteArray(1000), 0, 1000, fin = false))
+        assertEquals(500, m.write(high, ByteArray(1000), 0, 1000, fin = false), "the connection's 1500, less the 1000 unsent")
+        assertEquals(0, m.write(low, ByteArray(1000), 0, 1000, fin = false))
+        @Suppress("ControlFlowWithEmptyBody")
+        while (sendOnce(m) != null) {
+        }
+        assertEquals(
+            listOf(1500L),
+            generateSequence { m.takeControlFrame() }.filter { it.kind == ControlKind.DataBlocked }.map { it.a }.toList(),
+        )
+        m.events.clear()
+        assertTrue(m.onMaxData(10_000))
+        val woken = m.events.filterIsInstance<ConnectionEvent.StreamWritable>().map { it.id }
+        assertEquals(listOf(high, low), woken, "each refused writer once, the most urgent first")
+        assertNull(m.invariantViolationForTest())
+    }
+
+    /** RESET_STREAM_AT keeps its reliable bytes unsent within the stream's and the connection's credit: they stay counted. */
+    @Test fun resetAtKeepsItsReliableBytesCounted() {
+        val m = manager(peerMaxData = 1000, streamWindow = 100_000)
+        m.peerResetStreamAt = true
+        val a = m.open(bidi = false, StreamPriority.Default)
+        val b = m.open(bidi = false, StreamPriority.Default)
+        assertEquals(1000, m.write(a, ByteArray(5000), 0, 5000, fin = false))
+        m.resetAt(a, 1, 600)
+        assertEquals(400, m.write(b, ByteArray(5000), 0, 5000, fin = false), "the 600 reliable bytes still take the connection's credit")
+        assertNull(m.invariantViolationForTest())
+    }
+
+    /** A group leaves nothing behind once its streams retired: the manager drops it with the last one (review 3). */
+    @Test fun negative_groupsLeaveNothingBehind() {
+        val m = manager()
+        val ids = List(3) { m.open(bidi = false, StreamPriority.Default) }
+        m.setGroup(ids[0], 100)
+        m.setGroup(ids[1], 100)
+        m.setGroup(ids[2], 200)
+        for (id in ids) m.write(id, ByteArray(2400), 0, 2400, fin = true)
+        val sent = generateSequence { sendOnce(m) }.toList()
+        for (f in sent) m.onFramesAcked(f)
+        assertEquals(0, m.groupCountForTest)
+        assertNull(m.invariantViolationForTest())
+    }
+
+    /**
+     * A group whose members are both incremental and non-incremental is still one participant of its level: one turn per
+     * round, its two kinds of members taking turns within it (review 3: it had one token per kind, so two turns).
+     */
+    @Test fun negative_aMixedGroupTakesOneTurnPerRound() {
+        val m = manager()
+        val a1 = m.open(bidi = false, StreamPriority.Default)
+        val a2 = m.open(bidi = false, StreamPriority.Default)
+        val b = m.open(bidi = false, StreamPriority.Default)
+        m.setGroup(a1, 100)
+        m.setGroup(a2, 100)
+        m.setGroup(b, 200)
+        for (id in listOf(a1, a2, b)) m.write(id, ByteArray(4800), 0, 4800, fin = false)
+        m.setPriority(a2, StreamPriority(3, true))
+        val order = generateSequence { sendOnce(m) }.map { it.streamId[0] }.toList()
+        assertEquals(listOf(b, b, b, b), order.take(8).filterIndexed { k, _ -> k % 2 == 1 }, "$order")
+        assertEquals(setOf(a1, a2), order.take(8).filterIndexed { k, _ -> k % 2 == 0 }.toSet(), "$order")
+        assertEquals(15, order.size) // 4800 bytes are five frames of a 1200-byte packet each
+    }
+
+    /** A tunnel keeps its own turn: it never joins a group, and one marked while in a group leaves it. */
+    @Test fun negative_aTunnelNeverJoinsAGroup() {
+        val m = manager()
+        val t = m.open(bidi = false, StreamPriority.Default)
+        val u = m.open(bidi = false, StreamPriority.Default)
+        m.markTunnel(t)
+        m.setGroup(t, 100)
+        assertEquals(0, m.groupCountForTest)
+        m.setGroup(u, 100)
+        m.write(u, ByteArray(2400), 0, 2400, fin = false)
+        m.markTunnel(u)
+        assertEquals(0, m.groupCountForTest)
+        assertEquals(3, generateSequence { sendOnce(m) }.count())
+        assertNull(m.invariantViolationForTest())
+    }
+
+    /**
+     * Scheduling groups (WebTransport sessions; draft-ietf-webtrans-http3-16 section 8, unchanged in -17 per the project's
+     * notes): the groups of one urgency take turns frame by frame however their streams' ids lie, a chosen deviation from
+     * RFC 9218 section 10's id order between sessions, and RFC 9218's order holds within a group (non-incremental streams
+     * by ascending id). Without groups the three streams went strictly by id: a1, a1, a1, a2, ..., b1 last.
+     */
+    @Test fun negative_groupsOfOneUrgencyTakeTurnsAndKeepTheirOrderWithin() {
+        val m = manager()
+        val a1 = m.open(bidi = false, StreamPriority.Default)
+        val a2 = m.open(bidi = false, StreamPriority.Default)
+        val b1 = m.open(bidi = false, StreamPriority.Default)
+        m.setGroup(a1, 100)
+        m.setGroup(a2, 100)
+        m.setGroup(b1, 200)
+        for (id in listOf(a1, a2, b1)) assertEquals(2400, m.write(id, ByteArray(2400), 0, 2400, fin = false))
+        val order = generateSequence { sendOnce(m) }.map { it.streamId[0] }.toList()
+        assertEquals(listOf(a1, b1, a1, b1, a1, b1, a2, a2, a2), order)
+        // a stream that retires leaves its group, and the last one takes the group with it
+        assertEquals(2, m.groupCountForTest)
+        for (id in listOf(a1, a2, b1)) m.reset(id, 0)
+        assertNull(m.invariantViolationForTest())
+    }
+
     /** RFC 9000 section 3.1: STOP_SENDING moves our send-only stream to "Reset Sent", where nothing is left of it: it is retired. */
     @Test fun stopSendingRetiresOurSendOnlyStream() {
         val m = manager()
@@ -340,14 +486,15 @@ class StreamManagerGapsTest {
     @Test fun maxDataWakesConnectionBlockedStreamsOnce() {
         val m = manager(peerMaxData = 100, streamWindow = 150)
         val a = m.open(bidi = false, StreamPriority.Default)
-        m.write(a, ByteArray(300), 0, 300, fin = false)
+        assertEquals(100, m.write(a, ByteArray(300), 0, 300, fin = false), "the connection's credit, no more")
         assertEquals(100, sendOnce(m)!!.streamLength[0])
         assertEquals(null, sendOnce(m))
-        m.write(a, ByteArray(1), 0, 1, fin = false)
+        assertEquals(0, m.write(a, ByteArray(1), 0, 1, fin = false))
         assertEquals(null, sendOnce(m))
         m.events.clear()
         assertTrue(m.onMaxData(1000))
         assertEquals(1, writablesOf(m, a), "one wake-up however often it found the connection blocked")
+        assertEquals(50, m.write(a, ByteArray(300), 0, 300, fin = false), "now its own 150")
         assertEquals(50, sendOnce(m)!!.streamLength[0])
         assertEquals(null, sendOnce(m), "now blocked by its own limit")
         m.events.clear()

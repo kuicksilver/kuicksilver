@@ -32,8 +32,9 @@ import kotlinx.coroutines.launch
  * Every cost must be at most [quantum].
  *
  * Datagrams and the capsules of a session's CONNECT stream are not taken in turns: a capsule is a few bytes, and a
- * datagram goes to QUIC's datagram queue, which drops the oldest when full, so one session's burst can push out other
- * sessions' datagrams (unreliable by design, RFC 9221), never stall their streams.
+ * datagram goes to QUIC's datagram queue as a flow of its session's own (QUIC's `trySendDatagram` with a group): admitted
+ * through a channel of its own, sent by deficit round robin over bytes, evicted from the flow that holds the most, so one
+ * session's burst evicts its own datagrams, not another's.
  *
  * Session dispatcher only: no locks.
  */
@@ -138,8 +139,10 @@ internal class WtFairQueue(
 
 /**
  * A session's part of its connection's send buffer (QUIC's `maxSendBuffer`, the bytes of all streams written and not yet
- * acknowledged), so a session whose peer never reads a stream holds only its part and the others keep writing (section 8:
- * one session "aggressively using up those resources can cause other sessions to stall"). A [reserve] of the [buffer]
+ * acknowledged), so a session that writes faster than the path carries holds only its part and the others keep writing
+ * (section 8: one session "aggressively using up those resources can cause other sessions to stall"). It counts only
+ * bytes the transport took, which QUIC keeps within the peer's credit: a stream the peer stopped reading holds none past
+ * that credit, so it cannot starve its session's other streams ([WtSendTurns.run]). A [reserve] of the [buffer]
  * stays free for a session that joins; the rest is split between the [sessions] with flow control open on the
  * connection: a session alone gets all of it, and the parts always add up to the buffer less the reserve, so a newcomer
  * finds the reserve free at once. A session over its part (the others joined after it took more) waits outside the turn
@@ -244,23 +247,39 @@ internal class WtSendTurns(
         return a
     }
 
-    /** Writes [cost] bytes of [a]'s stream with [block], in turn and within the session's share. */
+    /**
+     * Writes up to [cost] bytes of [a]'s stream with [block] (it gets the count), in turn and within the session's share;
+     * returns the count written, at least 1. In the turn the transport gets only what it takes at once ([transportRoom]:
+     * the peer's QUIC credit for the stream and the connection, and the send buffer's room), so [block] does not wait in the
+     * turn: one stream whose peer stopped reading it (without STOP_SENDING) would otherwise hold the turn, and with it every
+     * session of the connection. A stream without room waits outside the turn ([awaitTransport], which says 0 once the stream
+     * takes no more writes: [block] then fails with the reason). The share counts only bytes the transport took, all within
+     * the peer's credit: sent or about to be, released as acknowledged.
+     */
     suspend fun run(
         a: WtSendShare.Account,
         cost: Long,
-        block: suspend () -> Unit,
-    ) {
+        transportRoom: suspend () -> Long,
+        awaitTransport: suspend () -> Long,
+        block: suspend (Int) -> Unit,
+    ): Int {
         while (true) {
             share.awaitRoom(cost)
             val wrote =
                 queue.inTurn(key, urgency(), cost) {
                     // another writer of the session took the room meanwhile: wait again, outside the turn
-                    if (!share.fits(cost)) return@inTurn false
-                    share.take(a, cost)
-                    block()
-                    true
+                    if (!share.fits(cost)) return@inTurn 0
+                    val n = minOf(cost, transportRoom()).toInt()
+                    if (n <= 0) return@inTurn -1 // the transport takes nothing now: wait for it outside the turn
+                    share.take(a, n.toLong())
+                    block(n)
+                    n
                 }
-            if (wrote) return
+            if (wrote > 0) return wrote
+            if (wrote < 0 && awaitTransport() == 0L) {
+                block(cost.toInt()) // the stream takes no more writes: this fails with the reason
+                return cost.toInt()
+            }
         }
     }
 }

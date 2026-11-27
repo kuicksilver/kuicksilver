@@ -97,6 +97,8 @@ class BlockedFramesTest {
         repeat(3) { sendOnce(m) }
         assertEquals(listOf(500L), drain(m).of(ControlKind.DataBlocked).map { it.a }, "one DATA_BLOCKED at 500")
         assertTrue(m.onMaxData(1000))
+        // the writer, woken, takes the new credit: no byte past it (RFC 9000 section 4.1)
+        assertEquals(500, m.write(id, ByteArray(2500), 0, 2500, false))
         assertEquals(500, sendOnce(m)!!.streamLength[0])
         repeat(3) { sendOnce(m) }
         assertEquals(listOf(1000L), drain(m).of(ControlKind.DataBlocked).map { it.a }, "and one at the next limit")
@@ -147,6 +149,7 @@ class BlockedFramesTest {
         m.repeatBlockedReports()
         assertEquals(listOf(400L), drain(m).of(ControlKind.DataBlocked).map { it.a }, "connection-blocked at 400")
         assertTrue(m.onMaxData(10_000))
+        assertEquals(100, m.write(a, ByteArray(2600), 0, 2600, false), "the rest of the stream's 500")
         repeat(3) { sendOnce(m) }
         assertEquals(listOf(a to 500L), drain(m).of(ControlKind.StreamDataBlocked).map { it.id to it.a })
         m.repeatBlockedReports()
@@ -307,7 +310,8 @@ class BlockedFramesTest {
 
     /**
      * RESET_STREAM_AT (draft-ietf-quic-reliable-stream-reset section 3) whose reliable bytes were all sent: nothing of the stream
-     * waits for MAX_DATA any more, so DATA_BLOCKED is not repeated for it; with reliable bytes still unsent it still waits.
+     * waits for MAX_DATA any more, so DATA_BLOCKED is not repeated for it. A write takes no byte past the connection's credit,
+     * so a reliable size above it (700) is cut to the 500 bytes written, which were sent: nothing waits either.
      */
     @Test fun negative_resetAtWithEveryReliableByteSentLeavesNoDataBlocked() {
         for (reliable in listOf(500L, 700L)) {
@@ -320,9 +324,9 @@ class BlockedFramesTest {
             assertEquals(listOf(500L), drain(m).of(ControlKind.DataBlocked).map { it.a })
             m.resetAt(id, 5, reliable)
             drain(m)
-            assertEquals(reliable > 500, m.flowBlocked(), "reliable size $reliable, 500 bytes sent")
+            assertFalse(m.flowBlocked(), "reliable size $reliable, 500 bytes sent")
             m.repeatBlockedReports()
-            assertEquals(reliable > 500, drain(m).of(ControlKind.DataBlocked).isNotEmpty(), "reliable size $reliable")
+            assertTrue(drain(m).of(ControlKind.DataBlocked).isEmpty(), "reliable size $reliable")
         }
     }
 

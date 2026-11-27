@@ -483,7 +483,9 @@ public class QuicConfig private constructor(
 
             /**
              * Default 4 MiB, 1..2^62: bytes the connection buffers for sending over all its streams until they are
-             * acknowledged; a writer waits for room beyond it.
+             * acknowledged; a writer waits for room beyond it. A write also takes no byte beyond the peer's credit for the
+             * stream or the connection (RFC 9000 section 4.1), so a stream whose peer stops reading it never fills the
+             * buffer the other streams need.
              */
             public var maxSendBuffer: Long = 4_194_304
         }

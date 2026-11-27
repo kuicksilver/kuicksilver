@@ -206,6 +206,9 @@ internal class StreamOutput(
     private val buffer = Buffer()
     override val autoFlush: Boolean get() = true
 
+    /** Bytes written to this output and not yet handed to the core (a flush that was cancelled leaves them). */
+    internal val holdsUnsent: Boolean get() = !buffer.exhausted()
+
     @Volatile override var isClosedForWrite: Boolean = false
         private set
 
@@ -248,8 +251,9 @@ internal class StreamOutput(
             if (w > 0) {
                 unsent = true
             } else {
-                // only a flush that sends what was handed over since the last one: every flush ticks every stream's ticker, so
-                // flushing on each wake would wake this loop again at once and spin while the peer's credit stays at zero
+                // only a flush that sends what was handed over since the last one: a flush that sends nothing would only spin.
+                // The core registered this writer for what held it back (buffer room, the stream's or the connection's credit)
+                // and wakes it with StreamWritable when that comes, or the output's close does
                 if (unsent) {
                     stream.loop.flush(stream.conn.core)
                     unsent = false
@@ -327,5 +331,7 @@ internal class StreamOutput(
     fun closeWith(cause: Throwable) {
         if (closedCause == null) closedCause = cause
         isClosedForWrite = true
+        stream.ticker.trySend(Unit) // a writer waiting for room learns of the end
+        stream.creditTick() // and so does one waiting in awaitSendCredit (a stop, a reset, a rejected 0-RTT, the connection's end)
     }
 }

@@ -581,9 +581,16 @@ sharing a connection take turns for its stream credit and its send buffer (secti
 a session's weight follows its CONNECT stream's urgency (8 − urgency), so a more urgent session gets the larger share
 but none waits more than a round, and a PRIORITY_UPDATE takes effect at once. Each session also holds at most its part
 of the connection's send buffer (`flowControl { maxSendBuffer }`): a reserve stays free for a session that joins, and the rest is split
-between the open sessions, so a session alone gets nearly all of it while one whose peer never reads a stream cannot
-stall the others. Datagrams are outside these turns: one session's burst can push other sessions' datagrams out of the
-connection's datagram queue (which drops the oldest), never stall their streams. The connection's receive window is
+between the open sessions, so a session alone gets nearly all of it while one that writes faster than the path carries
+cannot stall the others. A stream whose peer stops reading it holds nothing past the peer's QUIC credit and waits
+outside the turns, so it stalls neither its session's other streams nor any other session. On the wire the sessions of
+one urgency take turns frame by frame (each session is one scheduling group), and RFC 9218's order holds within a
+session, so a session that keeps sending does not hold a newer one back (between sessions this deviates on purpose from
+RFC 9218's stream-ID order, for the draft's section 8 fairness). A session's CONNECT stream stays outside its group: it
+is a tunnel with its own turn and carries only small control capsules, so its flow-control capsules go out in time
+whatever the session's data does. Each session's datagrams are a flow of their own in the connection's datagram queue:
+the flows take turns by bytes, and a session that floods (even faster than the endpoint's loop takes datagrams in)
+evicts its own datagrams, not another's. The connection's receive window is
 kept at what the open sessions may have in flight together. `Http3Endpoint` refuses settings whose sessions do not fit
 the QUIC limits (`maxBidiStreams`, `expert { maxUniStreams }`, `flowControl { maxConnectionWindow }`). All three initial limits at 0 turn flow
 control off: a connection then carries one session (section 5.1), and a second CONNECT is refused the same way.

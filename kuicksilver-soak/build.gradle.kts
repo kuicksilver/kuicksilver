@@ -39,7 +39,6 @@ kotlin {
             implementation(project(":kuicksilver-ktor-client"))
             implementation(project(":kuicksilver-ktor-server"))
             implementation(libs.ktor.server.auto.head.response) // the deployment server answers the guide's `curl -I`
-            implementation(project(":kuicksilver-ktor-network")) // PerMessageDeflate, for the Autobahn server and client
             implementation(libs.ktor.server.websockets)
             implementation(libs.ktor.websockets)
             implementation(libs.kotlinx.io.core)

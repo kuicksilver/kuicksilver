@@ -28,6 +28,23 @@ import kotlin.time.Duration.Companion.milliseconds
 /** TLS configurations for the core tests. */
 @OptIn(DelicateKuicksilverApi::class, ExperimentalKuicksilverApi::class)
 internal object CoreFixtures {
+    /**
+     * Receive windows wide enough that a test's transfer never waits for a reader: a writer takes no byte beyond the peer's
+     * credit (RFC 9000 section 4.1), and the endpoints of these tests read nothing.
+     */
+    val wideWindows: io.kuicksilver.quic.QuicConfig = wide()
+
+    fun wide(block: io.kuicksilver.quic.QuicConfig.Builder.() -> Unit = {}): io.kuicksilver.quic.QuicConfig =
+        io.kuicksilver.quic.quicConfig {
+            flowControl {
+                initialStreamWindow = 16L shl 20
+                maxStreamWindow = 16L shl 20
+                initialConnectionWindow = 32L shl 20
+                maxConnectionWindow = 32L shl 20
+            }
+            block()
+        }
+
     val testCa = Certificate(TestCerts.testCa)
     val accept =
         TrustConfig.Custom { chain, _, _ ->

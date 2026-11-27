@@ -629,6 +629,15 @@ public class ConnectionCore internal constructor(
     /** [StreamManager.sendCredit] of [id]. */
     internal fun streamSendCredit(id: Long): Long = streams.sendCredit(id)
 
+    /** [StreamManager.writerGone] of [id]. */
+    internal fun streamWriterGone(id: Long) = streams.writerGone(id)
+
+    /** [StreamManager.writeRoom] of [id]: with [register], a stream without room learns of it by StreamWritable. */
+    internal fun streamWriteRoom(
+        id: Long,
+        register: Boolean,
+    ): Long = streams.writeRoom(id, register)
+
     /** Set by the endpoint so issued connection IDs route back to this core. */
     internal var registrar: CidRegistrar = NoopRegistrar
 
@@ -1332,6 +1341,12 @@ public class ConnectionCore internal constructor(
     internal fun releasePeerStreamCredit(id: Long) {
         streams.releasePeerCredit(id)
     }
+
+    /** [StreamManager.setGroup]. */
+    internal fun setStreamGroup(
+        id: Long,
+        group: Long,
+    ) = streams.setGroup(id, group)
 
     /** Stream [id] carries a tunnel: it gets a share of the frames whatever its priority (RFC 9218 section 10.1). */
     internal fun markTunnel(id: Long) {

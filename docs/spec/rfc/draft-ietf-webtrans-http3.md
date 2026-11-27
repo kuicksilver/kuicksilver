@@ -271,9 +271,42 @@ share of controlled resources; this applies both to sending data and to opening 
   that servers avoid such starvation where possible"); each session holds at most its part of the connection's send
   buffer (`quicConfig { flowControl { maxSendBuffer } }`, followed per stream with `QuicStream.sendReleased`): a reserve of one part in
   `webTransport { maxSessions }` + 1 stays free for a session that joins and the rest is split between the open sessions, so
-  one whose peer never reads a stream cannot stall the others, and a session alone gets nearly all of it; datagrams and
-  capsules are outside the turns (a session's datagram burst can push other sessions' datagrams out of the connection's
-  datagram queue, never stall their streams)
+  one that writes faster than the path carries cannot stall the others, and a session alone gets nearly all of it; the
+  turn hands the transport only what it takes at once (within the peer's QUIC credit), and a stream whose peer stopped
+  reading it waits outside the turn, so it holds neither the turn nor its session's share
+  (`webtransport.WebTransportServerSessionsTest.negative_twoStalledSessionsDoNotWedgeAThird`); on the wire the
+  sessions of one urgency take turns too: QUIC's scheduler takes each session's streams as one scheduling group, a
+  participant of the urgency's round robin, and keeps RFC 9218 §10's order within the session (non-incremental streams
+  by ascending id), so a session that keeps sending does not hold a newer session's data back however much lower its
+  stream IDs are (`stream.StreamManagerGapsTest.negative_groupsOfOneUrgencyTakeTurnsAndKeepTheirOrderWithin`,
+  `.negative_aMixedGroupTakesOneTurnPerRound`,
+  `webtransport.WebTransportServerSessionsTest.negative_aSessionJoiningAFullBufferWritesAtOnce`). **Deviation, chosen:**
+  between sessions this sets aside RFC 9218 §10's "Non-incremental responses of the same urgency SHOULD be served by
+  prioritizing bandwidth allocation in ascending order of the stream ID" in favour of this draft's §8 SHOULD ("a fairness
+  scheme that ensures that each session that shares a transport connection gets a reasonable share of controlled
+  resources; this applies both to sending data and to opening new streams"), with §3.4's "Endpoints that prioritize
+  WebTransport sessions need to consider how they interact with other sessions or requests on the same HTTP/3
+  connection" and RFC 9218 §10's own "It is RECOMMENDED that servers avoid such starvation where possible" (quoted from
+  draft-16, the text under refs; unchanged in -17 per the project's notes; see [RFC 9218](9218.md#priorities-transport-part-the-scheduler)).
+  A session's CONNECT stream stays outside its group: it is a tunnel with its own turn (RFC 9218 §10.1's share for
+  "streams acting as tunnels"), it carries small control capsules, and keeping it out keeps the flow-control capsules
+  (WT_MAX_DATA and the like) timely whatever the session's data does. Datagrams: each request stream's (so each
+  session's) datagrams are a flow of their own at every step: admission (a bounded DROP_OLDEST channel per flow, made
+  when its request stream opens and removed when it ends, so no two flows ever share one; a sender that outruns the
+  endpoint's loop drops its own flow's oldest command, never another flow's; the loop drains the channels in turn, all
+  of them for what was admitted before the pass, and a pass takes no more than was admitted when it started, then
+  yields the endpoint loop to its other work while senders keep flooding), the queue (the flows of one urgency take turns by deficit round
+  robin over bytes, a more urgent flow first) and eviction (a full queue makes room from the flow that holds the most
+  bytes, the sender's own on a tie; in its own flow only from datagrams of the same or a lower urgency, else the new one
+  is dropped), so one session's burst evicts only its own datagrams; LatestWins replaces within the sender's own flow
+  (`runtime.DatagramSendQueueTest.negative_aBurstEvictsOnlyItsOwnGroupsDatagrams`, `.negative_aFloodInAdmissionDropsOnlyItsOwnCommands`,
+  `.negative_aGroupOfLargeDatagramsGetsNoLargerShare`, `.negative_evictionKeepsTheGroupsMoreUrgentDatagrams`,
+  `.negative_latestWinsReplacesOnlyWithinItsGroup`, `.negative_manyGroupsNeverShareAdmission`,
+  `.negative_aProducerRacingTheGroupsEndStallsNothing`, `.negative_aDrainPassIsBoundedByWhatWasAdmitted`,
+  `.negative_anEndedGroupsLateAdmissionLeavesNoGroupBehind`; `api.DatagramDrainerLatencyJvmTest`: flooding sessions on
+  other threads keep the endpoint loop answering within 500 ms, where one drain held it for minutes before; `.groupsOfOneUrgencyTakeTurns`;
+  `api.DatagramFairnessJvmTest.negative_aFloodDoesNotTakeAPacedSendersDatagrams`: a paced session puts at least 48 of
+  its 50 datagrams on the wire against another session's flood from another thread, where 3 of 50 arrived before)
 - a draft-14 peer that declares flow control only by `SETTINGS_WT_MAX_SESSIONS` gives no initial credit (its section
   5.5): `WebTransportDiagnostics.creditStall` reports a session left at zero for ten seconds, and the Ktor server logs it
   ([compatibility shims](../compat-shims.md#1-webtransport-draft-02-and-draft-14))

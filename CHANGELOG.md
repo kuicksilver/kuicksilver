@@ -2175,6 +2175,22 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   RESET_STREAM while its upload still runs, H3_REQUEST_CANCELLED) instead of at the call's end. A session whose caller
   is cancelled before the response head is left to nobody and holds its call on every Ktor engine, a Ktor issue the
   guide describes (`ClientSseTest`; [Server-sent events](docs/guide/realtime.md#server-sent-events)).
+- QUIC: a stream whose peer stopped crediting it without STOP_SENDING no longer stalls the connection's other streams.
+  Its writer could fill the whole shared send buffer (`flowControl { maxSendBuffer }`, 4 MiB) with bytes beyond the
+  peer's credit, and no other stream could send until that stream ended: Firefox 161, which sends no STOP_SENDING after a
+  WebTransport `reader.cancel`, stalled the rest of a session for minutes (browser page, 2026-11-26). A write now takes
+  no byte beyond the peer's credit for the stream (MAX_STREAM_DATA) or for the connection (MAX_DATA, counting what the
+  other streams hold unsent), as quinn, quic-go, ngtcp2 and picoquic do (RFC 9000 section 4.1); the writer waits, says
+  it is blocked (STREAM_DATA_BLOCKED or DATA_BLOCKED once its credit went out) and wakes when credit or buffer room
+  comes; writers woken together are woken most urgent first, a best effort (each then runs when its coroutine does).
+  A `flush()` of more than the peer's credit therefore waits for the peer: write from a coroutine of its own when the
+  peer may read later. WebTransport: a stream whose peer stopped reading it no longer holds
+  the connection's send turn (every session of the connection waited with it) nor its session's share of the buffer,
+  and sessions of the same urgency take turns on the wire (each session's streams are one scheduling group, RFC 9218's
+  order within it), so a session that keeps sending no longer holds a newer one back (draft-ietf-webtrans-http3-16
+  section 8, unchanged in -17 per the project's notes; a chosen deviation from RFC 9218 section 10's stream-id order
+  between sessions), and in the datagram send path each session's datagrams are a flow of their own from admission on:
+  the flows take turns by bytes, and one session's burst, however fast, evicts only its own datagrams.
 - WebSocket (both Ktor engines): the engine answers a Ping itself, as soon as it reads it, with a Pong carrying the
   Ping's data (RFC 6455 sections 5.5.2 and 5.5.3). The Pong goes out at once when nothing else is being sent,
   otherwise right after the frame on the wire, so also between the fragments of a message. Ktor's session's own Pong

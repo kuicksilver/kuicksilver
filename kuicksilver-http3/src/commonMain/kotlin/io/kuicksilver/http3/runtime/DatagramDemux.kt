@@ -29,7 +29,11 @@ import io.kuicksilver.quic.DatagramUnsupportedReason
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.StreamPriority
+import io.kuicksilver.quic.endDatagramGroup
 import io.kuicksilver.quic.receivedAll
+import io.kuicksilver.quic.sendDatagram
+import io.kuicksilver.quic.startDatagramGroup
+import io.kuicksilver.quic.trySendDatagram
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -146,6 +150,7 @@ internal class DatagramDemux(
     fun register(streamId: Long): Channel<ByteArray> {
         val ch = Channel<ByteArray>(QUEUE, BufferOverflow.DROP_OLDEST)
         streams[streamId] = ch
+        session.quic.startDatagramGroup(streamId) // its datagrams' admission of their own in the send queue
         if (LeakRegistry.enabled) {
             val ids = leakIds ?: HashMap<Long, Long>().also { leakIds = it }
             LeakRegistry.close(ids.put(streamId, LeakRegistry.open("h3.datagramFlow")) ?: 0L)
@@ -184,6 +189,7 @@ internal class DatagramDemux(
 
     fun unregister(streamId: Long) {
         streams.remove(streamId)?.close()
+        session.quic.endDatagramGroup(streamId) // its send flow's state goes once its last datagram left
         leakIds?.let { LeakRegistry.close(it.remove(streamId) ?: 0L) }
     }
 
@@ -229,7 +235,9 @@ internal class DatagramDemux(
     ): DatagramSendResult {
         unsupported()?.let { return it }
         val prefix = VarInt.encode(streamId / 4)
-        return when (val r = session.quic.trySendDatagram(prefix + payload, DatagramPolicy.DropOldest, priority)) {
+        // the request stream is the datagram's flow: the flows (WebTransport sessions among them) take turns in the send
+        // queue, and one flow's burst evicts its own datagrams (draft-ietf-webtrans-http3-16 section 8)
+        return when (val r = session.quic.trySendDatagram(prefix + payload, DatagramPolicy.DropOldest, priority, streamId)) {
             is DatagramSendResult.TooLarge -> {
                 DatagramSendResult.TooLarge(httpDatagramMax(r.max, prefix.size))
             }
@@ -255,7 +263,7 @@ internal class DatagramDemux(
         }
         val prefix = VarInt.encode(streamId / 4)
         try {
-            session.quic.sendDatagram(prefix + payload, DatagramPolicy.DropOldest, priority)
+            session.quic.sendDatagram(prefix + payload, DatagramPolicy.DropOldest, priority, streamId)
         } catch (
             e: QuicException.DatagramTooLarge,
         ) {

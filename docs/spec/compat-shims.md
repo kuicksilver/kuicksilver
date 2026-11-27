@@ -66,7 +66,7 @@ no browser can open a session: a page's `new WebTransport()` rejects, with no fa
 `offeredIn` at :66, `WtSettings.ours` at :201, `WtTokens.LEGACY` at :231),
 `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/frame/SettingsCodec.kt:30` and :33 (the codepoints),
 `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/H3Session.control.kt:427` (the 0-or-1 check),
-`kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtSessionImpl.kt:878` (the client's draft-02
+`kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtSessionImpl.kt:884` (the client's draft-02
 request field).
 
 **On by default.** No: only with `http3Settings { webTransport { enabled } }` (false by default) or the Ktor server's `http3 { webTransport { enabled } }`
@@ -286,6 +286,22 @@ the data.
   Firefox draft-02 with `webtransport`, Safari draft-14 with `webtransport`, webtransport-go, picoquic and Kuicksilver
   draft-16 or draft-17 with `webtransport-h3`. A CONNECT whose token is not the selected draft's is malformed (400,
   `H3_MESSAGE_ERROR`) — `webtransport.WtDraftVersionsTest.negative_tokenOfAnotherDraftIsMalformed`.
+- **Receiving draft-02 stream error codes above 255** (a receive-only shim that would map a RESET_STREAM or STOP_SENDING
+  whose HTTP/3 code carries a WebTransport code above 255 to that code on a draft-02 session): not kept. Draft-02 §4.3
+  limits a stream's application code to "an unsigned 8-bit integer" (the session's close code, §5, is 32-bit), and on a
+  draft-02 session `WebTransportException.StreamReset.code` / `StreamStopped.code` are null for such a code, and our own
+  `reset` / `stopSending` refuse one with IllegalArgumentException (`WebTransportSession.maxStreamErrorCode` = 255). The
+  premise, that browsers keep to 0..255, was checked on the wire on 2026-11-26 (the page's error code stage,
+  [interop.md](interop.md#stream-error-codes-on-draft-02-2026-11-26)): Chrome 158 clamps `streamErrorCode` 256, 1000
+  and 2^32-1 to 255 when the `WebTransportError` is built, so `writer.abort` and `reader.cancel` send WebTransport code
+  255 at most, on bidirectional and unidirectional streams alike, and it reads our codes 0..255 back unchanged; no code
+  above 255 reached the server — `ChromeWebTransportTest` (opt-in, `-Pkuicksilver.browserTests=true`) fails loudly
+  should one ever arrive. Firefox 161 (2026-11-26, `tools/interop/wt-firefox-manual.sh`) keeps the value in the
+  `WebTransportError` but `writer.abort` sends only its low 8 bits (256 → 0, 1000 → 232, 2^32-1 → 255), and
+  `reader.cancel` sends nothing at all: no STOP_SENDING until the session ends, when Firefox stops every open stream
+  with H3_REQUEST_CANCELLED (0x10c), which the API reports as `StreamStopped.code` null; nothing above 255 reached the
+  server. A receive shim would have nothing to map: no
+  browser sends a code above 255. It is reconsidered if one is seen doing so.
 - **Discarding later long-header packets with another SCID** (an msquic server's ServerHello after its provisional SCID
   among them): the RFC 9000 §7.2 MUST itself.
 - **TLS 1.2** (`TlsVersions.Tls12And13`, for peers without 1.3 such as old Android and JDK stacks): off by default, and RFC

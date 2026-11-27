@@ -9,6 +9,7 @@ import io.ktor.utils.io.writeFully
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.quicConfig
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
@@ -17,6 +18,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
@@ -63,30 +65,39 @@ class SendReleasedTest {
         }
 
     /**
-     * A peer that never reads holds the bytes beyond its stream window in our buffer: they stay unreleased (what a
-     * per-user cap counts) until a reset drops them, which releases everything.
+     * A peer that never reads holds the writer at its credit for the stream (16 KiB here): the connection takes no byte
+     * beyond it (RFC 9000 section 4.1), so the shared buffer holds only what the peer may take, released once acknowledged,
+     * and the writer waits. A reset ends the writer; nothing more was ever buffered to release.
      */
-    @Test fun negative_bytesAnUnreadStreamHoldsAreReleasedByItsReset() =
+    @Test fun negative_anUnreadStreamHoldsNothingPastItsCredit() =
         runBlocking {
             ApiPair.open(serverQuic = quicConfig { flowControl { initialStreamWindow = 16_384 } }).use { p ->
                 withTimeout(20.seconds) {
                     val (c, s) = p.connect()
                     val st = c.openBidi()
                     val released = assertNotNull(st.sendReleased)
-                    st.output.writeFully(ByteArray(200_000), 0, 200_000)
-                    st.output.flush()
+                    // in the background: the flush waits for credit the peer never gives, until the reset fails it
+                    val writer =
+                        launch {
+                            runCatching {
+                                st.output.writeFully(ByteArray(200_000), 0, 200_000)
+                                st.output.flush()
+                            }
+                        }
                     s.acceptStream() // never read
-                    // the window is all the peer takes: the rest stays buffered
-                    assertNull(withTimeoutOrNull(300.milliseconds) { released.first { it > 16_384L } })
+                    released.first { it == 16_384L } // the window went out and was acknowledged
+                    assertNull(withTimeoutOrNull(300.milliseconds) { released.first { it > 16_384L } }, "nothing past the credit")
+                    assertTrue(writer.isActive, "the writer waits for credit")
                     st.reset(1)
-                    released.first { it == 200_000L }
+                    writer.join()
+                    assertEquals(16_384L, released.value)
                     c.close()
                     s.close()
                 }
             }
         }
 
-    /** The peer's STOP_SENDING drops what was buffered too. */
+    /** The peer's STOP_SENDING drops what was buffered too, and ends the writer that waited for credit. */
     @Test fun negative_stopSendingReleasesTheBuffer() =
         runBlocking {
             ApiPair.open(serverQuic = quicConfig { flowControl { initialStreamWindow = 16_384 } }).use { p ->
@@ -94,17 +105,23 @@ class SendReleasedTest {
                     val (c, s) = p.connect()
                     val st = c.openBidi()
                     val released = assertNotNull(st.sendReleased)
-                    st.output.writeFully(ByteArray(100_000), 0, 100_000)
-                    st.output.flush()
+                    val writer =
+                        launch {
+                            runCatching {
+                                st.output.writeFully(ByteArray(100_000), 0, 100_000)
+                                st.output.flush()
+                            }
+                        }
                     s.acceptStream().stopSending(3)
-                    released.first { it == 100_000L }
+                    released.first { it == 16_384L }
+                    writer.join()
                     c.close()
                     s.close()
                 }
             }
         }
 
-    /** The connection's end lets go of everything it held. */
+    /** The connection's end lets go of everything it held, and ends the writer that waited for credit. */
     @Test fun negative_aLostConnectionReleasesEverything() =
         runBlocking {
             ApiPair.open(serverQuic = quicConfig { flowControl { initialStreamWindow = 16_384 } }).use { p ->
@@ -112,11 +129,17 @@ class SendReleasedTest {
                     val (c, s) = p.connect()
                     val st = c.openBidi()
                     val released = assertNotNull(st.sendReleased)
-                    st.output.writeFully(ByteArray(100_000), 0, 100_000)
-                    st.output.flush()
+                    val writer =
+                        launch {
+                            runCatching {
+                                st.output.writeFully(ByteArray(100_000), 0, 100_000)
+                                st.output.flush()
+                            }
+                        }
                     s.acceptStream()
                     c.close()
-                    released.first { it == 100_000L }
+                    released.first { it == 16_384L }
+                    writer.join()
                     s.close()
                 }
             }

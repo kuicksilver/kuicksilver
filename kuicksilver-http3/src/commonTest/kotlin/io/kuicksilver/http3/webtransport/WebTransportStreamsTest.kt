@@ -9,6 +9,7 @@ import io.ktor.utils.io.copyTo
 import io.ktor.utils.io.readFully
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.http3.H3Pair
+import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3ServerRequest
 import io.kuicksilver.http3.WebTransportException
 import io.kuicksilver.http3.WebTransportSession
@@ -169,6 +170,41 @@ class WebTransportStreamsTest {
                         }
                     }
                 assertEquals(9L, stopped.code)
+            }
+        }
+
+    /**
+     * Firefox 161 answers `reader.cancel(new WebTransportError("", {streamErrorCode}))` with STOP_SENDING carrying
+     * H3_REQUEST_CANCELLED (0x10c), an HTTP/3 code outside the WebTransport range, whatever the code (browser page, error
+     * code stage, 2026-11-26). The writer still fails at once, with [WebTransportException.StreamStopped] whose code is
+     * null, on a stream either side opened.
+     */
+    @Test fun peerStopSendingWithAnHttp3CodeFailsTheWriterWithoutACode() =
+        h3Test {
+            H3Pair.open(clientSettings = wtOn, serverSettings = wtOn).useScoped { p ->
+                val (client, server) = sessions(p)
+                val bidi = client.openBidi()
+                bidi.output.writeFully("x".encodeToByteArray())
+                bidi.output.flush()
+                val serverBidi = withTimeout(5.seconds) { server.acceptBidi() }
+                val uni = server.openUni()
+                uni.output.writeFully("y".encodeToByteArray())
+                uni.output.flush()
+                val clientUni = withTimeout(5.seconds) { client.acceptUni() }
+                (bidi as WtStreamImpl).st.stopSending(Http3ErrorCode.REQUEST_CANCELLED)
+                (clientUni as WtStreamImpl).st.stopSending(Http3ErrorCode.REQUEST_CANCELLED)
+                for ((name, out) in listOf("bidi" to serverBidi.output, "uni" to uni.output)) {
+                    val stopped =
+                        causeOf<WebTransportException.StreamStopped> {
+                            withTimeout(5.seconds) {
+                                while (true) {
+                                    out.writeFully(ByteArray(1024))
+                                    out.flush()
+                                }
+                            }
+                        }
+                    assertEquals(null, stopped.code, name)
+                }
             }
         }
 

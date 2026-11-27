@@ -377,7 +377,8 @@ internal fun ConnectionCore.applyPeerLimits(tp: TransportParameters) {
         tp.initialMaxStreamsBidi,
         tp.initialMaxStreamsUni,
     )
-    connSend.onMaxUpdate(tp.initialMaxData)
+    // through the stream manager: a raise after an accepted 0-RTT wakes the writers refused for the remembered limit
+    streams.onMaxData(tp.initialMaxData)
     // RESET_STREAM_AT is a frame the peer must have offered (draft-ietf-quic-reliable-stream-reset section 3): in 0-RTT only the
     // remembered offer counts (RFC 9000 section 7.4.1), so it follows the limits
     streams.peerResetStreamAt = tp.resetStreamAt && config.resetStreamAt

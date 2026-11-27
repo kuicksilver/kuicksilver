@@ -465,7 +465,7 @@ over HTTP/3 (RFC 9220), so the HTTP/3 pair has none.
 The page `kuicksilver-ktor-server/src/jvmTest/resources/wt/index.html` runs, against the Ktor server's
 `webTransport` routes: a 1 MiB bidirectional echo, a unidirectional stream from the server, 100 datagrams (one echoed
 back counts: datagrams may be lost), a close by the page with code 7 and "bye", and a close by the server with code 9
-and "server-bye".
+and "server-bye"; since 2026-11-26 also the error code stage below.
 
 | browser | draft spoken | how | result |
 |---|---|---|---|
@@ -473,6 +473,73 @@ and "server-bye".
 | Chrome 155 with `EnableWebTransportDraft07` | draft-02 (we announce no draft-07 SETTINGS) | `ChromeWebTransportTest.chromeWithDraft07EnabledFallsBackToDraft02` | ✅ |
 | Firefox 158 (neqo) | draft-02 | manual, `tools/interop/wt-firefox-manual.sh` (2026-10-23) | ✅ every step of the page (the script prints PASS only when all are ok); the server saw the page's `WT_CLOSE_SESSION` with code 7 and "bye"; Firefox closes the QUIC connection with code 256 right after the session ends |
 | Safari 27.2 (macOS 26.7.2) | draft-14 | manual, `ManualWebTransportServer` with the `serverCertificateHashes` page (2026-11-25) | ✅ connect, 1 MiB bidirectional echo, uni from the server, datagrams (100 of 100 echoed), the page's close and the server's close, on a build without compatibility shim 3 (an earlier run of the same day failed only the datagram step, on a page bug: `wt.datagrams.writable` is `createWritable()` in the current W3C API, fixed since). Safari's SETTINGS: `H3_DATAGRAM=1`, draft-14's `SETTINGS_WT_MAX_SESSIONS=1`, `0xc671706a=1` (a codepoint we do not interpret), `SETTINGS_WT_INITIAL_MAX_DATA=8388608`, `SETTINGS_WT_INITIAL_MAX_STREAMS_UNI` and `_BIDI=100`, GREASE; not draft-02's 0x2b603742. CONNECT `:protocol webtransport`; draft-14 selected. Its transport parameters on the WebTransport connection, from the server's qlog (`transport:parameters_set`, owner remote): `reset_stream_at`, `max_datagram_frame_size` 65535, `initial_max_data` 16777216, `initial_max_streams_bidi` and `_uni` 100, `max_idle_timeout` 30000, `active_connection_id_limit` 64, an empty `initial_source_connection_id` (zero-length connection IDs). Safari closes a session with WT_CLOSE_SESSION (the page's code 7 and "bye", a 10-byte capsule in a 12-byte DATA frame), the CONNECT stream's FIN and STOP_SENDING (H3_NO_ERROR) in one packet (server qlog, 2026-11-25); the server then reported the close as code 0 until the STOP_SENDING stopped counting as an abandoned request. Its initial limits declare WebTransport flow control, so the draft-14 zero-credit case ([compat shim 1](compat-shims.md#1-webtransport-draft-02-and-draft-14)) does not arise with it |
+
+### Stream error codes on draft-02 (2026-11-26)
+
+Draft-02 §4.3 limits a stream's error code to 8 bits (0..255); the session's close code is 32-bit (§5). The library is
+strict on a draft-02 session: a received code that maps above 255 is reported as `StreamReset.code` / `StreamStopped.code`
+null, and `reset` / `stopSending` above 255 throw IllegalArgumentException ([compat-shims.md, "Considered and not
+listed"](compat-shims.md#considered-and-not-listed)). The page's error code stage (session `/wt/codes`, server side
+`WtCodesProbe` in the same test sources) checks the browser side of that premise. It aborts the writable side
+(RESET_STREAM) and cancels the readable side (STOP_SENDING) of a bidirectional and a unidirectional stream with
+`streamErrorCode` 0, 42, 255, 256, 1000 and 2^32-1; has the server reset and stop the page's streams with 0, 1, 42, 127,
+128, 254, 255 (and 256, 1000, which the server refuses locally); and closes sessions with 32-bit codes both ways. The server
+reads every RESET_STREAM and STOP_SENDING code from its qlog and logs the raw HTTP/3 code with the WebTransport code it maps
+to, unbounded, next to what the session API reported (`build/browser-wt-codes/` for Chrome, `server-events.txt` and
+`codes-table.txt` of the Firefox script).
+
+Chrome 158.0.8127.38 (macOS, headless, all three `ChromeWebTransportTest` runs, 2026-11-26):
+
+| direction | value | Chrome locally | on the wire (server qlog) | server API / page sees |
+|---|---|---|---|---|
+| page `writer.abort` (bidi and uni) | 0, 42, 255 | `new WebTransportError({streamErrorCode})` keeps it; `abort` resolves | RESET_STREAM `0x52e4a40fa8db` / `…a906` / `…a9e2` → WT 0 / 42 / 255 | `StreamReset.code` 0 / 42 / 255 |
+| page `writer.abort` (bidi and uni) | 256, 1000, 2^32-1 | the constructor clamps to 255 (no exception); `abort` resolves | RESET_STREAM `0x52e4a40fa9e2` → WT 255 | `StreamReset.code` 255 |
+| page `reader.cancel` (bidi and uni) | 0, 42, 255 | keeps it; `cancel` resolves | STOP_SENDING → WT 0 / 42 / 255 (our RESET_STREAM answers with the same code) | `StreamStopped.code` 0 / 42 / 255 |
+| page `reader.cancel` (bidi and uni) | 256, 1000, 2^32-1 | clamps to 255; `cancel` resolves | STOP_SENDING `0x52e4a40fa9e2` → WT 255 | `StreamStopped.code` 255 |
+| server `reset` (bidi and uni) | 0, 1, 42, 127, 128, 254, 255 | — | RESET_STREAM with the code's mapping | the read fails with `WebTransportError` `streamErrorCode` = the same value, `source` "stream", "Received RESET_STREAM." |
+| server `stopSending` (bidi and uni) | 0, 1, 42, 127, 128, 254, 255 | — | STOP_SENDING; Chrome answers with RESET_STREAM of the same code | the write fails with `WebTransportError` `streamErrorCode` = the same value, "Received STOP_SENDING." |
+| server `reset` / `stopSending` | 256, 1000 | refused by the server (IllegalArgumentException, strict policy); FIN instead | nothing | a plain end of the stream |
+| page `close` | 2^32-1, "page-bye-32" | — | WT_CLOSE_SESSION | the server sees code 4294967295 and the reason |
+| page `close` | 2^32 | no exception: wrapped to 0 (WebIDL `unsigned long` without `[EnforceRange]`) | WT_CLOSE_SESSION code 0 | the server sees code 0 and the reason |
+| server `close` | 2^32-2, "server-bye-32" | — | WT_CLOSE_SESSION | `closed` resolves with 4294967294 and the reason |
+
+Chrome's `WebTransportError` constructor takes one dictionary (`new WebTransportError({streamErrorCode, message})`); the
+W3C form with a message first throws TypeError ("not of type 'WebTransportErrorInit'"). No code above 255 reached the
+server from Chrome, so the strict draft-02 policy (no receive shim) stands for Chrome; the test asserts each row above and
+fails, after printing the table, if a code above 255 ever arrives.
+
+Firefox 161.0 (macOS, `tools/interop/wt-firefox-manual.sh`, two runs on 2026-11-26: the first on dff4577fd, whose
+directory was removed on PASS; the second on 7ef40c386 with `WT_KEEP=1`, server and Firefox qlogs and MOZ_LOG kept):
+
+| direction | value | Firefox locally | on the wire (server qlog) | server API / page sees |
+|---|---|---|---|---|
+| page `writer.abort` (bidi and uni) | 0, 42, 255 | `new WebTransportError("", {streamErrorCode})` keeps it; `abort` resolves | RESET_STREAM_AT (Firefox and our server both advertise `reset_stream_at`) → WT 0 / 42 / 255 | `StreamReset.code` 0 / 42 / 255 |
+| page `writer.abort` (bidi and uni) | 256, 1000, 2^32-1 | the error object keeps the value (no clamp, no exception) | only the low 8 bits: WT 0 / 232 / 255 | `StreamReset.code` 0 / 232 / 255 |
+| page `reader.cancel` (bidi and uni) | all six | `cancel` resolves | nothing: Firefox sends no STOP_SENDING on `reader.cancel` and keeps the stream; it once raised the stream's credit to 12.79 MB and then gave none. The stream is stopped only when the session ends, with H3_REQUEST_CANCELLED (0x10c), together with every other stream still open (second run: 444 s after the cancel, in one packet with the session's close) | the server's writes do not fail; `StreamStopped` (code null) only at the session's end |
+| server `reset` (bidi and uni) | 0, 1, 42, 127, 128, 254, 255 | — | RESET_STREAM_AT with the code's mapping | the read fails with `WebTransportError` `streamErrorCode` = the same value, "WebTransportStream Reset" |
+| server `stopSending` (bidi and uni) | 0, 1, 42, 127, 128, 254, 255 | — | STOP_SENDING; Firefox answers with RESET_STREAM of the same code | the write fails with the same `streamErrorCode`, "WebTransportStream StopSending" |
+| server `reset` / `stopSending` | 256, 1000 | refused by the server (strict policy); FIN instead | nothing | a plain end of the stream |
+| page `close` | 2^32-1, "page-bye-32"; 2^32, "page-2^32" | `closed` resolves with 4294967295, and with 0 for 2^32 (wrapped, as in Chrome) | WT_CLOSE_SESSION with the CONNECT stream's FIN and CONNECTION_CLOSE (H3_NO_ERROR, 0x100) in one packet: Firefox closes the session's dedicated connection at once | second run: the server's `closed` has code 4294967295 and "page-bye-32", and 0 and "page-2^32" (the capsule is read after the CONNECTION_CLOSE was processed: the HTTP/3 layer reads on to what came before it). In the first run the probe still logged a session's end from its route handler, which the connection's end cancels first, so nothing was recorded |
+| server `close` | 2^32-2, "server-bye-32" | — | WT_CLOSE_SESSION | `closed` resolves with 4294967294 and the reason |
+
+No code above 255 reached the server from Firefox either: Firefox truncates instead of clamping, so an application's code
+above 255 arrives as another, wrong code in 0..255 (256 as 0), which no receive shim could undo. The strict policy stands
+for Firefox as well. The script now keeps its directory (qlogs, Firefox's qlog and MOZ_LOG) when the table has an
+`ANOMALY` line, PASS or not.
+
+In the second run every case after `cancel-bidi 0` failed: the page got no line from the server and no stream it opened.
+The server's qlog shows why. The probe's writer for `cancel-bidi 0` wrote without pause (since 7ef40c386) into a stream
+Firefox no longer read and never stopped; once that stream was at Firefox's credit (12.79 MB, STREAM_DATA_BLOCKED from
+0.64 s), its writer kept filling the connection's send buffer (`maxSendBuffer`, 4 MiB, shared by every stream), and the
+transport accepted no byte of any other stream until the session ended: no STREAM frame of another stream left between
+0.65 s and 444.66 s, only control frames (RESET_STREAM_AT, STOP_SENDING, a bare FIN). That was a transport defect: a peer
+that stops reading one stream without STOP_SENDING stalled every stream of the connection. Since then a write takes
+no byte beyond the peer's credit for the stream or the connection, as quinn, quic-go, ngtcp2 and picoquic do (RFC 9000
+section 4.1): the stalled writer waits at Firefox's 12.79 MB, and the buffer holds only what Firefox may take
+(`api.StalledStreamTest`, `stream.StreamManagerGapsTest.negative_aStreamWithoutCreditTakesNoRoomFromTheOthers`). The
+WebTransport send turn no longer waits for a stalled stream either (`webtransport.WebTransportServerSessionsTest.negative_twoStalledSessionsDoNotWedgeAThird`).
+The probe's writer is now paced (1 KiB per 20 ms for at most 3 s per case, about 150 KiB), so a browser that never stops
+a stream gets no megabytes of a case it cancelled.
 
 webtransport-go's client requires `reset_stream_at`, which the Ktor server now advertises with `http3 { webTransport { enabled } }`; neither
 direction against webtransport-go is run here (it belongs to the gate's interop image). webtransport-go (2a2b547,

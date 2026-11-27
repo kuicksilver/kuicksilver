@@ -7,6 +7,7 @@ import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.ConnectionCore
+import io.kuicksilver.quic.CoreFixtures
 import io.kuicksilver.quic.Ecn
 import io.kuicksilver.quic.EcnState
 import io.kuicksilver.quic.IoCapabilities
@@ -35,11 +36,12 @@ class EcnTest {
         configure: EndpointPair.() -> Unit = {
         },
     ): Pair<EndpointPair, ConnectionCore> {
-        val p = EndpointPair()
+        // the transfers are larger than the default windows, and nobody reads them
+        val p = EndpointPair(serverQuic = CoreFixtures.wideWindows)
         p.serverEcnReceive = serverCaps.ecnReceive
         p.clientEcnReceive = clientCaps.ecnReceive
         p.configure()
-        val c = p.connect()
+        val c = p.connect(CoreFixtures.wideWindows)
         c.setPathCapabilities(PathId.Initial, clientCaps)
         p.onServerCreated = { it.setPathCapabilities(PathId.Initial, serverCaps) }
         assertTrue(p.confirmed(c))

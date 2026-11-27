@@ -677,12 +677,11 @@ internal class ConnectionRuntime(
     private suspend fun drainDatagrams() {
         try {
             for (u in sendQueue.signal) {
-                while (true) {
-                    val added = sendQueue.applyCommands()
-                    if (added || !sendQueue.isEmpty) loop.flush(core) // let the core send what the window allows
-                    if (!sendQueue.hasPendingCommands) break
-                    // the network did not take them: the policy decides who goes
-                    if (sendQueue.isFull) sendQueue.evictForPending() else kotlinx.coroutines.yield()
+                // a pass takes what was admitted when it started; senders that keep flooding get the next pass after the
+                // loop's other work (ACKs, timers, other connections), not at its cost
+                if (sendQueue.drain { loop.flush(core) }) {
+                    sendQueue.signal.trySend(Unit)
+                    kotlinx.coroutines.yield()
                 }
             }
         } catch (e: CancellationException) {
@@ -714,16 +713,41 @@ internal class ConnectionRuntime(
         priority: StreamPriority,
     ): DatagramSendResult = trySendDatagram(data, policy, urgencyOf(priority))
 
+    /** See [io.kuicksilver.quic.trySendDatagram] with a group. */
+    internal fun trySendGrouped(
+        data: ByteArray,
+        policy: DatagramPolicy,
+        priority: StreamPriority,
+        group: Long,
+    ): DatagramSendResult = trySendDatagram(data, policy, urgencyOf(priority), group)
+
+    /** See [io.kuicksilver.quic.startDatagramGroup]. */
+    internal fun startDatagramGroup(group: Long) = sendQueue.startGroup(group)
+
+    /** See [io.kuicksilver.quic.endDatagramGroup]. */
+    internal fun endDatagramGroup(group: Long) {
+        loop.scope.launch { sendQueue.endGroup(group) }
+    }
+
+    /** See [io.kuicksilver.quic.sendDatagram] with a group. */
+    internal suspend fun sendGrouped(
+        data: ByteArray,
+        policy: DatagramPolicy,
+        priority: StreamPriority,
+        group: Long,
+    ): Unit = sendDatagram(data, policy, urgencyOf(priority), group)
+
     private fun trySendDatagram(
         data: ByteArray,
         policy: DatagramPolicy,
         urgency: Int,
+        group: Long = DatagramSendQueue.NO_GROUP,
     ): DatagramSendResult {
         datagramPrecheck(data.size)?.let { return it }
         // not QueueFull: a caller retrying on that would spin; a try-method answers instead of throwing
         if (finished) return DatagramSendResult.Closed
         if (policy === DatagramPolicy.Reject && !sendQueue.hasRoom(data.size)) return DatagramSendResult.QueueFull
-        sendQueue.offer(data.copyOf(), policy, urgency)
+        sendQueue.offer(data.copyOf(), policy, urgency, group)
         startDatagramDrainer()
         return DatagramSendResult.Sent
     }
@@ -748,6 +772,7 @@ internal class ConnectionRuntime(
         data: ByteArray,
         policy: DatagramPolicy,
         urgency: Int,
+        group: Long = DatagramSendQueue.NO_GROUP,
     ) {
         when (val r = datagramPrecheck(data.size)) {
             is DatagramSendResult.TooLarge -> {
@@ -774,7 +799,7 @@ internal class ConnectionRuntime(
             } // every poll ticks: datagrams leave, room returns
         }
         if (finished) throw closedDeferred.await()
-        sendQueue.offer(data.copyOf(), policy, urgency)
+        sendQueue.offer(data.copyOf(), policy, urgency, group)
         startDatagramDrainer()
     }
 
@@ -892,7 +917,8 @@ internal class ConnectionRuntime(
 
                 is ConnectionEvent.StreamWritable -> {
                     wrapper(e.id)?.let {
-                        it.ticker.trySend(Unit) // the broadcast tick after each flush stays as the fallback
+                        it.ticker.trySend(Unit) // the core wakes only the writers it refused, for what held each back
+                        it.creditTick()
                         if (it.watchingSend) it.noteSendReleased(core.streamSendReleased(e.id))
                     }
                 }
