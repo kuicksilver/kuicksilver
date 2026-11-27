@@ -8,8 +8,14 @@ import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.InternalAPI
 import io.ktor.utils.io.readAvailable
+import io.ktor.utils.io.writeFully
 import io.kuicksilver.http2.Http2ErrorCode
 import io.kuicksilver.http2.Http2Settings
+import io.kuicksilver.http2.frame.Frame
+import io.kuicksilver.http2.frame.FrameDecoder
+import io.kuicksilver.http2.frame.FrameEncoder
+import io.kuicksilver.http2.frame.H2
+import io.kuicksilver.http2.hpack.HpackEncoder
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -26,6 +32,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Duration
@@ -221,5 +228,118 @@ class H2BodyCancelTest {
             assertTrue(body.isClosedForRead)
             done.await()
             s.release()
+        }
+
+    /** A server that writes frames by hand; [read] decodes what the client wrote after its preface. */
+    private class RawServer(
+        val w: Wire,
+    ) {
+        private val hpack = HpackEncoder()
+        private val dec = FrameDecoder(H2.MAX_MAX_FRAME_SIZE)
+        private var prefaceLeft = H2.PREFACE.size
+        private val buf = ByteArray(65_536)
+
+        suspend fun write(vararg frames: ByteArray) {
+            for (f in frames) w.toClient.writeFully(f)
+            w.toClient.flush()
+        }
+
+        /** Frames the client wrote so far (without waiting for more). */
+        suspend fun read(): List<Frame> {
+            val out = mutableListOf<Frame>()
+            while (!w.toServer.readBuffer.exhausted()) {
+                val n = w.toServer.readAvailable(buf, 0, buf.size)
+                var p = 0
+                if (prefaceLeft > 0) {
+                    val k = minOf(prefaceLeft, n)
+                    prefaceLeft -= k
+                    p = k
+                }
+                while (p < n) {
+                    p += dec.feed(buf, p, n - p)
+                    while (true) out += dec.next() ?: break
+                }
+            }
+            return out
+        }
+
+        /** A 200 without its end, and [part] of its content. */
+        fun answer(
+            id: Int,
+            part: ByteArray,
+        ): Array<ByteArray> =
+            arrayOf(
+                FrameEncoder.headers(id, hpack.encode(listOf(":status" to "200")), false, true, -1),
+                FrameEncoder.data(id, part, 0, part.size, false),
+            )
+    }
+
+    /** A client of a [RawServer] that sent its SETTINGS, with one GET open and its response head read. */
+    private suspend fun TestScope.rawExchange(): Triple<RawServer, H2ClientConnection, H2ClientStream> {
+        val w = Wire()
+        val srv = RawServer(w)
+        val client =
+            H2ClientConnection.start(w.toClient, w.toServer, Http2Settings(), backgroundScope, Duration.INFINITE, {
+                w.close()
+            }, clock = clock())
+        srv.write(FrameEncoder.settings(IntArray(0), LongArray(0)))
+        client.rt.prefaceReceived.await()
+        assertTrue(client.tryReserve())
+        val s = client.open("GET", "https", "example.com", "/", emptyList(), endStream = true)
+        runCurrent()
+        srv.read()
+        srv.write(*srv.answer(s.id, ByteArray(3) { 1 }))
+        s.response()
+        runCurrent()
+        return Triple(srv, client, s)
+    }
+
+    private fun List<Frame>.resets(id: Int): List<Long> =
+        filterIsInstance<Frame.RstStream>().filter { it.streamId == id }.map { it.errorCode }
+
+    /**
+     * The server's RST_STREAM arrives first, then the application cancels the body before it read anything. Either cause
+     * may stand (the reader never saw the reset, so the cancel's may win), every read fails with it, and the client sends
+     * no RST_STREAM of its own: none in answer to the peer's (RFC 9113 section 5.4.2), none at the release.
+     */
+    @Test fun aCancelAfterThePeersResetSendsNoRstStream() =
+        runTest {
+            val (srv, _, s) = rawExchange()
+            srv.write(FrameEncoder.rstStream(s.id, Http2ErrorCode.INTERNAL_ERROR.code))
+            runCurrent()
+            assertFalse(s.awaitServerEnd(), "the client took the reset")
+            val body = s.body
+            val cause = IOException("the application left")
+            body.cancel(cause)
+            val seen = assertFailsWith<Throwable> { body.awaitContent(1) }
+            assertSame(body.closedCause, seen)
+            if (seen !== cause) assertEquals(Http2ErrorCode.INTERNAL_ERROR, assertIs<Http2Exception.StreamReset>(seen).code)
+            runCurrent()
+            assertEquals(emptyList(), srv.read().resets(s.id), "no RST_STREAM after the peer's")
+            s.release()
+            runCurrent()
+            assertEquals(emptyList(), srv.read().resets(s.id), "none at the release either")
+        }
+
+    /**
+     * The reverse order: the cancel resets the stream with CANCEL, then the server's own RST_STREAM (sent before ours
+     * arrived) comes in. The cancel's cause stays, and nothing more goes out: one RST_STREAM in all.
+     */
+    @Test fun thePeersResetAfterACancelChangesNothing() =
+        runTest {
+            val (srv, _, s) = rawExchange()
+            val body = s.body
+            val cause = IOException("the application left")
+            body.cancel(cause)
+            runCurrent()
+            assertEquals(listOf(Http2ErrorCode.CANCEL.code), srv.read().resets(s.id), "RFC 9113 section 8.1")
+            srv.write(FrameEncoder.rstStream(s.id, Http2ErrorCode.INTERNAL_ERROR.code))
+            runCurrent()
+            assertSame(cause, body.closedCause)
+            assertSame(cause, assertFailsWith<IOException> { body.awaitContent(1) })
+            assertEquals(emptyList(), srv.read().resets(s.id), "no answer to the peer's RST_STREAM")
+            s.release()
+            runCurrent()
+            assertEquals(emptyList(), srv.read().resets(s.id), "none at the release")
         }
 }

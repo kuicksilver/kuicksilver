@@ -21,6 +21,7 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.test.fail
@@ -100,7 +101,10 @@ class H2BodyCancelRaceTest {
                             }
                         }
                     }
-                threads.forEach { it.join() }
+                for (t in threads) {
+                    t.join(10_000) // bounded: a cancel stuck for good fails the round instead of hanging the run
+                    assertFalse(t.isAlive, "round $round: a cancel did not return within 10 s")
+                }
                 thrown.get()?.let { throw AssertionError("round $round: cancel threw", it) }
                 val readFailure = withTimeout(10.seconds) { reader.await() }
                 if (readFailure !in causes) fail("round $round: the reader ended with $readFailure, not a cancel's cause")
