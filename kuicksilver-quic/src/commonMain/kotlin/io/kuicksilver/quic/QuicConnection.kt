@@ -236,3 +236,17 @@ public interface QuicConnection : AutoCloseable {
 @io.kuicksilver.annotations.InternalKuicksilverApi
 public val QuicConnection.sniSelectedFor: String?
     get() = (this as? io.kuicksilver.quic.runtime.ConnectionRuntime)?.sniSelectedName
+
+/**
+ * Suspends until everything this side sent on [this] connection was acknowledged and nothing waits to be sent again (a
+ * lost frame's content goes out once more, RFC 9002 section 6), or until the connection is closing or gone. For a close
+ * that should not take the last frames with it: CONNECTION_CLOSE is sent once and the socket may close right after it (RFC
+ * 9000 section 10.2), so a RESET_STREAM or STOP_SENDING still in flight then is never repeated and the peer learns of
+ * neither until its idle timeout. Not bounded: the caller bounds the wait (a peer that does not acknowledge holds it
+ * forever). Stream data waiting for the peer's credit does not hold it. Returns at once for a connection that is not an
+ * endpoint's.
+ */
+@io.kuicksilver.annotations.InternalKuicksilverApi
+public suspend fun QuicConnection.awaitSendsSettled() {
+    (this as? io.kuicksilver.quic.runtime.ConnectionRuntime)?.awaitSendsSettled()
+}

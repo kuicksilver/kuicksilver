@@ -14,6 +14,7 @@ import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.TransportError
+import io.kuicksilver.quic.recovery.SpaceId
 import io.kuicksilver.quic.wire.QuicWireException
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.CertificateCompression
@@ -40,6 +41,26 @@ internal fun utf8Prefix(
     // step back over at most three continuation bytes (10xxxxxx) to the lead byte of the character [max] splits
     while (n > 0 && max - n < 3 && b[n].toInt() and 0xc0 == 0x80) n--
     return if (b[n].toInt() and 0xc0 == 0x80) max else n
+}
+
+/**
+ * Everything this side sent was acknowledged and nothing waits to be sent again: no ack-eliciting packet is in flight in a
+ * space whose keys are still held, no probe is due, and no CRYPTO data, stream control frame (RESET_STREAM, STOP_SENDING,
+ * the flow-control updates) or connection ID frame waits for a packet. A frame of a lost packet is queued again (RFC 9002
+ * section 6), so it is in one of these until the peer acknowledged the packet that carried it. Stream data waiting for the
+ * peer's credit is not counted: only the peer can release it. True once the connection is closing, draining or closed: it
+ * sends nothing more but its CONNECTION_CLOSE.
+ */
+internal fun ConnectionCore.sendsSettled(): Boolean {
+    if (state == ConnectionState.Closing || state == ConnectionState.Draining || state == ConnectionState.Closed) return true
+    for (space in SpaceId.entries) {
+        if (spaceDiscarded[space.ordinal]) continue
+        if (loss.space(space).ackElicitingInFlight > 0 || probePending[space.ordinal] > 0) return false
+    }
+    if (!spaceDiscarded[SpaceId.Initial.ordinal] && cryptoStreams.send[0].hasPending) return false
+    if (!spaceDiscarded[SpaceId.Handshake.ordinal] && cryptoStreams.send[2].hasPending) return false
+    if (cryptoStreams.send[3].hasPending) return false
+    return !streams.hasControlFrames() && !cids.hasPendingFrames()
 }
 
 /** The closing or draining period starts now: it ends 3 x the current PTO from now (RFC 9000 section 10.2). */

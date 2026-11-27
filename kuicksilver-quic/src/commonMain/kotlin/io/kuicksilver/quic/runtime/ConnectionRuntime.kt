@@ -40,6 +40,7 @@ import io.kuicksilver.quic.core.localCidBySeq
 import io.kuicksilver.quic.core.localCidSeqOn
 import io.kuicksilver.quic.core.remoteCidOn
 import io.kuicksilver.quic.core.remoteCidSeqOn
+import io.kuicksilver.quic.core.sendsSettled
 import io.kuicksilver.quic.core.silentClose
 import io.kuicksilver.quic.core.takeReceivedTokens
 import io.kuicksilver.quic.emit
@@ -1329,6 +1330,26 @@ internal class ConnectionRuntime(
             loop.flush(core)
             true
         }
+
+    /** `QuicConnection.awaitSendsSettled`: checked on the loop after every poll, which every acknowledgment and loss is followed by. */
+    internal suspend fun awaitSendsSettled() {
+        withContext(loop.dispatcher) {
+            val ticker = newTicker()
+            try {
+                while (!finished && !core.sendsSettled()) {
+                    try {
+                        ticker.receive()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Throwable) {
+                        return@withContext // the connection ended: its tickers close with its reason
+                    }
+                }
+            } finally {
+                removeTicker(ticker)
+            }
+        }
+    }
 
     override suspend fun exportKeyingMaterial(
         label: String,

@@ -53,6 +53,7 @@ import io.kuicksilver.ktor.client.WebSocketLifetime
 import io.kuicksilver.ktor.client.WebSocketLifetimeKey
 import io.kuicksilver.ktor.client.connectTimeoutMillis
 import io.kuicksilver.ktor.client.echRejectionIn
+import io.kuicksilver.ktor.client.h1.ORDERLY_CLOSE_TIMEOUT
 import io.kuicksilver.ktor.client.h1.WebSocketConnecting
 import io.kuicksilver.ktor.client.h1.toMillisOrMax
 import io.kuicksilver.ktor.client.isIdempotent
@@ -80,6 +81,7 @@ import io.kuicksilver.quic.MigrationRefusedException
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TransportError
 import io.kuicksilver.quic.activePath
+import io.kuicksilver.quic.awaitSendsSettled
 import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.quic.loopbackLocalFor
 import io.kuicksilver.quic.unmappedLiteral
@@ -93,6 +95,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.update
@@ -479,6 +482,9 @@ internal class H3Pool(
 
     /** A watched exchange's whole response arrived (tests). */
     internal var receivedForTest: (() -> Unit)? = null
+
+    /** Test hook: an exchange's socket timeout expired, before its request is cancelled (and its stream reset). */
+    internal var socketTimeoutForTest: (() -> Unit)? = null
 
     /** Stall monitors whose watching loop runs now: a request watches their connection (tests). */
     internal val stallWatchLoopsForTest = kotlinx.coroutines.flow.MutableStateFlow(0)
@@ -1037,6 +1043,39 @@ internal class H3Pool(
      * by [close], so none outlives the pool.
      */
     private val ownScope = CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
+
+    /**
+     * Before [close], once the engine's calls are over: each open connection gets up to [ORDERLY_CLOSE_TIMEOUT] (as an
+     * HTTP/1.1 connection's close_notify) for the peer to acknowledge what it sent, so the CONNECTION_CLOSE that closing the
+     * endpoints sends does not go out over undelivered frames. That close is sent once and the socket closes after it (RFC
+     * 9000 section 10.2 allows it), so a frame still in flight then was never repeated: a call that failed just before (a
+     * socket timeout during the upload, a cancellation) reset its stream with H3_REQUEST_CANCELLED (RFC 9114 section 4.1.1),
+     * and when that packet and the close were both lost (a server whose receive buffer the upload had filled: about 208 KiB
+     * on Linux and Android by default), the server learned of neither, and kept the request and the connection until its
+     * idle timeout (30 s; found on the API 24 emulator by the vendored contract test
+     * `testSocketTimeoutWriteFailOnWritePerRequestAttributes`). Waiting, loss recovery (RFC 9002 section 6) repeats them until
+     * they are acknowledged; an acknowledgment also tells that the server read what came before, so the close then finds
+     * room. Connections still being set up are not waited for.
+     */
+    suspend fun awaitSendsSettled() {
+        val open =
+            lock.withLock {
+                (connections.values + retired).mapNotNull { it.deferred.getCompletedOrNull() }.filter { !it.ended() }.distinct()
+            }
+        if (open.isEmpty()) return
+        val bound = orderlyCloseTimeoutForTest
+        coroutineScope {
+            for (c in open) {
+                launch {
+                    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+                    withTimeoutOrNull(bound) { c.quic.awaitSendsSettled() }
+                }
+            }
+        }
+    }
+
+    /** The bound of [awaitSendsSettled], [ORDERLY_CLOSE_TIMEOUT] (a test hook). */
+    internal var orderlyCloseTimeoutForTest: kotlin.time.Duration = ORDERLY_CLOSE_TIMEOUT
 
     fun close() {
         ownScope.cancel()
@@ -2401,7 +2440,7 @@ internal class H3Pool(
         // over TCP; any other request waits on, for the path to come back or the stall to be abandoned
         val repeatable = data.method.isIdempotent() && data.body.isReplayable()
         val response: Http3Response =
-            withSocketInactivityTimeout(data, activity) {
+            withSocketInactivityTimeout(data, activity, onExpiry = { socketTimeoutForTest?.invoke() }) {
                 val w = watch
                 if (w != null && repeatable) {
                     w.abortable(discard = { it.cancel() }) { send(conn, data, callContext, extraHeaders, body, activity) }

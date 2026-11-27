@@ -1799,6 +1799,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3 client, `client.close()` right after a call failed during its upload (a socket timeout, a cancellation): the
+  server could keep the request and its connection open until its idle timeout (30 s). The failed call resets its
+  stream with H3_REQUEST_CANCELLED (RFC 9114 section 4.1.1), and the engine's close then sent CONNECTION_CLOSE once and
+  closed the socket (RFC 9000 section 10.2 allows that), so loss recovery never repeated a reset still in flight. A
+  server whose receive buffer the upload had filled (about 208 KiB by default on Linux and Android) lost both and
+  learned of neither. The engine's close now gives each HTTP/3 connection up to 1 s, as an HTTP/1.1 connection's
+  close_notify, for the server to acknowledge what it sent: the reset is repeated until it arrives, and the
+  CONNECTION_CLOSE follows. Found on the API 24 emulator by the vendored contract test
+  `HttpTimeoutTest.testSocketTimeoutWriteFailOnWritePerRequestAttributes` (`H3OrderlyCloseTest`).
 - HTTP/2 body, cancelled while it was read: the cancel emptied the body's buffer from its own thread while the reader
   (Ktor's copier into the application's channel, in `HttpStatement.execute {}`) read it on another, so `Buffer.clear`
   threw an EOFException out of `cancel` (or the read lost its bytes), the stream was never reset with CANCEL (RFC 9113

@@ -320,6 +320,8 @@ internal class KuicksilverEngine(
                     withContext(NonCancellable) { altSvcUpdate {} } // a snapshot no request took (an expiry dropped on lookup)
                     h1.closeAll()
                     migrationJob.cancel() // the migrators end before their connections
+                    // what the HTTP/3 connections sent last (a failed call's reset) reaches the server before their close
+                    withContext(NonCancellable) { h3.awaitSendsSettled() }
                     h3.close()
                     withContext(NonCancellable) { h3.closeSessions() }
                     selector.close()

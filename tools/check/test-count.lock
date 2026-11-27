@@ -2762,6 +2762,7 @@ kuicksilver-ktor-client/src/iosTest	io.kuicksilver.ktor.client.HostInteropTest.k
 kuicksilver-ktor-client/src/iosTest	io.kuicksilver.ktor.client.HostInteropTest.rawQuicEchoToTheHost
 kuicksilver-ktor-client/src/jvmCommonTest	io.kuicksilver.ktor.client.DnsJvmTest.aBlockingDnsRunsOnItsDispatcher
 kuicksilver-ktor-client/src/jvmCommonTest	io.kuicksilver.ktor.client.DnsJvmTest.inetAddressesConvert
+kuicksilver-ktor-client/src/jvmCommonTest	io.kuicksilver.ktor.client.H3OrderlyCloseTest.aResetLostWithTheCloseStillReachesTheServerBeforeTheEngineCloses
 kuicksilver-ktor-client/src/jvmCommonTest	io.kuicksilver.ktor.client.ProxyConfigJvmTest.negative_schemelessHttpProxyOn443IsRefused
 kuicksilver-ktor-client/src/jvmCommonTest	io.kuicksilver.ktor.client.ProxyConfigJvmTest.noProxyIsDirect
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.guide.both.GuideBothEnginesTest.bothEnginesSample
