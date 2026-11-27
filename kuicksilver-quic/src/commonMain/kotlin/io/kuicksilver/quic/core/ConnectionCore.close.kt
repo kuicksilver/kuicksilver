@@ -75,18 +75,18 @@ internal fun ConnectionCore.sendsUnsettled(): String? {
 internal fun ConnectionCore.sendsSettled(): Boolean = sendsUnsettled() == null
 
 /**
- * Before a close: every space's unacknowledged frames are queued again and the next datagram goes as a probe, now
- * instead of at the next probe timeout. The PTO backoff stays as it is (RFC 9002 section 6.2.1: it grows only when the
- * timer expires, and this is no expiry), so a loss just before the close does not leave the last frames to a timer that
- * the backoff has put seconds away. RFC 9002 section 6.2.4 lets a probe carry any data, unacknowledged data included;
- * only the one probe datagram is exempt from the congestion window (section 7.5), the rest of what is queued again goes
- * within it. The same as when the active address comes back (`resendInFlightAtOnce`). No-op once closing.
+ * Before a close: every space's unacknowledged frames are queued again, to go now within the congestion window instead
+ * of at the next probe timeout, which a backoff may have put seconds away. No probe is owed: RFC 9002 section 7 lets a
+ * packet exceed the window only "on a PTO timer expiration (see Section 6.2) or when entering recovery", and this is
+ * neither (section 7.5 exempts the probes of an expiry, not this resend). With the window full nothing more goes, and the
+ * regular PTO probe is the fallback. The PTO backoff stays as it is (section 6.2.1: it grows only when the timer
+ * expires). Retransmitting unacknowledged data early is the content a probe may carry (section 6.2.4) and what
+ * `resendInFlightAtOnce` does when a handshake's active address comes back. No-op once closing.
  */
 internal fun ConnectionCore.probeUnsettledNow() {
     if (state == ConnectionState.Closing || state == ConnectionState.Draining || state == ConnectionState.Closed) return
     for (space in SpaceId.entries) {
         if (spaceDiscarded[space.ordinal] || loss.space(space).ackElicitingInFlight <= 0) continue
-        if (probePending[space.ordinal] < 1) probePending[space.ordinal] = 1
         requeueForProbe(space, Int.MAX_VALUE)
     }
 }

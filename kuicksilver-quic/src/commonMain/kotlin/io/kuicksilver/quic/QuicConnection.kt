@@ -255,10 +255,10 @@ public suspend fun QuicConnection.awaitSendsSettled(): Boolean =
 public suspend fun QuicConnection.sendsUnsettled(): String? = (this as? io.kuicksilver.quic.runtime.ConnectionRuntime)?.sendsUnsettled()
 
 /**
- * Queues every unacknowledged frame of [this] connection again and sends at once, the first datagram as a probe (RFC 9002
- * section 6.2.4: a probe may carry any data; the probe timeout and its backoff are left as they are, as this is no
- * expiry of the timer). Before a close whose last frames may have been lost: the next probe timeout can be seconds away
- * after a backoff. No-op once the connection is closing or gone.
+ * Queues every unacknowledged frame of [this] connection again and sends what the congestion window has room for now
+ * (RFC 9002 section 7: nothing above the window without a probe timer expiry; the probe timeout and its backoff are left
+ * as they are, and with the window full the next probe timeout sends). Before a close whose last frames may have been
+ * lost: the next probe timeout can be seconds away after a backoff. No-op once the connection is closing or gone.
  */
 @io.kuicksilver.annotations.InternalKuicksilverApi
 public suspend fun QuicConnection.probeUnsettled() {

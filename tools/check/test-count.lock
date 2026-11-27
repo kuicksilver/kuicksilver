@@ -4516,6 +4516,8 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.CongestionWindowTest.aP
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.CongestionWindowTest.aResendAtOnceDoesNotBypassAFullWindow
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.CongestionWindowTest.aWindowSmallerThanTheMtuStillCarriesData
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.CongestionWindowTest.noDatagramTakesBytesInFlightAboveTheWindow
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.CongestionWindowTest.probeUnsettledRespectsAFullWindow
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.CongestionWindowTest.probeUnsettledSendsTheLostFramesWithinOneRttWhileThePtoIsBackedOff
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.CongestionWindowTest.thePacerDoesNotHoldAProbeBack
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ConnectionCoreGapsTest.closingStateEndsInTheFuture
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ConnectionCoreGapsTest.negative_closeRefusesAnErrorCodeAbove2Pow62Minus1
