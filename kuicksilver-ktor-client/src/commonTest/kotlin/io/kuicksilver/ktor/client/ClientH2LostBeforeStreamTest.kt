@@ -26,9 +26,9 @@ import kotlin.test.assertTrue
 
 /**
  * A new HTTP/2 connection whose transport is lost before the request got its stream, by something other than the
- * server's refusal of this client in the handshake (here this side's end of the TCP socket, as a reset or a truncation
- * ends it): the TCP setup failed, so the request, never sent, goes again (RFC 9113 section 8.7, as after its stream), and
- * in a race HTTP/3 may still win. [io.kuicksilver.ktor.client.h1.H1Pool.afterH2StartForTest] ends the first connection
+ * server's refusal of this client's credentials (here a transport failure, as a reset or a truncation ends it: the
+ * connection is aborted with an IOException): the TCP setup failed, so the request, never sent, goes again (RFC 9113
+ * section 8.7, as after its stream), and in a race HTTP/3 may still win. [io.kuicksilver.ktor.client.h1.H1Pool.afterH2StartForTest] ends the first connection
  * before the pool hands it out; the refusal itself is ClientMissingCertificateTest's.
  */
 class ClientH2LostBeforeStreamTest {
@@ -69,9 +69,9 @@ class ClientH2LostBeforeStreamTest {
                     }
                 }).use { c ->
                     val started = AtomicInt(0)
-                    (c.engine as KuicksilverEngine).h1.afterH2StartForTest = { client, tcp ->
+                    (c.engine as KuicksilverEngine).h1.afterH2StartForTest = { client, _ ->
                         if (started.fetchAndAdd(1) == 0) {
-                            tcp.close()
+                            client.abort(kotlinx.io.IOException("connection reset (the test)"))
                             client.awaitClosed()
                         }
                     }
@@ -97,8 +97,8 @@ class ClientH2LostBeforeStreamTest {
                     val engine = c.engine as KuicksilverEngine
                     val tcpLost = CompletableDeferred<Unit>()
                     engine.h3.beforeSetupForTest = { tcpLost.await() }
-                    engine.h1.afterH2StartForTest = { client, tcp ->
-                        tcp.close()
+                    engine.h1.afterH2StartForTest = { client, _ ->
+                        client.abort(kotlinx.io.IOException("connection reset (the test)"))
                         client.awaitClosed()
                         tcpLost.complete(Unit)
                     }

@@ -97,9 +97,11 @@ class ClientMissingCertificateTest {
 
     /**
      * Preferred mode (docs/guide/engine-tls.md, mutual TLS): HTTP/3 fails with the alert, the call goes on over TCP and fails
-     * there as over TCP, with no suppressed exceptions (the TCP setup did not fail) and a `raceEnded` that names HTTP/2,
-     * whatever the order: the alert ends the new HTTP/2 connection after the request got its stream, or before
-     * ([io.kuicksilver.ktor.client.h1.H1Pool.afterH2StartForTest] waits for the connection's end, as a slow host does).
+     * there as over TCP, with no suppressed exceptions (the TCP setup did not fail) and one `raceEnded`, whatever the order:
+     * the alert ends the new HTTP/2 connection after the request got its stream, or before
+     * ([io.kuicksilver.ktor.client.h1.H1Pool.afterH2StartForTest] waits for the connection's end, as a slow host does). The
+     * race's winner is the host's timing: TCP, or HTTP/3 when its handshake completed on this side before the alert, the
+     * request then going over TCP (the server processed nothing of it, RFC 9001 section 5.7).
      */
     @Test fun negative_preferredFailsAsOverTcpWhicheverOrder() =
         h3Test {
@@ -142,8 +144,13 @@ class ClientMissingCertificateTest {
                         assertIs<TlsException.AlertReceived>(generateSequence<Throwable>(e) { it.cause }.last(), "$at: $e")
                         assertEquals(emptyList(), e.suppressedExceptions.filter { it !is FailureDiagnostics }, "$at: $e")
                         val (winner, h3Failure) = races.load().singleOrNull() ?: kotlin.test.fail("$at: one raceEnded, got ${races.load()}")
-                        assertEquals(io.ktor.http.HttpProtocolVersion.HTTP_2_0, winner, at)
-                        // HTTP/3 had failed with the alert (CRYPTO_ERROR 0x0100 + 116), or had not answered yet
+                        // TCP won, HTTP/3 having failed with the alert (CRYPTO_ERROR 0x0100 + 116) or not answered yet; or
+                        // HTTP/3 won, its handshake complete on this side before the alert, and the request then went over
+                        // TCP (the server processed nothing of it, RFC 9001 section 5.7): either way the call failed as over TCP
+                        assertTrue(
+                            winner == io.ktor.http.HttpProtocolVersion.HTTP_2_0 || winner == io.ktor.http.HttpProtocolVersion.HTTP_3_0,
+                            "$at: $winner",
+                        )
                         assertTrue(
                             h3Failure == null || (h3Failure is QuicException.ConnectionLost.TransportClosed && h3Failure.code == 0x0174L),
                             "$at: $h3Failure",
@@ -200,6 +207,12 @@ class ClientMissingCertificateTest {
                             val e =
                                 assertFails {
                                     testClient(discovery, engine = { observability { eventListener = said } }).use { c ->
+                                        // HTTP/3 never sets up (its setup waits for good): the TCP side decides the race, so
+                                        // what is compared is the TCP side's order alone
+                                        if (discovery != null) {
+                                            (c.engine as KuicksilverEngine).h3.beforeSetupForTest =
+                                                { kotlinx.coroutines.awaitCancellation() }
+                                        }
                                         if (lostBeforeStream) {
                                             (c.engine as KuicksilverEngine).h1.afterH2StartForTest = { client, _ -> client.awaitClosed() }
                                         }
