@@ -127,6 +127,9 @@ internal class WebSocketSessions {
 
     /** The sessions not ended yet (tests). */
     val size: Int get() = lock.withLock { live.size }
+
+    /** What is left of the one live session's close wait, as it counts it from its own Close; null unless one is live (tests). */
+    fun remainingCloseWaitForTest(): Long? = lock.withLock { live.singleOrNull() }?.remainingCloseWaitMillis()
 }
 
 /** The [WebSocketCallTrack] of a request, put by the engine before the call is routed. */
