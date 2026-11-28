@@ -12,8 +12,13 @@ import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
 import io.ktor.utils.io.readAvailable
 import io.kuicksilver.ktor.client.h3.H3Pool
+import io.kuicksilver.quic.QlogSink
+import io.kuicksilver.quic.QlogTrace
+import io.kuicksilver.tls.TlsRole
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.withTimeoutOrNull
 import java.net.InetSocketAddress
 import java.net.SocketAddress
@@ -38,7 +43,7 @@ import kotlin.time.TimeSource
 class H3OrderlyCloseTest {
     /**
      * Forwards UDP between one client and [upstream]; while [blackoutUntil] is ahead, every datagram of the client is
-     * dropped ([dropped] counts them, [firstDrop] completes at the first). The server's answers always pass.
+     * dropped ([dropped] counts them). The server's answers always pass.
      */
     private class Relay(
         upstream: InetSocketAddress,
@@ -53,8 +58,6 @@ class H3OrderlyCloseTest {
 
         @Volatile var dropped = 0
 
-        val firstDrop = CompletableDeferred<Unit>()
-
         val port: Int get() = (down.localAddress as InetSocketAddress).port
 
         private val toServer =
@@ -65,7 +68,6 @@ class H3OrderlyCloseTest {
                     client = runCatching { down.receive(b) }.getOrNull() ?: break
                     if (System.nanoTime() - blackoutUntil < 0) {
                         dropped++
-                        firstDrop.complete(Unit)
                         continue
                     }
                     b.flip()
@@ -93,23 +95,31 @@ class H3OrderlyCloseTest {
         }
     }
 
-    /**
-     * Found on the API 24 emulator by the vendored contract test `HttpTimeoutTest.testSocketTimeoutWriteFailOnWritePerRequestAttributes`:
-     * an upload's socket timeout resets its stream (H3_REQUEST_CANCELLED, RFC 9114 section 4.1.1) and the client is closed
-     * at once; the reset and the CONNECTION_CLOSE that followed were both lost to the server, whose request and connection
-     * stayed open until its idle timeout (30 s; the leak sentinel saw quic.connection, h3.session, 7 quic.stream and
-     * h3.serverRequest open after 10 s). The close went out once and the socket closed after it, so loss recovery never
-     * repeated the reset. Now the engine's close first waits (bounded) for its connections' frames to be acknowledged,
-     * sending what is still unacknowledged after a probe timeout again, under the probe timeout's backoff: the server ends
-     * the request, and the close follows.
-     *
-     * The path is dark from the timeout (before the stream is reset) until the relay dropped a datagram of the client and
-     * the engine's wait started, whichever comes last: the request's upload is stalled on flow control, so the first
-     * datagram the client sends after the timeout is the one with the reset, and it is lost whatever the load. What
-     * brings the reset across is then that wait's resend, not the connection's own backed-off probe timeout. The wait must
-     * end settled (the server acknowledged everything, not the connection's end) and the engine's cleanup within the
-     * wait's bound and the close's repeat.
-     */
+    /** The client's qlog: how many RESET_STREAM frames its packets carried, copies included; [onCount] gets each new count. */
+    private class ResetsSent(
+        private val onCount: (Int) -> Unit = {},
+    ) : QlogSink {
+        val resets = kotlinx.coroutines.flow.MutableStateFlow(0)
+
+        override fun open(
+            odcidHex: String,
+            role: TlsRole,
+        ): QlogTrace =
+            object : QlogTrace {
+                override fun write(record: String) {
+                    if ("packet_sent" in record) {
+                        val n = RESET.findAll(record).count()
+                        if (n > 0) onCount(resets.updateAndGet { it + n })
+                    }
+                }
+
+                override fun close() {}
+            }
+
+        private companion object {
+            val RESET = Regex("\"frame_type\":\"reset_stream\"")
+        }
+    }
 
     /**
      * RFC 9002 section 6.2.1 ("When a PTO timer expires, the PTO backoff MUST be increased"): against a server that hears
@@ -183,23 +193,43 @@ class H3OrderlyCloseTest {
             }
         }
 
+    /**
+     * Found on the API 24 emulator by the vendored contract test `HttpTimeoutTest.testSocketTimeoutWriteFailOnWritePerRequestAttributes`:
+     * an upload's socket timeout resets its stream (H3_REQUEST_CANCELLED, RFC 9114 section 4.1.1) and the client is closed
+     * at once; the reset and the CONNECTION_CLOSE that followed were both lost to the server, whose request and connection
+     * stayed open until its idle timeout (30 s; the leak sentinel saw quic.connection, h3.session, 7 quic.stream and
+     * h3.serverRequest open after 10 s). The close went out once and the socket closed after it, so loss recovery never
+     * repeated the reset. Now the engine's close first waits (bounded) for its connections' frames to be acknowledged,
+     * sending what is still unacknowledged after a probe timeout again, under the probe timeout's backoff: the server ends
+     * the request, and the close follows.
+     *
+     * The path is dark from the timeout (before the stream is reset) until the client's qlog shows the RESET_STREAM sent
+     * a second time: the first copy then went unacknowledged, and the server's acknowledgments always pass the relay, so
+     * that copy was lost whatever the load (a first dark window that ended at the start of the engine's wait caught no
+     * datagram with the reset under load, which went out only after it). The wait must end settled (the server
+     * acknowledged everything, not the connection's end) and the engine's cleanup within the wait's bound and the close's
+     * repeat; the copies that bring the reset across are the wait's resends ([H3Pool.probedForTest] counts them) or the
+     * connection's own loss recovery's.
+     */
     @Test fun aResetLostWithTheCloseStillReachesTheServerBeforeTheEngineCloses() =
         h3Test {
             val handlerEnded = CompletableDeferred<Unit>()
             val (server, port) = stallServer(handlerEnded)
             val relay = Relay(InetSocketAddress("127.0.0.1", port))
             try {
-                val client = testClient(Http3Discovery.H3Only) { install(HttpTimeout) }
+                // the path comes back once the reset went again: its first copy was lost
+                val sent = ResetsSent { n -> if (n >= 2) relay.blackoutUntil = 0L }
+                val client = testClient(Http3Discovery.H3Only, engine = { observability { qlog = sent } }) { install(HttpTimeout) }
                 val engine = client.engine as KuicksilverEngine
                 val pool = engine.h3
                 val outcomes = CompletableDeferred<Triple<H3Pool.SettleOutcome, String?, Duration>>()
-                // the timeout fires: from here, before the stream is reset, the server hears nothing of the client ...
+                val probes =
+                    java.util.concurrent.atomic
+                        .AtomicInteger()
+                pool.probedForTest = { _, _ -> probes.incrementAndGet() }
+                // the timeout fires: from here, before the stream is reset, the server hears nothing of the client, until the
+                // reset went again (above)
                 pool.socketTimeoutForTest = { relay.blackoutUntil = Long.MAX_VALUE }
-                // ... until the reset was dropped and the engine's close started waiting for its acknowledgments
-                pool.settleStartedForTest = {
-                    withTimeoutOrNull(5.seconds) { relay.firstDrop.await() }
-                    relay.blackoutUntil = 0L
-                }
                 pool.settledForTest = { _, outcome, unsettled, took -> outcomes.complete(Triple(outcome, unsettled, took)) }
                 try {
                     assertFailsWith<SocketTimeoutException> {
@@ -216,7 +246,13 @@ class H3OrderlyCloseTest {
                 assertNotNull(withTimeoutOrNull(bound + 1.seconds) { engine.cleanup.join() }, "the engine's cleanup ended")
                 val cleanupTook = closed.elapsedNow()
                 val (outcome, unsettled, took) = assertNotNull(withTimeoutOrNull(1.seconds) { outcomes.await() }, "the wait ran")
-                assertTrue(relay.dropped > 0, "the reset of the timed-out request was dropped")
+                assertTrue(relay.dropped > 0, "the relay dropped a datagram of the client after the timeout")
+                // the reset was lost: the client sent it again (the wait's resend or its loss recovery's)
+                // (the qlog is written on its own coroutine: its records may come after the cleanup)
+                assertNotNull(
+                    withTimeoutOrNull(2.seconds) { sent.resets.first { it >= 2 } },
+                    "the reset went again: ${sent.resets.value} RESET_STREAM sent, ${probes.get()} resend(s) of the wait",
+                )
                 assertEquals(H3Pool.SettleOutcome.Settled, outcome, "the wait ended settled after $took; still waiting for: $unsettled")
                 assertTrue(cleanupTook < bound + 300.milliseconds, "the engine's cleanup took $cleanupTook, bound $bound")
                 assertNotNull(
