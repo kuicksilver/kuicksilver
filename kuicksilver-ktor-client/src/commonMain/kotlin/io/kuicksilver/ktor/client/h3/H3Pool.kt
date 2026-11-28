@@ -3296,7 +3296,7 @@ internal class H3Pool(
                     if (serverEnded == false) {
                         stream.reset(io.kuicksilver.http3.Http3ErrorCode.REQUEST_CANCELLED)
                     } else {
-                        withTimeoutOrNull(lifetime.closeWait) { runCatching { stream.output.flushAndClose() } }
+                        withTimeoutOrNull(lifetime.ownEndBoundMillis()) { runCatching { stream.output.flushAndClose() } }
                         // our FIN still goes out once the engine was closed; the server's is not waited for then
                         if (serverEnded == null &&
                             lifetime.serverWithin(lifetime.closeWait.milliseconds, afterOwnEnd = true, discardsUnread = true) {

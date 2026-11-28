@@ -677,6 +677,7 @@ private suspend fun KuicksilverApplicationEngine.handleRequest(
                     fields,
                     configuration.webSockets.maxMessageSize,
                     upgradeInput,
+                    stopping,
                 )
             call.applyProxyHeader(proxy)
             events.emit("requestStarted") { requestStarted(HttpProtocolVersion.HTTP_1_1, call) }

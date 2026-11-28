@@ -20,8 +20,13 @@ import io.ktor.utils.io.writeFully
 import io.ktor.websocket.ProtocolViolationException
 import io.kuicksilver.ktor.network.SentCompression
 import io.kuicksilver.ktor.network.WebSocketPongs
+import io.kuicksilver.ktor.network.abandonWebSocketOutputHold
+import io.kuicksilver.ktor.network.awaitWebSocketOutputEnd
+import io.kuicksilver.ktor.network.awaitWebSocketOutputHold
+import io.kuicksilver.ktor.network.endWebSocketOutputHold
 import io.kuicksilver.ktor.network.guardWebSocketInput
 import io.kuicksilver.ktor.network.guardWebSocketOutput
+import io.kuicksilver.ktor.network.holdsWebSocketOutputEnd
 import io.kuicksilver.ktor.network.negotiatedPerMessageDeflate
 import io.kuicksilver.ktor.network.negotiatedWebSocketRsv
 import io.kuicksilver.ktor.network.webSocketExtensionNames
@@ -32,8 +37,10 @@ import io.kuicksilver.ktor.network.websocket.perMessageDeflate
 import io.kuicksilver.ktor.network.websocket.sentCompression
 import io.kuicksilver.ktor.network.websocket.webSocketExtensions
 import io.kuicksilver.ktor.network.websocket.webSocketRsvConflict
+import kotlinx.coroutines.launch
 import kotlin.coroutines.CoroutineContext
 import kotlin.io.encoding.Base64
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * The two directions of a WebSocket upgrade, checked against what the handshake ([request] and [response]) negotiated.
@@ -224,3 +231,52 @@ internal class WebSocketRefusal(
 
 /** RFC 6455 section 4.1: the version of the protocol this server speaks. */
 private const val WEBSOCKET_VERSION = "13"
+
+/**
+ * Waits for the transport end the frame guard of [out] holds for Pongs after the server's Close (RFC 6455 section
+ * 5.5.2), over HTTP/1.1, HTTP/2 and HTTP/3. A stop of the server ([stopping]: KuicksilverApplicationEngine.stopping)
+ * ends the hold at once, in order, as it ends the wait for the client's end after it; that in-order end gets
+ * [WEBSOCKET_STOP_HOLD_BOUND] at most (a client that reads nothing does not keep the stop), after which the hold is given
+ * up and the engine ends the transport itself.
+ */
+internal suspend fun awaitWebSocketHeldEnd(
+    out: ByteWriteChannel?,
+    stopping: kotlinx.coroutines.Job?,
+) {
+    if (out == null || !out.holdsWebSocketOutputEnd) return
+    if (stopping == null) {
+        out.awaitWebSocketOutputEnd()
+        return
+    }
+    io.kuicksilver.tls.completedWithinUnless(stopping, kotlin.time.Duration.INFINITE) { out.awaitWebSocketOutputEnd() }
+    if (out.holdsWebSocketOutputEnd) {
+        out.endWebSocketOutputHold()
+        kotlinx.coroutines.withTimeoutOrNull(WEBSOCKET_STOP_HOLD_BOUND) { out.awaitWebSocketOutputEnd() }
+        if (out.holdsWebSocketOutputEnd) out.abandonWebSocketOutputHold()
+    }
+}
+
+/**
+ * Lets the transport end the frame guard of [out] holds for Pongs go once the server stops ([stopping]), at once if the
+ * hold has begun then, else as soon as it begins: in order ([endWebSocketOutputHold]), then [endInput] ends the session's
+ * input (the frame guard), so a session that waits for the client's Close (Ktor's after its own) ends and the engine ends
+ * the transport as after any WebSocket at a stop. Null without a stop request; the job is cancelled with the session.
+ */
+internal fun releaseHeldEndOnStop(
+    out: ByteWriteChannel,
+    stopping: kotlinx.coroutines.Job?,
+    context: CoroutineContext,
+    endInput: () -> Unit,
+): kotlinx.coroutines.Job? {
+    stopping ?: return null
+    return kotlinx.coroutines.CoroutineScope(context).launch {
+        stopping.join()
+        if (out.awaitWebSocketOutputHold()) {
+            out.endWebSocketOutputHold()
+            endInput()
+        }
+    }
+}
+
+/** How long a stopping server's held WebSocket end gets for its in-order end ([awaitWebSocketHeldEnd]): the client grace. */
+internal val WEBSOCKET_STOP_HOLD_BOUND: kotlin.time.Duration = 1.seconds

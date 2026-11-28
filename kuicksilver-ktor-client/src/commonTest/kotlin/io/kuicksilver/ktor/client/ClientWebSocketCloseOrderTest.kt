@@ -1453,7 +1453,7 @@ class ClientWebSocketCloseOrderTest {
  * How long the engine's cleanup may take after `client.close()` with sessions waiting for their servers: far below the close
  * wait (60 s in those tests), which it used to wait out.
  */
-private val ENGINE_CLOSE_BOUND = 3.seconds
+private val ENGINE_CLOSE_BOUND = 2.seconds
 
 /** How long the slow servers above hold their close once the client waits for it: a behaviour under test, not a wait. */
 private val SLOW_SERVER = 300.milliseconds

@@ -11,6 +11,7 @@ import io.ktor.websocket.Frame
 import io.ktor.websocket.WebSocketSession
 import io.ktor.websocket.readReason
 import io.kuicksilver.ktor.client.h1.SpinLock
+import io.kuicksilver.ktor.network.abandonWebSocketOutputHold
 import io.kuicksilver.ktor.network.awaitWebSocketOutputEnd
 import io.kuicksilver.ktor.network.endWebSocketOutputHold
 import io.kuicksilver.ktor.network.holdsWebSocketOutputEnd
@@ -73,6 +74,9 @@ internal const val WEBSOCKET_CLOSE_WAIT_MILLIS: Long = 5_000
  * server's first; a silent one costs this, not the close waits.
  */
 internal const val WEBSOCKET_HURRY_GRACE_MILLIS: Long = 1_000
+
+/** No [WebSocketLifetime] own-end deadline yet. */
+private const val UNSET: Long = Long.MIN_VALUE
 
 /**
  * What the engine gives each call for a WebSocket session that may outlive it: [hold] is the engine's in-flight job of the
@@ -262,10 +266,32 @@ internal class WebSocketLifetime(
 
     /**
      * How long the transports wait for what this side still sends after the session (HTTP/2: its last DATA and
-     * END_STREAM): the close wait; once the engine was closed ([hurry]), what is left of T1 (from the session's own Close),
-     * at least the grace, so the engine's close never holds a session past its T1 for its own sending.
+     * END_STREAM): the close wait; once the engine was closed ([hurry]), what is left of the waits' one bound
+     * ([ownEndDeadline]), at least the grace: its own end still goes out in order when the held end used the bound up, and
+     * the engine's close never holds a session past its T1 for its own sending by more than the grace.
      */
-    fun ownEndBoundMillis(): Long = if (hurried.isCompleted) maxOf(remainingCloseWaitMillis(), hurryGraceMillis) else closeWaitMillis
+    fun ownEndBoundMillis(): Long =
+        if (hurried.isCompleted) maxOf(leftOf(ownEndDeadline(discardsUnread = true)), hurryGraceMillis) else closeWaitMillis
+
+    /**
+     * The one deadline of the waits after this side's own end once the engine was closed ([hurry]), set by the first of
+     * them and shared by the rest, so that they do not add up (the held end for Pongs, then the server's end of the
+     * transport): the grace from then, or, over a transport whose end [discardsUnread] and for a session ended before the
+     * server answered its Close, what is left of T1 and at least the grace ([serverWithin]).
+     */
+    private val ownEndAt = kotlin.concurrent.atomics.AtomicLong(UNSET) // milliseconds since [epoch]
+
+    private val epoch = TimeSource.Monotonic.markNow()
+
+    private fun ownEndDeadline(discardsUnread: Boolean): Long {
+        ownEndAt.load().takeIf { it != UNSET }?.let { return it }
+        val left = if (discardsUnread && hurriedOut.load()) maxOf(remainingCloseWaitMillis(), hurryGraceMillis) else hurryGraceMillis
+        val at = epoch.elapsedNow().inWholeMilliseconds + left
+        return if (ownEndAt.compareAndSet(UNSET, at)) at else ownEndAt.load()
+    }
+
+    /** Milliseconds until [at] (an [ownEndDeadline]), 0 once it passed. */
+    private fun leftOf(at: Long): Long = (at - epoch.elapsedNow().inWholeMilliseconds).coerceAtLeast(0)
 
     /** The close wait itself (both T1 and T2). */
     val closeWait: Long get() = closeWaitMillis
@@ -297,12 +323,13 @@ internal class WebSocketLifetime(
      * or null when the deadline passed first. For the waits for the server's end of the transport: before this side's own
      * end ([afterOwnEnd] false: HTTP/2 and HTTP/3 hold their END_STREAM or FIN until the server's, T2) and after it (and
      * HTTP/1.1's wait for the server's close, which comes before this side's). Once the engine was closed ([hurry]) a
-     * wait before this side's end stops, so that end goes at once. A wait after it is bounded by
-     * [WEBSOCKET_HURRY_GRACE_MILLIS], counted from the engine's close or from now when that came first: as long as the
-     * server has not ended its side, the session's Close may still be unread there. Over a transport whose end
+     * wait before this side's end stops, so that end goes at once. The waits after it share one deadline, set by the first
+     * of them once the engine was closed ([ownEndDeadline]): [WEBSOCKET_HURRY_GRACE_MILLIS] from then, as long as the
+     * server has not ended its side the session's Close may still be unread there. Over a transport whose end
      * [discardsUnread] (HTTP/2: the stream's reset; HTTP/3: the connection's close), a session ended before the server
      * answered its Close keeps what is left of its close wait (T1, from its own Close) instead, at least the grace: the
-     * server may still be reading what was sent, that Close among it, and nothing but its own end says it read it.
+     * server may still be reading what was sent, that Close among it, and nothing but its own end says it read it. The
+     * held end for Pongs and the wait for the server's end that follows it are one such bound, not two.
      */
     suspend fun <T : Any> serverWithin(
         deadline: kotlin.time.Duration,
@@ -311,15 +338,14 @@ internal class WebSocketLifetime(
         block: suspend () -> T,
     ): T? {
         if (!afterOwnEnd) return io.kuicksilver.tls.completedWithinUnless(hurried, deadline, block)
-        if (discardsUnread && hurriedOut.load()) {
-            val left = maxOf(remainingCloseWaitMillis(), hurryGraceMillis).milliseconds
-            return io.kuicksilver.tls.completedWithin(minOf(deadline, left), block)
+        if (hurried.isCompleted) {
+            return io.kuicksilver.tls.completedWithin(minOf(deadline, leftOf(ownEndDeadline(discardsUnread)).milliseconds), block)
         }
         return kotlinx.coroutines.coroutineScope {
             val graceOver =
                 launch {
                     hurried.join()
-                    kotlinx.coroutines.delay(hurryGraceMillis)
+                    kotlinx.coroutines.delay(leftOf(ownEndDeadline(discardsUnread)))
                 }
             try {
                 io.kuicksilver.tls.completedWithinUnless(graceOver, deadline, block)
@@ -365,7 +391,12 @@ internal class WebSocketLifetime(
         }
         if (guard.holdsWebSocketOutputEnd) {
             guard.endWebSocketOutputHold()
-            guard.awaitWebSocketOutputEnd()
+            // its in-order end (the waiting Pongs, then the transport's end) within what is left of the same bound; a
+            // transport that takes nothing more (a peer that reads nothing) does not keep it: the hold is given up and
+            // the engine resets the transport
+            val left = if (hurried.isCompleted) leftOf(ownEndDeadline(discardsUnread)) else closeWaitMillis
+            withTimeoutOrNull(left) { guard.awaitWebSocketOutputEnd() }
+            if (guard.holdsWebSocketOutputEnd) guard.abandonWebSocketOutputHold()
         }
     }
 
@@ -695,7 +726,9 @@ internal class HeldTransportEnd(
     override suspend fun flushAndClose() {
         count()
         out.flush()
-        delivered?.invoke()
+        // once: after a held end the writer's delivery was waited for at its end already ([writerDoneHeld]); the Pongs
+        // written since go with the flush above
+        if (!deliveredOnce) delivered?.invoke()
         endRequested = true
         // in order only: a transport that failed under the writer did not take its Close
         if (out.closedCause == null) lifetime?.writerEnded()
@@ -709,9 +742,13 @@ internal class HeldTransportEnd(
     override suspend fun writerDoneHeld() {
         count()
         out.flush()
+        deliveredOnce = true
         delivered?.invoke()
         if (out.closedCause == null) lifetime?.writerEnded()
     }
+
+    /** [writerDoneHeld] ran: [delivered] is not waited for again by [flushAndClose]. */
+    @kotlin.concurrent.Volatile private var deliveredOnce = false
 
     private fun count() {
         // a closed [out] has no write buffer: its flush below fails as it would have

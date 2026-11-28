@@ -146,6 +146,14 @@ public suspend fun ByteWriteChannel.awaitWebSocketOutputEnd() {
 public val ByteWriteChannel.holdsWebSocketOutputEnd: Boolean get() = (this as? OutputGuard)?.holdsEnd == true
 
 /**
+ * Waits until the writer of this channel, made by [guardWebSocketOutput], ended it (or the channel was cancelled): true
+ * when the transport end is then held for Pongs ([holdsWebSocketOutputEnd]), false when it is not; false at once for any
+ * other channel. For an engine that lets a hold go as soon as it starts (a stopping server).
+ */
+@InternalKuicksilverApi
+public suspend fun ByteWriteChannel.awaitWebSocketOutputHold(): Boolean = (this as? OutputGuard)?.awaitHoldDecided() ?: false
+
+/**
  * Ends the transport end this channel, made by [guardWebSocketOutput], holds for Pongs now, as when its close wait
  * passes: the waiting Pongs go out and the transport is ended in order. For an engine whose own bound on the wait after
  * this side's Close ran out first (a closed client, a stopping server). Nothing when no end is held.
@@ -156,13 +164,28 @@ public fun ByteWriteChannel.endWebSocketOutputHold() {
 }
 
 /**
+ * Gives up the transport end this channel, made by [guardWebSocketOutput], holds for Pongs, when even its in-order end
+ * ([endWebSocketOutputHold]) did not finish within the engine's bound (a transport that takes nothing more): the held end
+ * counts as over, no Pong goes out any more, and the engine ends or resets the transport itself. Nothing when no end is
+ * held.
+ */
+@InternalKuicksilverApi
+public fun ByteWriteChannel.abandonWebSocketOutputHold() {
+    (this as? OutputGuard)?.abandonHold()
+}
+
+/**
  * A transport channel under [guardWebSocketOutput] that wants to know when the writer has ended its frames, its Close
  * written, while the guard keeps the transport end for Pongs ([WebSocketPongs]): the end itself comes later, with
  * `flushAndClose`.
  */
 @InternalKuicksilverApi
 public interface WebSocketHeldOutput {
-    /** The writer ended its channel after its Close and the end is held: everything it wrote was flushed. */
+    /**
+     * The writer ended its channel after its Close and the end is held: everything it wrote was flushed. Called outside
+     * the Pongs' lock. A transport that waits for what it took to be delivered waits here, once: the `flushAndClose` that
+     * ends the held end later does not wait for it again.
+     */
     public suspend fun writerDoneHeld()
 }
 
@@ -284,13 +307,24 @@ private class OutputGuard(
     }
 
     override suspend fun flushAndClose() {
-        locked { closeLocked() }
+        if (!locked { closeLocked() }) return
+        // the writer is done (its Close written) and the end is held: a transport that counts on its end learns it now, not
+        // when the held end goes. Outside the lock, so the Pongs are not held behind a transport that takes its time to
+        // deliver (HTTP/2: until the stream took the Close)
+        try {
+            (output as? WebSocketHeldOutput)?.writerDoneHeld()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Throwable) {
+            // the transport failed under the writer: the engine sees it on the output
+        }
     }
 
-    private suspend fun closeLocked() {
+    /** Ends the writer's channel; true when the transport end is now held for Pongs ([holding]). */
+    private suspend fun closeLocked(): Boolean {
         try {
-            if (failure != null) return // the output was cancelled
-            if (holding || closed) return // ended already: the held end goes its own way
+            if (failure != null) return false // the output was cancelled
+            if (holding || closed) return false // ended already: the held end goes its own way
             process()
             if (frameCutOnOutput) {
                 // the writer ended its channel in order inside a frame (Ktor's does so when it is cancelled): a clean end
@@ -300,7 +334,7 @@ private class OutputGuard(
                 val e = WebSocketFrameCutException()
                 failure = e
                 output.cancel(e)
-                return
+                return false
             }
             // after this side's Close and before the peer's, the transport stays open for Pongs (RFC 6455 section 5.5.2)
             // until the peer's Close, the input's end or the close wait ([WebSocketPongs.holdEnd]); then it is ended
@@ -308,24 +342,17 @@ private class OutputGuard(
                 output.flush()
                 if (pongs.holdEnd(this)) {
                     holding = true
-                    // the writer is done (its Close written): a transport that counts on its end learns it now, not when
-                    // the held end goes
-                    try {
-                        (output as? WebSocketHeldOutput)?.writerDoneHeld()
-                    } catch (e: kotlinx.coroutines.CancellationException) {
-                        throw e
-                    } catch (_: Throwable) {
-                        // the transport failed under the writer: the engine sees it on the output
-                    }
-                    return
+                    return true
                 }
             }
             closed = true
             pongs?.dropWaiting()
             output.flushAndClose()
+            return false
         } finally {
             sideInflater?.close()
             if (!holding) heldEnded.complete(Unit) // nothing held: a wait for the held end is over at once
+            holdDecided.complete(holding)
         }
     }
 
@@ -389,14 +416,26 @@ private class OutputGuard(
         if (holding) pongs?.release()
     }
 
+    /** Gives a held end up: it counts as over, no Pong goes out any more, and the engine ends the transport itself. */
+    fun abandonHold() {
+        if (holding) markEnded()
+    }
+
     /** Waits for a held end ([holding]) to be ended; at once when none is held. */
     suspend fun awaitHeldEnd() {
         if (holding) heldEnded.await()
     }
 
     override fun cancel(cause: Throwable?) {
+        holdDecided.complete(false)
         output.cancel(cause)
     }
+
+    /** Completed once the writer ended its channel: true when the end is then held for Pongs, false otherwise. */
+    private val holdDecided = kotlinx.coroutines.CompletableDeferred<Boolean>()
+
+    /** Waits until the writer ended its channel; true when the transport end is held for Pongs from then. */
+    suspend fun awaitHoldDecided(): Boolean = holdDecided.await()
 
     private suspend fun process() {
         try {
@@ -765,6 +804,7 @@ private class OutputGuard(
         payloadLeft = -1
         if (!closeWritten) {
             closeWritten = true
+            pongs?.ownCloseWritten = true
             onClose()
         }
     }

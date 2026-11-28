@@ -356,6 +356,175 @@ class WebSocketPongsTest {
             peer.flushAndClose()
         }
 
+    /**
+     * After our Close the peer's Pings are the engine's alone: answered, and not handed to the session, whose outgoing
+     * channel is closed by then (Ktor's default session failed answering one and ended the session before the peer's
+     * Close: a server Pinging after our Close cut the client's session after about 200 ms).
+     */
+    @Test
+    fun negative_aPingAfterOurCloseIsAnsweredAndNotHandedOn() =
+        runTest {
+            val c = connection(masking = false)
+            c.session.writeFully(close(1000))
+            c.session.flushAndClose()
+            assertEquals(0x88, oneFrame(c.wire).b0)
+            c.peerSends(frame(0x89, "a".encodeToByteArray(), mask) + frame(0x89, "b".encodeToByteArray(), mask))
+            runCurrent()
+            assertEquals(listOf("a", "b"), listOf(oneFrame(c.wire), oneFrame(c.wire)).map { it.payload.decodeToString() })
+            assertEquals(0, c.input.availableForRead, "the Pings were not handed to the session")
+            c.peerSends(close(1000, mask = mask))
+            advanceUntilIdle()
+            assertEquals(0x88, oneFrame(c.input).b0, "the peer's Close still is")
+            c.peer.flushAndClose()
+        }
+
+    /**
+     * The engine lets a held end go before the peer's Close (a closed client's bound ran out, a stopping server):
+     * Pongs go until then, and the transport is then ended in order, as at the close wait.
+     */
+    @Test
+    fun anEngineReleaseEndsTheHeldEndInOrder() =
+        runTest {
+            val c = connection(masking = false)
+            c.session.writeFully(close(1000))
+            c.session.flushAndClose()
+            assertEquals(0x88, oneFrame(c.wire).b0)
+            c.peerSends(frame(0x89, "p".encodeToByteArray(), mask))
+            runCurrent()
+            assertEquals("p", oneFrame(c.wire).payload.decodeToString(), "Pongs while held")
+            assertTrue(c.session.holdsWebSocketOutputEnd)
+            c.session.endWebSocketOutputHold()
+            runCurrent()
+            assertTrue(c.wire.isClosedForWrite, "ended in order at the release")
+            assertTrue(!c.session.holdsWebSocketOutputEnd)
+            assertEquals(0L, currentTime, "no close wait passed")
+            c.peer.flushAndClose()
+        }
+
+    /** A release after the input stopped (the engine ended the session) is no end in order: the engine's end stays its own. */
+    @Test
+    fun negative_aReleaseAfterTheInputStoppedIsNoEndInOrder() =
+        runTest {
+            val job = Job()
+            val peer = ByteChannel()
+            val wire = ByteChannel()
+            val pongs = WebSocketPongs()
+            guardWebSocketInput(peer, 0, false, peerMasks = true, context = coroutineContext + job, pongs = pongs)
+            val session = guardWebSocketOutput(wire, masking = false, pongs = pongs)
+            session.writeFully(close(1000))
+            session.flushAndClose()
+            assertEquals(0x88, oneFrame(wire).b0)
+            pongs.stop() // the input stopped, not in order
+            pongs.release()
+            job.cancel()
+            advanceUntilIdle()
+            session.awaitWebSocketOutputEnd()
+            assertTrue(!wire.isClosedForWrite, "not ended in order: the stop came first")
+            wire.flushAndClose()
+            peer.flushAndClose()
+        }
+
+    /**
+     * The held end's in-order end waits for the transport (HTTP/2's end waits until the stream took the Close) and the
+     * engine ends the session meanwhile (the peer's Close ended it): that end is not given up but done again by the
+     * cancelled path, so the transport still ends in order. Before, the cut end was marked done without ending the
+     * transport, and the client reset an HTTP/2 stream after a clean close (Node's http2 server: STREAM_CLOSED rst=8).
+     */
+    @Test
+    fun negative_anEndCutWhileTheTransportDeliversIsDoneAgain() =
+        runTest {
+            val job = Job()
+            val peer = ByteChannel()
+            val wire = ByteChannel()
+            val pongs = WebSocketPongs()
+            val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val slow = SlowEnd(wire, delivery = kotlinx.coroutines.CompletableDeferred(Unit), end = gate)
+            guardWebSocketInput(peer, 0, false, peerMasks = true, context = coroutineContext + job, pongs = pongs)
+            val session = guardWebSocketOutput(slow, masking = false, pongs = pongs)
+            session.writeFully(close(1000))
+            session.flushAndClose()
+            assertEquals(0x88, oneFrame(wire).b0)
+            peer.writeFully(close(1000, mask = mask))
+            peer.flush()
+            runCurrent() // the peer's Close: the held end ends in order and waits in the transport's end
+            assertTrue(slow.ending, "the end waits in the transport")
+            job.cancel() // the session ended meanwhile
+            runCurrent()
+            gate.complete(Unit)
+            advanceUntilIdle()
+            session.awaitWebSocketOutputEnd()
+            assertTrue(slow.ended, "the transport was still ended in order")
+            peer.flushAndClose()
+        }
+
+    /**
+     * The writer's delivery ([WebSocketHeldOutput.writerDoneHeld]) runs once, outside the Pongs' lock: a Ping that comes
+     * while it waits is answered, and the held end's own end does not wait for the delivery again.
+     */
+    @Test
+    fun negative_theWritersDeliveryRunsOnceOutsideTheLock() =
+        runTest {
+            val peer = ByteChannel()
+            val wire = ByteChannel()
+            val pongs = WebSocketPongs()
+            val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val slow = SlowEnd(wire, delivery = gate, end = kotlinx.coroutines.CompletableDeferred(Unit))
+            guardWebSocketInput(peer, 0, false, peerMasks = true, context = coroutineContext, pongs = pongs)
+            val session = guardWebSocketOutput(slow, masking = false, pongs = pongs)
+            session.writeFully(close(1000))
+            val closing = async { session.flushAndClose() }
+            runCurrent()
+            assertEquals(1, slow.deliveries, "the delivery waits")
+            assertEquals(0x88, oneFrame(wire).b0)
+            peer.writeFully(frame(0x89, "p".encodeToByteArray(), mask))
+            peer.flush()
+            runCurrent()
+            assertEquals("p", oneFrame(wire).payload.decodeToString(), "a Pong while the delivery waits")
+            gate.complete(Unit)
+            closing.await()
+            peer.writeFully(close(1000, mask = mask))
+            peer.flush()
+            advanceUntilIdle()
+            session.awaitWebSocketOutputEnd()
+            assertTrue(slow.ended)
+            assertEquals(1, slow.deliveries, "delivered once")
+            peer.flushAndClose()
+        }
+
+    /**
+     * A transport end that waits for [delivery] in its delivery and for [end] in its end, as HTTP/2's (until the stream took
+     * what was written), delivering once, as the client's HeldTransportEnd.
+     */
+    private class SlowEnd(
+        private val wire: ByteChannel,
+        private val delivery: kotlinx.coroutines.CompletableDeferred<Unit>,
+        private val end: kotlinx.coroutines.CompletableDeferred<Unit>,
+    ) : io.ktor.utils.io.ByteWriteChannel by wire,
+        WebSocketHeldOutput {
+        var deliveries = 0
+        var ending = false
+        var ended = false
+        private var delivered = false
+
+        override suspend fun writerDoneHeld() {
+            wire.flush()
+            deliveries++
+            delivered = true
+            delivery.await()
+        }
+
+        override suspend fun flushAndClose() {
+            ending = true
+            wire.flush()
+            if (!delivered) {
+                deliveries++
+                delivered = true
+            }
+            end.await()
+            ended = true
+        }
+    }
+
     /** A channel whose end only flushes [wire], as the client engines' held transport end. */
     private class HeldOpen(
         private val wire: ByteChannel,

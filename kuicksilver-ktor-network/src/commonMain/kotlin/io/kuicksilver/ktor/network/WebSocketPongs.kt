@@ -54,7 +54,6 @@ import kotlin.time.Duration.Companion.seconds
  * failure, and an exception from here would reach the uncaught-exception handler, which ends the process on Android and
  * Kotlin/Native.
  */
-
 @InternalKuicksilverApi
 public class WebSocketPongs(
     private val closeWait: Duration = DEFAULT_CLOSE_WAIT,
@@ -87,8 +86,22 @@ public class WebSocketPongs(
         wake.trySend(Unit)
     }
 
-    /** The peer's Close was read, or the input ended: no Ping is answered any more, and a held transport end may go. */
-    private val peerDone = CompletableDeferred<Unit>()
+    /**
+     * The peer's Close was read, the input ended, or the engine let a held end go ([release]): no Ping is answered any
+     * more, and a held transport end may go. The first of them wins: a release after the input stopped stays a stop.
+     */
+    private val peerDone = CompletableDeferred<Boolean>() // true: by [release]
+
+    /** [peerDone] was completed by [release], before anything else completed it. */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private val released: Boolean get() = peerDone.isCompleted && peerDone.getCompleted()
+
+    /**
+     * This side's Close went to the output: from here the input guard answers the peer's Pings itself and does not hand
+     * them on, so the session, whose outgoing channel is closed after its Close, never tries to answer them (Ktor's
+     * default session failed on that and ended the session).
+     */
+    @kotlin.concurrent.Volatile internal var ownCloseWritten: Boolean = false
 
     /** Whether the peer's Close was read or the input ended. */
     internal val peerFinished: Boolean get() = peerDone.isCompleted
@@ -104,25 +117,22 @@ public class WebSocketPongs(
     /** The input guard read the peer's Close: from here the transport end the output guard holds may go, in order. */
     internal fun peerClosed() {
         peerEndedInOrder = true
-        peerDone.complete(Unit)
+        peerDone.complete(false)
     }
 
     /**
-     * The engine's own bound on the wait after this side's Close ran out ([endWebSocketOutputHold]): the held end goes
-     * now, in order, as when [closeWait] passes.
+     * The engine's own bound on the wait after this side's Close ran out ([endWebSocketOutputHold]): a held end goes now,
+     * in order, as when [closeWait] passes. Nothing once the peer's Close came or the input ended or stopped: a failed
+     * input stays a failure.
      */
-    @kotlin.concurrent.Volatile private var released = false
-
-    /** Ends a held end now, in order, as at [closeWait] ([endWebSocketOutputHold]). */
     internal fun release() {
-        released = true
-        peerDone.complete(Unit)
+        peerDone.complete(true) // the first completion decides
     }
 
     /** The input ended in order (no cause): as [peerClosed] for the held end. */
     internal fun inputEnded() {
         peerEndedInOrder = true
-        peerDone.complete(Unit)
+        peerDone.complete(false)
     }
 
     /**
@@ -156,8 +166,9 @@ public class WebSocketPongs(
             } finally {
                 try {
                     if (!ended) {
-                        // cancelled (the engine ended the session): in order only after the peer's Close, its end in order or a release,
-                        // within one close wait (a peer that reads nothing more cannot keep it); a cancellation alone never is
+                        // cancelled (the engine ended the session): in order only after the peer's Close, its end in order or
+                        // a release, within one close wait (a peer that reads nothing more cannot keep it); a cancellation
+                        // alone never is
                         val inOrder = peerEndedInOrder || released
                         withContext(NonCancellable) {
                             withTimeoutOrNull(closeWait) { lock.withLock { guard.endHeld(this@WebSocketPongs, close = inOrder) } }
@@ -191,7 +202,7 @@ public class WebSocketPongs(
     }
 
     internal fun stop() {
-        peerDone.complete(Unit)
+        peerDone.complete(false)
         wake.close()
     }
 

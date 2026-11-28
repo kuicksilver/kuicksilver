@@ -18,8 +18,10 @@ import io.kuicksilver.http3.Http3ServerRequest
 import io.kuicksilver.ktor.network.DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE
 import io.kuicksilver.ktor.network.isWebSocketFrameCut
 import io.kuicksilver.ktor.server.ServerWebSocket
+import io.kuicksilver.ktor.server.awaitWebSocketHeldEnd
 import io.kuicksilver.ktor.server.checkWebSocketRsvConflicts
 import io.kuicksilver.ktor.server.h2.WebSocketOverH2
+import io.kuicksilver.ktor.server.releaseHeldEndOnStop
 import io.kuicksilver.ktor.server.startServerWebSocket
 import io.kuicksilver.ktor.server.webSocketHandshakeRefusal
 import kotlinx.coroutines.CancellationException
@@ -122,6 +124,7 @@ internal class H3UpgradeResponse(
         var webSocket: ServerWebSocket? = null
         // the session's guarded output: whether its last frame went out whole decides between a FIN and a reset
         var sessionOutput: io.ktor.utils.io.ByteWriteChannel? = null
+        var stopWatch: kotlinx.coroutines.Job? = null
         try {
             val input =
                 startServerWebSocket(
@@ -138,15 +141,19 @@ internal class H3UpgradeResponse(
             webSocket = input
             val out = input.output(stream.output)
             sessionOutput = out
+            // a stop lets the end held for Pongs after the server's Close go at once, and ends a session still waiting for
+            // the client's Close
+            stopWatch = releaseHeldEndOnStop(out, stopping, engineDispatcher) { guard.cancel() }
             upgrade.upgrade(input.channel, out, engineDispatcher, userDispatcher).join()
         } finally {
+            stopWatch?.cancel()
             // the session is over: nothing reads its input any more, so the guard stops right after the held end below,
             // before it copies what the client still sends into a channel nobody reads; then the extension's state is freed
             // (the guard inflates with a codec of its own)
             // the stream end the frame guard held for Pongs after the server's Close is ended first, while the guard still
             // reads the client's Pings and Close (RFC 6455 section 5.5.2): a handler that returns right after its Close
             // (at once in order when the server is stopping, as the wait for the client's FIN below)
-            WebSocketOverH2.awaitHeldEnd(sessionOutput, stopping)
+            awaitWebSocketHeldEnd(sessionOutput, stopping)
             guard.cancel()
             webSocket?.done()
             // a call cancelled while the session ran, or while the flush below waits, cannot end the stream in order: RFC

@@ -44,6 +44,8 @@ internal class H1Call(
     webSocketMaxMessageSize: Long = DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE,
     /** The input of the protocol an upgrade switches to ([H1RequestScope.upgradeInput]); never the request's body [input]. */
     upgradeInput: ByteReadChannel? = null,
+    /** The engine's stop request (KuicksilverApplicationEngine.stopping), for a WebSocket's held end ([H1Response]). */
+    stopping: kotlinx.coroutines.Job? = null,
 ) : BaseApplicationCall(application),
     CoroutineScope {
     override val request = H1Request(this, remoteAddress, localAddress, input, _request, scheme, fields)
@@ -60,6 +62,7 @@ internal class H1Call(
             closing,
             endsConnection,
             webSocketMaxMessageSize,
+            stopping,
         )
 
     internal fun release() {

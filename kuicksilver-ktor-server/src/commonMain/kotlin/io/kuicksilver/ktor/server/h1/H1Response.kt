@@ -27,12 +27,13 @@ import io.ktor.utils.io.close
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writePacket
 import io.kuicksilver.ktor.network.DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE
-import io.kuicksilver.ktor.network.awaitWebSocketOutputEnd
 import io.kuicksilver.ktor.network.fieldListElements
 import io.kuicksilver.ktor.network.isWebSocketFrameCut
 import io.kuicksilver.ktor.server.ServerWebSocket
+import io.kuicksilver.ktor.server.awaitWebSocketHeldEnd
 import io.kuicksilver.ktor.server.checkWebSocketRsvConflicts
 import io.kuicksilver.ktor.server.copyContentFrom
+import io.kuicksilver.ktor.server.releaseHeldEndOnStop
 import io.kuicksilver.ktor.server.startServerWebSocket
 import io.kuicksilver.ktor.server.webSocketHandshakeRefusal
 import kotlinx.coroutines.CompletableDeferred
@@ -61,6 +62,8 @@ internal class H1Response(
     private val endsConnection: CompletableDeferred<Boolean>? = null,
     /** The engine's `webSockets { maxMessageSize }`: the largest WebSocket message a client may send (RFC 6455 section 10.4). */
     private val webSocketMaxMessageSize: Long = DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE,
+    /** The engine's stop request: it ends a WebSocket's held end at once ([awaitWebSocketHeldEnd]). */
+    private val stopping: Job? = null,
 ) : BaseApplicationResponse(call) {
     private var statusCode: HttpStatusCode = HttpStatusCode.OK
     private val headersBuilder = HeadersBuilder()
@@ -99,6 +102,7 @@ internal class H1Response(
         var webSocket: ServerWebSocket? = null
         // a WebSocket's guarded output: whether its last frame went out whole decides between a clean end and a reset
         var sessionOutput: ByteWriteChannel? = null
+        var stopWatch: Job? = null
         try {
             val upgradedInput =
                 if (isWebSocket) {
@@ -119,15 +123,19 @@ internal class H1Response(
                     input
                 }
             val upgradedOutput = webSocket?.output(output)?.also { sessionOutput = it } ?: output
+            // a stop lets the end held for Pongs after the server's Close go at once, and ends a session still waiting for
+            // the client's Close
+            stopWatch = sessionOutput?.let { releaseHeldEndOnStop(it, stopping, engineDispatcher) { guard.cancel() } }
             val upgradedJob = upgrade.upgrade(upgradedInput, upgradedOutput, engineDispatcher, userDispatcher)
             upgradedJob.join()
         } finally {
+            stopWatch?.cancel()
             // the frame guard stops after the held end below, then the extension's state is freed (the guard inflates with a
             // codec of its own, so that order is for clarity, not safety)
             // the transport end the frame guard held for Pongs after the server's Close is ended first, while the guard
             // still reads the client's Pings and Close (RFC 6455 section 5.5.2): a handler that returns right after its
-            // Close (a raw session) leaves that to the engine
-            sessionOutput?.awaitWebSocketOutputEnd()
+            // Close (a raw session) leaves that to the engine; a stop of the server ends it at once, in order
+            awaitWebSocketHeldEnd(sessionOutput, stopping)
             guard.cancel()
             webSocket?.done()
             if (sessionOutput?.isWebSocketFrameCut() == true) {

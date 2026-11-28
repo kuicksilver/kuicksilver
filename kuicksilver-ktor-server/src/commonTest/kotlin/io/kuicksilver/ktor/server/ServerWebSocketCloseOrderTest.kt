@@ -146,6 +146,54 @@ class ServerWebSocketCloseOrderTest {
             }
         }
 
+    /**
+     * HTTP/1.1 over TLS: the server's Close first (`/bye`), then a client that never answers it. The server holds its end
+     * for Pongs (RFC 6455 section 5.5.2), up to its close wait (5 s), and sends no close_notify meanwhile. A stop with a
+     * long grace period lets that hold go at once, in order: close_notify comes, and the stop is over well within the close
+     * wait. Before, the HTTP/1.1 server's held end ignored the stop.
+     */
+    @Test fun negative_h1StopReleasesTheEndHeldForPongs() =
+        serverTest {
+            val (server, port) = tlsServer { routes() }
+            val selector = SelectorManager(Dispatchers.IO)
+            var stopped = false
+            try {
+                coroutineScope {
+                    val socket = connectTcp(selector, InetSocketAddress("127.0.0.1", port))
+                    val tls =
+                        TlsConnection.client(
+                            socket.openReadChannel(),
+                            socket.openWriteChannel(autoFlush = true),
+                            ServerFixtures.clientTls(),
+                            coroutineContext,
+                        )
+                    tls.output.writeStringUtf8(
+                        "GET /bye HTTP/1.1\r\nHost: server.test\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+                            "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n",
+                    )
+                    tls.output.flush()
+                    assertTrue(tls.input.readLine(LineEnding.Lenient)!!.startsWith("HTTP/1.1 101"))
+                    while (tls.input.readLine(LineEnding.Lenient)!!.isNotEmpty()) continue
+                    assertEquals(8, readServerFrame(tls.input), "the server's Close")
+                    val end = async { runCatching { tls.input.discard() } }
+                    assertNull(withTimeoutOrNull(SLOW_CLIENT) { end.await() }, "the end is held: no close_notify yet")
+                    val started = TimeSource.Monotonic.markNow()
+                    val stop = launch(Dispatchers.IO) { server.stop(10_000, 20_000) }
+                    withTimeout(10.seconds) { end.await() }
+                    val took = started.elapsedNow()
+                    assertNull(tls.input.closedCause, "the server's close_notify: the held end went in order")
+                    assertTrue(took < 3.seconds, "the server's end took $took after the stop, the close wait is 5 s")
+                    tls.close()
+                    socket.close()
+                    withTimeout(10.seconds) { stop.join() }
+                    stopped = true
+                }
+            } finally {
+                selector.close()
+                if (!stopped) server.stop(100, 500)
+            }
+        }
+
     @Test fun negative_tlsFinIsNotHeldForTheClientsCloseNotifyClientCloses() = tlsFinComesAtOnce("/ws")
 
     @Test fun negative_tlsFinIsNotHeldForTheClientsCloseNotifyServerCloses() = tlsFinComesAtOnce("/bye")
@@ -334,6 +382,58 @@ class ServerWebSocketCloseOrderTest {
                         stopped = true
                         val took = started.elapsedNow()
                         assertTrue(took < 3.seconds, "the stop took $took, the close wait is 5 s")
+                        serverStreams.cancel()
+                    }
+                } finally {
+                    c.close()
+                }
+            } finally {
+                ep.close()
+                if (!stopped) server.stop(100, 500)
+            }
+        }
+
+    /**
+     * The server's Close first (`/bye`), then a client that never answers it: the server holds its end of the stream for
+     * Pongs (RFC 6455 section 5.5.2), up to its close wait (5 s), and sends no FIN meanwhile. A stop with a long grace
+     * period lets the hold go at once, in order: the server's FIN comes and the stop is over well within the close wait.
+     * Before, the held end ignored the stop. A bare QUIC client, as [negative_h3StopEndsTheWaitForTheClientsFin].
+     */
+    @Test fun negative_h3StopReleasesTheEndHeldForPongs() =
+        h3ServerTest {
+            val (server, port) = tlsServer { routes() }
+            val ep = QuicEndpoint.bind(InetSocketAddress("127.0.0.1", 0))
+            var stopped = false
+            try {
+                val c =
+                    ep.connect(
+                        InetSocketAddress("127.0.0.1", port),
+                        QuicClientConfig.Builder(ServerFixtures.clientTls(alpn = listOf("h3"))).build(),
+                    )
+                try {
+                    coroutineScope {
+                        val settings = CompletableDeferred<Map<Long, Long>>()
+                        val goAway = CompletableDeferred<Long>()
+                        val serverStreams = launch { readServerStreams(c, settings, goAway) }
+                        val control = c.openUni()
+                        control.output.writeFully(byteArrayOf(0x00, 0x04, 0x00)) // control stream, empty SETTINGS
+                        control.output.flush()
+                        assertEquals(1L, withTimeout(10.seconds) { settings.await() }[0x08L], "SETTINGS_ENABLE_CONNECT_PROTOCOL")
+                        val st: QuicStream = rawExtendedConnect(c, "websocket", "/bye", listOf("sec-websocket-version" to "13"))
+                        assertEquals(1L, readH3Frame(st.input).first, "the 200's HEADERS")
+                        assertEquals(0L, readH3Frame(st.input).first, "the server's Close, in a DATA frame")
+                        // no FIN while the end is held for Pongs
+                        val fin = async { runCatching { while (true) readH3Frame(st.input) } }
+                        assertNull(withTimeoutOrNull(SLOW_CLIENT) { fin.await() }, "the end is held: no FIN yet")
+                        val started = TimeSource.Monotonic.markNow()
+                        val stop = launch(Dispatchers.IO) { server.stop(10_000, 20_000) }
+                        withTimeout(10.seconds) { fin.await() }
+                        val took = started.elapsedNow()
+                        assertTrue(took < 3.seconds, "the server's FIN took $took after the stop, the close wait is 5 s")
+                        withTimeout(10.seconds) { goAway.await() }
+                        c.close(Http3ErrorCode.NO_ERROR)
+                        withTimeout(10.seconds) { stop.join() }
+                        stopped = true
                         serverStreams.cancel()
                     }
                 } finally {

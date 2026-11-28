@@ -404,6 +404,10 @@ private class InputGuard(
             val data = control.copyOf(size)
             if (mask != null) unmask(data, size, mask, 0)
             pongs.answer(data)
+            // after this side's Close the session's outgoing channel is closed: a session that answers Pings itself (Ktor's
+            // default one) fails trying to, which ended it before the peer's Close. The Pong is the engine's alone then,
+            // and the Ping is not handed on
+            if (pongs.ownCloseWritten) return true
         }
         out.writeFully(header, 0, headerLength)
         out.writeFully(control, 0, size)

@@ -32,6 +32,7 @@ import io.ktor.utils.io.writeFully
 import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
 import io.ktor.websocket.RawWebSocket
+import io.ktor.websocket.close
 import io.ktor.websocket.readReason
 import io.ktor.websocket.readText
 import io.kuicksilver.http2.Http2ErrorCode
@@ -877,6 +878,60 @@ class ServerWebSocketH2Test {
                             }
                         }
                         assertEquals(Http2ErrorCode.NO_ERROR.code, assertNotNull(reset).errorCode)
+                        withTimeout(10.seconds) { stop.join() }
+                    }
+                    stopped = true
+                    val took = started.elapsedNow()
+                    assertTrue(took < 3.seconds, "the stop took $took, the close wait is 5 s")
+                }
+            } finally {
+                if (!stopped) server.stop(100, 500)
+            }
+        }
+
+    /**
+     * The server's Close first, then a client that Pings and never answers the Close: the server holds its end of the stream
+     * for Pongs (RFC 6455 section 5.5.2: Pongs are owed until the peer's Close), up to its close wait (5 s). A stop with a
+     * long grace period lets that hold go at once, in order: the Pongs came while it was held, then the server's
+     * END_STREAM, and the stop is over well within the close wait. Before, the held end ignored the stop.
+     */
+    @Test fun negative_stopReleasesTheEndHeldForPongs() =
+        serverTest {
+            val (server, port) =
+                h2TlsServer {
+                    install(WebSockets)
+                    routing { webSocket("/bye") { close(CloseReason(CloseReason.Codes.NORMAL, "bye")) } }
+                }
+            var stopped = false
+            try {
+                RawH2Client.connect(port).use { raw ->
+                    raw.preface()
+                    raw.headers(1, extendedConnect("/bye"), endStream = false)
+                    assertNotNull(raw.await { it.stream == 1 && it.type == RawFrame.HEADERS })
+                    assertNotNull(raw.await { it.stream == 1 && it.type == RawFrame.DATA }, "the server's Close")
+                    // a masked Ping (key 1, 2, 3, 4, payload "p"): its Pong comes while the end is held, no END_STREAM yet
+                    raw.data(1, byteArrayOf(0x89.toByte(), 0x81.toByte(), 1, 2, 3, 4, ('p'.code xor 1).toByte()), endStream = false)
+                    val pong = assertNotNull(raw.await { it.stream == 1 && it.type == RawFrame.DATA })
+                    assertEquals(0x8A, pong.payload[0].toInt() and 0xff, "a Pong after the server's Close")
+                    assertTrue(!pong.endStream, "the end is held")
+                    val started =
+                        kotlin.time.TimeSource.Monotonic
+                            .markNow()
+                    kotlinx.coroutines.coroutineScope {
+                        val stop = launch(Dispatchers.IO) { server.stop(10_000, 20_000) }
+                        var endStream = false
+                        withTimeout(10.seconds) {
+                            while (true) {
+                                val f = raw.readFrame() ?: break
+                                if (f.type == RawFrame.PING &&
+                                    f.flags and 1 == 0
+                                ) {
+                                    raw.write(RawH2Client.frame(RawFrame.PING, 1, 0, f.payload))
+                                }
+                                if (f.stream == 1 && f.endStream) endStream = true
+                            }
+                        }
+                        assertTrue(endStream, "the held end went in order: END_STREAM")
                         withTimeout(10.seconds) { stop.join() }
                     }
                     stopped = true
