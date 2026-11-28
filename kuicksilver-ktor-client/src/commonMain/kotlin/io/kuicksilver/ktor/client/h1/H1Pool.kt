@@ -654,33 +654,83 @@ internal class H1Pool(
         data: HttpRequestData,
         dns: RequestDns = config.newRequestDns(events.dnsObserver(data)),
     ): Opened =
-        obtain(data, keyOf(data, null), dns, null, webSocketKeys = null).let {
-            Opened(it.connection, it.reused, it.h2, it.coalesced)
+        try {
+            obtain(data, keyOf(data, null), dns, null, webSocketKeys = null).let {
+                Opened(it.connection, it.reused, it.h2, it.coalesced)
+            }
+        } catch (e: H2LostBeforeStream) {
+            throw e.loss
         }
 
     /**
-     * [open] for the race's TCP side: a new HTTP/2 connection whose transport was lost before it took the request (over
-     * TLS 1.3 the client's side of the handshake completes before the server checks its certificate, and the server's
-     * alert, certificate_required, may end the connection before its first stream is reserved) is a [LostBeforeRequest],
-     * not a failure: the TCP setup completed, so it wins the race, and the loss is the call's failure, as when the alert
-     * comes after the request got its stream. Every other failure is thrown.
+     * [open] for the race's TCP side: a new HTTP/2 connection refused by the server in its handshake before it took the
+     * request (over TLS 1.3 the client's side of the handshake completes before the server checks its certificate, and
+     * the server's alert, certificate_required, may end the connection before its first stream is reserved) is a
+     * [LostBeforeRequest], not a failure: the TCP setup completed, so it wins the race, and the loss is the call's
+     * failure, as when the alert comes after the request got its stream. A loss that is no handshake refusal (a reset, a
+     * truncation: [isHandshakeRefusal]) and every other failure are thrown: the TCP setup failed, and HTTP/3 may still win.
      */
     suspend fun openOrLost(
         data: HttpRequestData,
         dns: RequestDns = config.newRequestDns(events.dnsObserver(data)),
     ): Any =
         try {
-            open(data, dns)
-        } catch (e: io.kuicksilver.http2.runtime.Http2Exception.ConnectionClosed) {
-            // obtain throws a ConnectionClosed only for that loss, and only with the transport's failure as its cause
-            if (e.cause == null) throw e
+            obtain(data, keyOf(data, null), dns, null, webSocketKeys = null).let {
+                Opened(it.connection, it.reused, it.h2, it.coalesced)
+            }
+        } catch (e: H2LostBeforeStream) {
+            if (!e.refusal) throw e.loss
             LostBeforeRequest(e)
         }
 
-    /** [openOrLost]'s new HTTP/2 connection, lost before it took the request: [loss] is the call's failure. */
-    class LostBeforeRequest(
+    /** [openOrLost]'s new HTTP/2 connection, refused before it took the request: [loss] is the call's failure. */
+    class LostBeforeRequest internal constructor(
+        internal val lost: H2LostBeforeStream,
+    ) {
+        val loss: Throwable get() = lost.loss
+    }
+
+    /**
+     * A new HTTP/2 connection [conn] whose transport was lost before it took the request ([obtain]): [loss] is that loss,
+     * a copy for the call; [refusal] whether its cause is the server's refusal of this client in the handshake.
+     */
+    internal class H2LostBeforeStream(
+        val conn: H2Conn,
         val loss: Throwable,
-    )
+    ) : Exception(loss.message, loss) {
+        val refusal: Boolean get() = loss.cause?.isHandshakeRefusal() == true
+    }
+
+    /**
+     * A new HTTP/2 connection refused before it took the request ([lost]): what a request that got its stream on it would
+     * have seen, so that the call's events and diagnostics do not hang on the order: the connection for the diagnostics,
+     * the protocol to [onSelected] (`protocolSelected`), then `connectionAcquired` and `connectionReleased`.
+     */
+    internal fun announceLost(
+        data: HttpRequestData,
+        lost: H2LostBeforeStream,
+        onSelected: ((HttpProtocolVersion) -> Unit)?,
+    ) {
+        val c = lost.conn
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        data.attributes.getOrNull(io.kuicksilver.ktor.client.KuicksilverDiagnosticsKey)?.let { d ->
+            d.connection =
+                io.kuicksilver.ktor.client.TcpConnectionSnapshot(
+                    HttpProtocolVersion.HTTP_2_0,
+                    c.localAddress,
+                    c.remoteAddress,
+                    false,
+                    "h2",
+                    c.viaProxy,
+                    true,
+                    c.tlsVersion,
+                )
+            d.connectionWide(c.client.closeCause)
+        }
+        onSelected?.invoke(HttpProtocolVersion.HTTP_2_0)
+        events.emit("connectionAcquired") { connectionAcquired(data, HttpProtocolVersion.HTTP_2_0, false) }
+        events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_2_0, false) }
+    }
 
     /**
      * A connection [open] handed out and whether it came from the idle pool (or, for HTTP/2, was open already): an HTTP/1.1
@@ -845,7 +895,12 @@ internal class H1Pool(
                 data.executionContext,
                 attributes,
             )
-        val got = obtain(plain, route, dns, proxy, webSocketKeys = null)
+        val got =
+            try {
+                obtain(plain, route, dns, proxy, webSocketKeys = null)
+            } catch (e: H2LostBeforeStream) {
+                throw e.loss
+            }
         got.connection?.let { pool.release(it) }
         val c = got.h2 ?: return false
         c.client.unreserve()
@@ -1051,18 +1106,20 @@ internal class H1Pool(
                                 } else {
                                     // a new connection that takes no request (a GOAWAY at once, SETTINGS_MAX_CONCURRENT_STREAMS 0):
                                     // the call fails rather than open connection after connection to a server that refuses them.
-                                    // A connection whose transport failed already fails the call with that loss: over TLS 1.3
-                                    // the client's handshake completes before the server checks its certificate, and the
-                                    // server's alert (certificate_required) is what the caller must see, not a refusal. Read
-                                    // before the shutdown below, whose own end ("GOAWAY and no streams left") is no reason,
-                                    // and only a loss with a cause: a refusal ended by the protocol stays a refusal
+                                    // A connection whose transport failed already is H2LostBeforeStream, with that loss: over
+                                    // TLS 1.3 the client's handshake completes before the server checks its certificate, and
+                                    // the server's alert (certificate_required) is what the caller must see, not a refusal;
+                                    // a loss that is no handshake refusal (a reset, a truncation) is repeated by the caller as
+                                    // after the first stream (RFC 9113 section 8.7). Read before the shutdown below, whose own
+                                    // end ("GOAWAY and no streams left") is no reason, and only a loss with a cause: a refusal
+                                    // ended by the protocol stays a refusal
                                     val lost =
                                         (c.client.closeCause as? io.kuicksilver.http2.runtime.Http2Exception.ConnectionClosed)
                                             ?.takeIf { it.cause != null }
                                     c.client.shutdown()
                                     lost?.let {
                                         @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
-                                        throw it.copyForCall()
+                                        throw H2LostBeforeStream(c, it.copyForCall())
                                     }
                                     throw kotlinx.io.IOException(
                                         "the server took no request on a new HTTP/2 connection (GOAWAY or SETTINGS_MAX_CONCURRENT_STREAMS 0)",
@@ -1337,7 +1394,29 @@ internal class H1Pool(
                     Obtained(pre.connection, pre.reused, preHeld, pre.h2, pre.coalesced)
                 } else {
                     // the resolution counts once, against the first connection (a repeat gets a connect timeout of its own)
-                    obtain(data, key, dns, proxy, webSocketKeys, if (attempt == 1) resolvedMillis else 0)
+                    try {
+                        obtain(data, key, dns, proxy, webSocketKeys, if (attempt == 1) resolvedMillis else 0)
+                    } catch (e: H2LostBeforeStream) {
+                        // a new HTTP/2 connection lost before the request got its stream: as a loss after it (below), a
+                        // handshake refusal is the call's failure, and any other loss (a reset, a truncation) repeats the
+                        // request, which was never sent (RFC 9113 section 8.7), at most twice. The refusal says what it
+                        // would have said after its stream, whatever the order: the connection, protocolSelected,
+                        // connectionAcquired
+                        if (!e.refusal && ++h2Repeats <= 2) {
+                            @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                            diagnostics?.let { it.attempts++ }
+                            attempt++
+                            events.emit("retry") { retry(data, attempt, e.loss) }
+                            continue
+                        }
+                        announceLost(data, e) { protocol ->
+                            if (announced != protocol) {
+                                announced = protocol
+                                onSelected?.invoke(protocol)
+                            }
+                        }
+                        throw e.loss
+                    }
                 }
             // a WebSocket holds the address its connection actually goes to (RFC 6455 section 4.1): one its keys did not
             // name (a family that answered late, a pooled or race connection) is taken now, without waiting; when another

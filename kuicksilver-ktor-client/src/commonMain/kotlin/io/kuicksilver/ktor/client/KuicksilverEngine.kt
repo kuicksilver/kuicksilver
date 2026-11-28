@@ -1184,12 +1184,12 @@ internal class KuicksilverEngine(
                 settleLostQuic(h3Attempt, network, origin, alt)
                 val lost = result.value as? H1Pool.LostBeforeRequest
                 if (lost != null) {
-                    // the TCP setup completed and won; its new HTTP/2 connection was lost before it took the request (over
-                    // TLS 1.3, the server's alert after the client's side of the handshake): the call fails as over TCP,
-                    // as when the loss comes after the request got its stream
+                    // the TCP setup completed and won; its new HTTP/2 connection was refused before it took the request
+                    // (over TLS 1.3, the server's alert after the client's side of the handshake): the call fails as over
+                    // TCP, with the events and diagnostics of a loss after the request got its stream
                     d.transport = Transport.Tcp
                     if (d.connectionTransport == Transport.Quic) d.connection = null
-                    selected(data, HttpProtocolVersion.HTTP_2_0, ProtocolReason.Race, d)
+                    h1.announceLost(data, lost.lost) { selected(data, it, ProtocolReason.Race, d) }
                     throw lost.loss
                 }
                 tcp(data, callContext, ProtocolReason.Race, d, result.value as H1Pool.Opened, tcpDns)

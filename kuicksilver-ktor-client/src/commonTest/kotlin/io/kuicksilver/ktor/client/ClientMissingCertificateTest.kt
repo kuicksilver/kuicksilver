@@ -150,6 +150,79 @@ class ClientMissingCertificateTest {
             }
         }
 
+    /** What a failed call said through the event listener, in order. */
+    private class Said : KuicksilverEventListener() {
+        val events = kotlin.concurrent.atomics.AtomicReference(emptyList<String>())
+
+        private fun add(e: String) {
+            while (true) {
+                val l = events.load()
+                if (events.compareAndSet(l, l + e)) break
+            }
+        }
+
+        override fun protocolSelected(
+            request: io.ktor.client.request.HttpRequestData,
+            protocol: io.ktor.http.HttpProtocolVersion,
+            reason: ProtocolReason,
+        ) = add("protocolSelected $protocol $reason")
+
+        override fun connectionAcquired(
+            request: io.ktor.client.request.HttpRequestData,
+            protocol: io.ktor.http.HttpProtocolVersion,
+            reused: Boolean,
+        ) = add("connectionAcquired $protocol reused=$reused")
+
+        override fun connectionReleased(
+            request: io.ktor.client.request.HttpRequestData,
+            protocol: io.ktor.http.HttpProtocolVersion,
+            kept: Boolean,
+        ) = add("connectionReleased $protocol kept=$kept")
+    }
+
+    /**
+     * The call's events and diagnostics do not hang on the order either, over TCP alone and in Preferred mode: whether the
+     * alert ends the new HTTP/2 connection after the request got its stream or before, the call says protocolSelected
+     * HTTP/2, connectionAcquired and connectionReleased once each, and its diagnostics name the same reason and an HTTP/2
+     * connection.
+     */
+    @Test fun negative_theCallSaysTheSameWhicheverOrder() =
+        h3Test {
+            withServer(http2 = true) { port ->
+                for (discovery in listOf<Http3Discovery?>(null, Http3Discovery.Preferred)) {
+                    val seen =
+                        listOf(false, true).map { lostBeforeStream ->
+                            val at = "discovery=$discovery, lostBeforeStream=$lostBeforeStream"
+                            val said = Said()
+                            val e =
+                                assertFails {
+                                    testClient(discovery, engine = { observability { eventListener = said } }).use { c ->
+                                        if (lostBeforeStream) {
+                                            (c.engine as KuicksilverEngine).h1.afterH2StartForTest = { client, _ -> client.awaitClosed() }
+                                        }
+                                        c.get("https://127.0.0.1:$port/")
+                                    }
+                                }
+                            assertEquals("the connection was lost: $alert", e.message, "$at: $e")
+                            val d =
+                                e.suppressedExceptions
+                                    .filterIsInstance<FailureDiagnostics>()
+                                    .single()
+                                    .diagnostics
+                            val connection = assertIs<TcpConnectionSnapshot>(d.connection, "$at: $d")
+                            assertEquals(io.ktor.http.HttpProtocolVersion.HTTP_2_0, connection.protocol, at)
+                            assertEquals("h2", connection.alpn, at)
+                            val events = said.events.load()
+                            assertEquals(1, events.count { it.startsWith("protocolSelected HTTP/2.0") }, "$at: $events")
+                            assertEquals(1, events.count { it.startsWith("connectionAcquired HTTP/2.0") }, "$at: $events")
+                            assertEquals(1, events.count { it.startsWith("connectionReleased HTTP/2.0") }, "$at: $events")
+                            Triple(events.filter { it.startsWith("protocolSelected") }, d.reason, d.transport)
+                        }
+                    assertEquals(seen[0], seen[1], "discovery=$discovery: after the stream, then before it")
+                }
+            }
+        }
+
     private suspend fun withServer(
         http2: Boolean,
         block: suspend (port: Int) -> Unit,
