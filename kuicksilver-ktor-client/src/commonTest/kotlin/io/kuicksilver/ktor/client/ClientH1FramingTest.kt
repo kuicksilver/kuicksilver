@@ -42,6 +42,8 @@ import kotlinx.coroutines.IO
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import kotlinx.io.readString
@@ -577,16 +579,29 @@ class ClientH1FramingTest {
      * configuration or by remembering the version of a prior received response." On first contact over cleartext an
      * OPTIONS on the same connection shows the version before a body of unknown length goes out chunked; the route is
      * remembered, so the next such request goes at once. Before, it went out chunked on first contact.
+     *
+     * The second POST may go on a new connection: a streamed body whose sender has not yet marked itself sent when the
+     * response ends makes the engine close the connection after the upload (`AfterResponse.CloseAfterUpload`), which a
+     * slow device (the API 24 emulator) hits. Before, the server read three requests from one connection and recorded the
+     * empty head of that connection's end as a request (an IndexOutOfBoundsException in the assertion).
      */
     @Test fun firstContactProbesBeforeTransferEncoding() =
         clientTest {
+            // connections run on Dispatchers.IO: the records are guarded; each is made before its response goes out, so the
+            // client's call ending orders it before the assertions
+            val lock = Mutex()
             val heads = ArrayList<List<String>>()
             val bodies = ArrayList<String>()
-            rawServerPerConnection({ _, input, output ->
-                repeat(3) {
+            val connections = ArrayList<Int>()
+            rawServerPerConnection({ index, input, output ->
+                while (true) {
                     val (head, body) = readRequest(input)
-                    heads += head
-                    bodies += body
+                    if (head.isEmpty()) return@rawServerPerConnection
+                    lock.withLock {
+                        heads += head
+                        bodies += body
+                        connections += index
+                    }
                     output.writeStringUtf8(
                         if (head[0].startsWith(
                                 "OPTIONS ",
@@ -603,9 +618,13 @@ class ClientH1FramingTest {
                     repeat(2) { assertEquals("ok", c.post("http://127.0.0.1:$port/up") { setBody(streamed("hello")) }.bodyAsText()) }
                 }
             }
-            assertEquals(listOf("OPTIONS /up HTTP/1.1", "POST /up HTTP/1.1", "POST /up HTTP/1.1"), heads.map { it[0] })
-            assertTrue(heads.drop(1).all { "Transfer-Encoding: chunked" in it }, "$heads")
-            assertEquals(listOf("", "hello", "hello"), bodies)
+            lock.withLock {
+                assertEquals(listOf("OPTIONS /up HTTP/1.1", "POST /up HTTP/1.1", "POST /up HTTP/1.1"), heads.map { it[0] })
+                assertTrue(heads.drop(1).all { "Transfer-Encoding: chunked" in it }, "$heads")
+                assertEquals(listOf("", "hello", "hello"), bodies)
+                // the probe's version is the knowledge for the request that follows it on the same connection
+                assertEquals(connections[0], connections[1], "the first POST did not follow the probe on its connection: $connections")
+            }
         }
 
     /**
