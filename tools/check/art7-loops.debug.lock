@@ -355,6 +355,7 @@ io.kuicksilver.ktor.client.h1.H1Pool.exchange | io.ktor.util.AttributesJvmBase.g
 io.kuicksilver.ktor.client.h1.H1Pool.exchange | io.kuicksilver.ktor.client.h1.PooledConnection.getRemoteIp | 1
 io.kuicksilver.ktor.client.h1.H1Pool.exchange | java.lang.Number.longValue | 1
 io.kuicksilver.ktor.client.h1.H1Pool.exchange | java.lang.Object.equals | 1
+io.kuicksilver.ktor.client.h1.H1Pool.exchange | java.lang.Throwable.getCause | 1
 io.kuicksilver.ktor.client.h1.H1Pool.exchange | java.util.Map.get | 2
 io.kuicksilver.ktor.client.h1.H1Pool.exchange | java.util.Map.put | 2
 io.kuicksilver.ktor.client.h1.H1Pool.exchange | kotlin.jvm.functions.Function0.invoke | 1
