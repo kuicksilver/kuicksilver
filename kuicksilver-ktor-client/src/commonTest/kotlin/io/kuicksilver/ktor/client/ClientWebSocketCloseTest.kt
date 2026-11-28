@@ -9,7 +9,6 @@ import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.utils.io.ByteReadChannel
-import io.ktor.utils.io.availableForRead
 import io.ktor.utils.io.discard
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.readByte
@@ -107,14 +106,16 @@ class ClientWebSocketCloseTest {
      * take, which the system sizes: [unwrittenCloseAttempts] sends more frames until it is ([zeroReaderAttempt]).
      */
     @Test fun negative_clientCloseLeavesAWriterTheServerTakesNothingFromItsCloseWait() =
-        clientTest { unwrittenCloseAttempts { data, frames -> zeroReaderAttempt(data, frames, closeWait = 1_000) } }
+        clientTest(UNWRITTEN_CLOSE_TEST_TIMEOUT) {
+            unwrittenCloseAttempts { data, frames -> zeroReaderAttempt(data, frames, closeWait = 1_000) }
+        }
 
     /**
      * The same with `client.close()` late in T1 (1.5 s into a 2 s close wait): the session still ends at its T1, counted
      * from its own Close, and the connection reset; the engine's close starts no close wait of its own.
      */
     @Test fun negative_aLateClientCloseEndsAWriterTheServerTakesNothingFromAtItsT1() =
-        clientTest {
+        clientTest(UNWRITTEN_CLOSE_TEST_TIMEOUT) {
             unwrittenCloseAttempts { data, frames ->
                 zeroReaderAttempt(data, frames, closeWait = 2_000, closeAt = 1_500.milliseconds)
             }
@@ -127,7 +128,7 @@ class ClientWebSocketCloseTest {
      * held less than its capacity), the session counted it as written and ended at the engine's close with the server's
      * grace (1 s); the Close never left, and the connection's close, cut short by the engine's cleanup, ended the stream
      * inside a frame with a FIN (the server read `cut`). The connection is filled 64 KiB frame by frame until a frame
-     * stays queued: nothing of it taken for 1 s, the kernel's buffers full; the Close then fits behind it.
+     * stays queued ([fillUntilAFrameStaysQueued]); the Close then fits behind it.
      */
     @Test fun negative_aCloseQueuedInFrontOfAFullKernelIsNotWritten() =
         clientTest {
@@ -156,18 +157,8 @@ class ClientWebSocketCloseTest {
                     val session = c.webSocketSession("ws://127.0.0.1:$port/ws")
                     val lifetime = session.call.attributes[WebSocketLifetimeKey]
                     val conn = withTimeout(10.seconds) { handed.await() }
-                    val queued = conn.output as ByteReadChannel
                     val frame = ByteArray(64 * 1024)
-                    var frames = 0
-                    do {
-                        session.outgoing.send(Frame.Binary(true, frame))
-                        frames++
-                        kotlinx.coroutines.delay(20) // Ktor's writer hands the frame on
-                    } while (!stillQueuedAfter(conn, queued))
-                    // what waits leaves room for the Close in the channel: a writer held in its flush (the channel full)
-                    // has not written it either way, the case of the other tests
-                    val waiting = queued.availableForRead
-                    assertTrue(waiting in 1..(256 * 1024), "$waiting bytes queued in front of the kernel after $frames frames")
+                    val frames = fillUntilAFrameStaysQueued(session, conn, frame)
                     val started =
                         kotlin.time.TimeSource.Monotonic
                             .markNow()
@@ -192,33 +183,6 @@ class ClientWebSocketCloseTest {
                 selector.close()
             }
         }
-
-    /**
-     * Whether what [conn] queued stays in front of the kernel: false once the socket's writer took it all ([queued] is
-     * the connection's output); true when it still holds bytes and took none of them for 1 s (polled every 10 ms).
-     */
-    private suspend fun stillQueuedAfter(
-        conn: io.kuicksilver.ktor.client.h1.H1Connection,
-        queued: ByteReadChannel,
-    ): Boolean {
-        var seen = -1
-        var since =
-            kotlin.time.TimeSource.Monotonic
-                .markNow()
-        while (true) {
-            if (conn.outputDrained()) return false
-            val now = queued.availableForRead
-            if (now != seen) {
-                seen = now
-                since =
-                    kotlin.time.TimeSource.Monotonic
-                        .markNow()
-            } else if (since.elapsedNow() >= 1.seconds) {
-                return true
-            }
-            kotlinx.coroutines.delay(10)
-        }
-    }
 
     /**
      * A server that reads slowly but steadily (256 KiB every 10 ms, then every 30 ms) as the client is closed: the writer
@@ -432,7 +396,7 @@ class ClientWebSocketCloseTest {
      * data while the buffers take the Close.
      */
     @Test fun negative_anUnwrittenCloseIsBoundedByTheCloseWait() =
-        clientTest {
+        clientTest(UNWRITTEN_CLOSE_TEST_TIMEOUT) {
             val read = unwrittenCloseAttempts { data, frames -> unwrittenCloseAttempt(data, frames) }
             assertEquals("reset", read.last(), "the connection was reset, not ended with a FIN: $read")
         }
@@ -532,6 +496,61 @@ internal suspend fun unwrittenCloseAttempts(attempt: suspend (data: ByteArray, f
         check(frames <= MAX_UNWRITTEN_FRAMES) { "$read: ${frames / 2} frames of $size bytes and the Close fit into the buffers" }
     }
 }
+
+/** The most frames [fillUntilAFrameStaysQueued] sends: 64 MiB of frames of 64 KiB. */
+internal const val MAX_FILL_FRAMES: Int = 1024
+
+/**
+ * Sends [frame] on [session] (an HTTP/1.1 session on [conn]) one at a time until one stays queued in front of the kernel
+ * of a peer that reads nothing: the kernels' socket buffers (and the peer's channel) are full. Returns the frames sent.
+ * Stays queued means: bytes wait in the connection's channels ([io.kuicksilver.ktor.client.h1.H1Connection.queuedForTest])
+ * and none of them were taken for 1 s (polled every 10 ms); a frame the socket's writer took all of is followed by the
+ * next. After each frame a pause of 20 ms lets Ktor's writer hand it on. Fails after [MAX_FILL_FRAMES] frames: buffers
+ * that take more than that are not what this models. Fails as well when more than 256 KiB wait at the end, so that a
+ * Close still fits into the channel behind them: with a full channel the writer is held in its flush and has not written
+ * its Close either way, which the other tests cover.
+ */
+internal suspend fun fillUntilAFrameStaysQueued(
+    session: io.ktor.websocket.WebSocketSession,
+    conn: io.kuicksilver.ktor.client.h1.H1Connection,
+    frame: ByteArray,
+): Int {
+    var frames = 0
+    while (true) {
+        check(frames < MAX_FILL_FRAMES) {
+            "$frames frames of ${frame.size} bytes went into the kernels' socket buffers and the server's channel"
+        }
+        session.outgoing.send(Frame.Binary(true, frame))
+        frames++
+        kotlinx.coroutines.delay(20) // Ktor's writer hands the frame on
+        var seen = -1
+        var since =
+            kotlin.time.TimeSource.Monotonic
+                .markNow()
+        while (!conn.outputDrained()) {
+            val now = conn.queuedForTest
+            if (now != seen) {
+                seen = now
+                since =
+                    kotlin.time.TimeSource.Monotonic
+                        .markNow()
+            } else if (since.elapsedNow() >= 1.seconds) {
+                assertTrue(now in 1..(256 * 1024), "$now bytes queued in front of the kernel after $frames frames")
+                return frames
+            }
+            kotlinx.coroutines.delay(10)
+        }
+    }
+}
+
+/**
+ * The bound of a test that runs [unwrittenCloseAttempts]: its worst case is four attempts (1, 2, 4 and 8 frames of
+ * 16 MiB), each bounded by a close wait of up to 2 s, the cleanup's 10 s beyond it and the server's 20 s to read up to
+ * 128 MiB, about 130 s in all where a normal run takes a few seconds; [clientTest]'s 60 s would cut such a worst case
+ * short with a timeout that hides which attempt it was in. The attempts start at one frame: no probe tells the buffers'
+ * size beforehand without the same cost as an attempt.
+ */
+internal val UNWRITTEN_CLOSE_TEST_TIMEOUT: kotlin.time.Duration = 150.seconds
 
 /** The most frames of 16 MiB an attempt of [unwrittenCloseAttempts] sends. */
 internal const val MAX_UNWRITTEN_FRAMES: Int = 8

@@ -428,7 +428,7 @@ class ClientWebSocketCloseOrderTest {
      * records for up to 3 s and then a FIN.
      */
     @Test fun negative_anUnwrittenCloseOverTlsIsBoundedByTheCloseWait() =
-        clientTest {
+        clientTest(UNWRITTEN_CLOSE_TEST_TIMEOUT) {
             var ends = emptyList<String>()
             val read =
                 unwrittenCloseAttempts { data, frames ->
@@ -477,6 +477,58 @@ class ClientWebSocketCloseOrderTest {
                 }
             assertEquals("reset", read.last(), "the TLS stream failed, it did not end: $read")
             assertTrue("client RST" in ends && "client FIN" !in ends && "client close_notify" !in ends, "a reset only: $ends")
+        }
+
+    /**
+     * Over TLS, as `ClientWebSocketCloseTest.negative_aCloseQueuedInFrontOfAFullKernelIsNotWritten`: the session's Close
+     * waits in front of a kernel that takes nothing more (the server reads nothing) when the engine is closed. It has not
+     * been written: the session keeps its close wait (T1, 3 s here), is cut at its end and the TCP connection reset (no
+     * close_notify, no FIN). Over TLS, empty channels did not say the Close left. The TLS session's writer pump may hold
+     * a piece it has read but not yet written as records, and the socket's writer a chunk the kernel has not taken.
+     * The session's counts and the kernel's count say it now (`H1Connection.outputTakenFromNow`). A regression guard of
+     * that path: on the JVM the window between the counts and the channels is too short to hit on purpose.
+     */
+    @Test fun negative_aCloseQueuedInFrontOfAFullKernelOverTlsIsNotWritten() =
+        clientTest {
+            val released = CompletableDeferred<Unit>()
+            val result = CompletableDeferred<List<String>>()
+            var ends = emptyList<String>()
+            val handed = CompletableDeferred<io.kuicksilver.ktor.client.h1.H1Connection>()
+            val closeWait = 3_000L
+            rawServer(true, serve = { conn ->
+                released.await() // reads nothing before the engine's cleanup is over
+                val read = probing(conn.output) { readClientFrames(conn.input, it) }
+                conn.stopFeeding()
+                withTimeout(20.seconds) { conn.events.all.first { "client FIN" in it || "client RST" in it } }
+                ends = conn.events.all.value
+                result.complete(read)
+            }) { port ->
+                val c = testClient(block = { install(WebSockets) })
+                engine(c).h1.webSocketCloseWaitMillis = closeWait
+                engine(c).h1.webSocketConnectionForTest = { handed.complete(it) }
+                coroutineScope {
+                    val session = c.webSocketSession("wss://127.0.0.1:$port/ws")
+                    val lifetime = session.call.attributes[WebSocketLifetimeKey]
+                    val conn = withTimeout(10.seconds) { handed.await() }
+                    val frame = ByteArray(64 * 1024)
+                    val frames = fillUntilAFrameStaysQueued(session, conn, frame)
+                    launch { session.close(CloseReason(4002, "client bye")) }
+                    session.call.coroutineContext[kotlinx.coroutines.Job]!!.join()
+                    c.close()
+                    val endedEarly =
+                        kotlinx.coroutines.withTimeoutOrNull((closeWait / 2).milliseconds) { engine(c).cleanup.join() } != null
+                    withTimeout((closeWait + 10_000).milliseconds) { engine(c).cleanup.join() }
+                    released.complete(Unit)
+                    val read = withTimeout(30.seconds) { result.await() }
+                    assertTrue(read.none { it.startsWith("close") }, "a Close queued in front of a full kernel left: $read")
+                    assertTrue(lifetime.cutByCloseWait, "a Close queued in front of the kernel counted as written: $read")
+                    assertEquals(false, endedEarly, "the engine's close cut short a writer that had not written its Close: $read")
+                    assertTrue(read.dropLast(1).all { it == "binary ${frame.size}" }, "only whole frames before the end: $read")
+                    assertTrue(read.size - 1 <= frames, "no more frames than were sent: $read")
+                    assertEquals("reset", read.last(), "the TLS stream failed, it did not end: $read")
+                    assertTrue("client RST" in ends && "client FIN" !in ends && "client close_notify" !in ends, "a reset only: $ends")
+                }
+            }
         }
 
     /**

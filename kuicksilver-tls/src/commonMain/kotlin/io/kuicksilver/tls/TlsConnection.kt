@@ -540,10 +540,32 @@ public class TlsConnection private constructor(
                 sent += n
             }
             transportOut.flush()
+            cipherSent += sent // under drainLock: one drain at a time
         }
         drained.trySend(Unit)
         return sent
     }
+
+    @Volatile private var cipherSent = 0L
+
+    @Volatile private var plainSent = 0L
+
+    /**
+     * The ciphertext bytes this session has written to `transportOut` and flushed so far: records of [output], alerts,
+     * handshake and post-handshake messages. With [plaintextSent], it tells an engine what must still reach the kernel
+     * before the plaintext written up to some point has left it: the transport's own count against this one.
+     */
+    @InternalKuicksilverApi
+    public val ciphertextSent: Long get() = cipherSent
+
+    /**
+     * The bytes of [output] whose records this session has written to `transportOut` so far. A flush of [output] does not
+     * say so: it returns once the channel holds less than its capacity, and the writer pump may still hold a piece it has
+     * read but not yet encrypted, or encrypted but not yet written. It only grows; [ciphertextSent] has grown by those
+     * records first.
+     */
+    @InternalKuicksilverApi
+    public val plaintextSent: Long get() = plainSent
 
     private val drainLock = Mutex()
     private val drainBuffer = ByteArray(16 * 1024)
@@ -802,6 +824,8 @@ public class TlsConnection private constructor(
                         off += w
                     }
                     drainToTransport()
+                    // the records of these bytes are in the transport now (the drain above wrote and flushed them)
+                    if (w > 0) plainSent += w
                 }
             }
         } catch (

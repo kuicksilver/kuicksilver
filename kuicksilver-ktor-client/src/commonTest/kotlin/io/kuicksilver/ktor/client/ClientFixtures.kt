@@ -194,7 +194,13 @@ internal suspend fun ipv6LoopbackAvailable(): Boolean =
         }
     }.also { ipv6LoopbackProbe = it }
 
-internal fun clientTest(block: suspend () -> Unit) = runBlocking { withTimeout(60.seconds) { block() } }
+internal fun clientTest(block: suspend () -> Unit) = clientTest(60.seconds, block)
+
+/** [clientTest] bounded by [timeout] instead of 60 s: a test whose worst case needs more (it says why). */
+internal fun clientTest(
+    timeout: kotlin.time.Duration,
+    block: suspend () -> Unit,
+) = runBlocking { withTimeout(timeout) { block() } }
 
 private var quicServerProbe: Boolean? = null
 

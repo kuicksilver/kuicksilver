@@ -214,33 +214,54 @@ internal class H1Connection(
     fun outputDrained(): Boolean = output.queuedNothing() && (tcpOut?.queuedNothing() ?: true)
 
     /**
-     * From now on (a WebSocket's hand-over): a wait until what was handed to [output] since, its first `handed` bytes
-     * (`HeldTransportEnd.handed`), has left the engine. A flush of [output] does not say so: it returns once the socket's
-     * channel holds less than its capacity, with the rest still queued in front of the kernel. Without TLS the kernel's
-     * count says it (the socket's [bytesSent] since now); over TLS, that nothing waits in either channel ([outputDrained]).
-     * Polled while it has not, from 1 ms up to every [OUTPUT_TAKEN_POLL]: the channels say nothing when they empty. The
-     * wait is the caller's to bound (a WebSocket's close wait).
+     * From now on (a WebSocket's hand-over): a wait until what was handed to [output] since has reached the kernel, its
+     * first `handed` bytes (`HeldTransportEnd.handed`). A flush of [output] does not say so: it returns once the socket's
+     * channel holds less than its capacity, with the rest still queued in front of the kernel. Nor do empty channels: the
+     * socket's writer may hold a piece it took but the kernel has not (Kotlin/Native's write buffer, a JVM write blocked on
+     * a full kernel), and over TLS the session's writer pump one it read but has not written as records yet. So the counts
+     * decide. Without TLS, the socket's kernel count ([bytesSent] since now) covers `handed`. Over TLS, the session has
+     * written the records of `handed` plaintext bytes ([TlsConnection.plaintextSent] since now), and the kernel's count
+     * covers the ciphertext the session had written by then ([TlsConnection.ciphertextSent] since now). Both also need the
+     * channels empty. A socket that does not count ([bytesSent] null: one not opened by `connectTcp` or `bindTcp`) has
+     * only the channels and the session's count to go by. Polled while it has not happened, from 1 ms up to every
+     * [OUTPUT_TAKEN_POLL]: neither the channels nor the counts say when they move. The caller bounds the wait (a
+     * WebSocket's close wait).
      */
     fun outputTakenFromNow(): suspend (handed: Long) -> Unit {
-        val base = if (tls == null) socket.bytesSent else null
+        val sent0 = socket.bytesSent
+        val session = tls
+        if (session == null) return { handed -> pollUntil { outputDrained() && kernelTook(sent0, handed) } }
+        val plain0 = session.plaintextSent
+        val cipher0 = session.ciphertextSent
         return { handed ->
-            // the socket's writer usually takes the last bytes within a millisecond: short steps first
-            var step = 1.milliseconds
-            while (!outputTaken(base, handed)) {
-                delay(step)
-                step = minOf(step * 2, OUTPUT_TAKEN_POLL)
-            }
+            pollUntil { session.plaintextSent - plain0 >= handed }
+            val cipher = session.ciphertextSent - cipher0
+            pollUntil { outputDrained() && kernelTook(sent0, cipher) }
         }
     }
 
-    private fun outputTaken(
-        base: Long?,
-        handed: Long,
+    /** The kernel took [bytes] since the socket's count was [sent0]; true when the socket does not count. */
+    private fun kernelTook(
+        sent0: Long?,
+        bytes: Long,
     ): Boolean {
-        if (!outputDrained()) return false
         val sent = socket.bytesSent
-        return base == null || sent == null || sent - base >= handed
+        return sent0 == null || sent == null || sent - sent0 >= bytes
     }
+
+    private suspend inline fun pollUntil(done: () -> Boolean) {
+        // the socket's writer usually takes the last bytes within a millisecond: short steps first
+        var step = 1.milliseconds
+        while (!done()) {
+            delay(step)
+            step = minOf(step * 2, OUTPUT_TAKEN_POLL)
+        }
+    }
+
+    /** The bytes waiting in [output] and, over TLS, in the socket's own channel (tests). */
+    internal val queuedForTest: Int get() = output.queued() + (tcpOut?.queued() ?: 0)
+
+    private fun ByteWriteChannel.queued(): Int = (this as? ByteReadChannel)?.availableForRead ?: 0
 
     private fun ByteWriteChannel.queuedNothing(): Boolean = (this as? ByteReadChannel)?.availableForRead == 0
 
