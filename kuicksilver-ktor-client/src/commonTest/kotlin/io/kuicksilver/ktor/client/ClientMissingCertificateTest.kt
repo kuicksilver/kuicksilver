@@ -95,9 +95,15 @@ class ClientMissingCertificateTest {
 
     /**
      * Preferred mode (docs/guide/engine-tls.md, mutual TLS): HTTP/3 fails with the alert, the call goes on over TCP and fails
-     * there as over TCP, with no suppressed exceptions (the TCP setup did not fail) and a `raceEnded` that names HTTP/2,
-     * whatever the order: the alert ends the new HTTP/2 connection after the request got its stream, or before
+     * there as over TCP, with no suppressed exceptions (the TCP setup did not fail), whatever the order: the alert ends the
+     * new HTTP/2 connection after the request got its stream, or before
      * ([io.kuicksilver.ktor.client.h1.H1Pool.afterH2StartForTest] waits for the connection's end, as a slow host does).
+     *
+     * HTTP/3 fails in the race (`raceEnded` names HTTP/2, with the alert or before HTTP/3 answered), or after it won: over
+     * TLS 1.3 the client's side of the QUIC handshake completes before the server checks the certificate (RFC 9001 section
+     * 4.1.1), so HTTP/3's setup may win the race before its alert arrives, and its request then fails with the alert and
+     * falls back (`fallback` gets the TransportClosed). The second order holds the TCP side until the alert ended its
+     * connection, which leaves HTTP/3 that much more time: a slow host (the Windows runner) saw HTTP/3 win there.
      */
     @Test fun negative_preferredFailsAsOverTcpWhicheverOrder() =
         h3Test {
@@ -109,6 +115,7 @@ class ClientMissingCertificateTest {
                             kotlin.concurrent.atomics.AtomicReference(
                                 emptyList<Pair<io.ktor.http.HttpProtocolVersion, Throwable?>>(),
                             )
+                        val fallbacks = kotlin.concurrent.atomics.AtomicReference(emptyList<Throwable>())
                         val e =
                             assertFails {
                                 testClient(Http3Discovery.Preferred, engine = {
@@ -126,6 +133,16 @@ class ClientMissingCertificateTest {
                                                         if (races.compareAndSet(l, l + (winner to h3Failure))) break
                                                     }
                                                 }
+
+                                                override fun fallback(
+                                                    request: io.ktor.client.request.HttpRequestData,
+                                                    cause: Throwable,
+                                                ) {
+                                                    while (true) {
+                                                        val l = fallbacks.load()
+                                                        if (fallbacks.compareAndSet(l, l + cause)) break
+                                                    }
+                                                }
                                             }
                                     }
                                 }).use { c ->
@@ -140,12 +157,21 @@ class ClientMissingCertificateTest {
                         assertIs<TlsException.AlertReceived>(generateSequence<Throwable>(e) { it.cause }.last(), "$at: $e")
                         assertEquals(emptyList(), e.suppressedExceptions.filter { it !is FailureDiagnostics }, "$at: $e")
                         val (winner, h3Failure) = races.load().singleOrNull() ?: kotlin.test.fail("$at: one raceEnded, got ${races.load()}")
-                        assertEquals(io.ktor.http.HttpProtocolVersion.HTTP_2_0, winner, at)
-                        // HTTP/3 had failed with the alert (CRYPTO_ERROR 0x0100 + 116), or had not answered yet
-                        assertTrue(
-                            h3Failure == null || (h3Failure is QuicException.ConnectionLost.TransportClosed && h3Failure.code == 0x0174L),
-                            "$at: $h3Failure",
-                        )
+
+                        // the alert as HTTP/3 reports it: CRYPTO_ERROR 0x0100 + 116
+                        fun Throwable?.isTheAlert() = this is QuicException.ConnectionLost.TransportClosed && code == 0x0174L
+                        if (winner == io.ktor.http.HttpProtocolVersion.HTTP_3_0) {
+                            // HTTP/3's side of the handshake completed before its alert came: its request failed with the
+                            // alert and fell back, once
+                            assertEquals(null, h3Failure, at)
+                            val fell = fallbacks.load().singleOrNull() ?: kotlin.test.fail("$at: one fallback, got ${fallbacks.load()}")
+                            assertTrue(fell.isTheAlert(), "$at: the fallback's cause $fell")
+                        } else {
+                            assertEquals(io.ktor.http.HttpProtocolVersion.HTTP_2_0, winner, at)
+                            // HTTP/3 had failed with the alert, or had not answered yet
+                            assertTrue(h3Failure == null || h3Failure.isTheAlert(), "$at: $h3Failure")
+                            assertEquals(emptyList(), fallbacks.load(), "$at: the call ran over TCP from the race on")
+                        }
                     }
                 }
             }
