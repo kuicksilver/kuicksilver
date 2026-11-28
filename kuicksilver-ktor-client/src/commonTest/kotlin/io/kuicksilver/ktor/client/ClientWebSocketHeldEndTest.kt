@@ -33,6 +33,7 @@ import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -52,7 +53,10 @@ class ClientWebSocketHeldEndTest {
 
     private fun now() = start.elapsedNow().inWholeMilliseconds
 
-    /** What a raw server read from the client, in order: "close", "pong", then "FIN" or "RST" with its time. */
+    /**
+     * What a raw server read from the client, in order: "close", "pong", then "FIN" or "RST" with its time; and "ping" for
+     * each Ping the server sent.
+     */
     private class Seen {
         val all = MutableStateFlow(emptyList<Pair<String, Long>>())
 
@@ -127,6 +131,7 @@ class ClientWebSocketHeldEndTest {
                             seen.await("close")
                             while (pings) {
                                 if (runCatching { ping(o) }.isFailure) break
+                                seen.add("ping", now())
                                 delay(50)
                             }
                             kotlinx.coroutines.awaitCancellation()
@@ -139,11 +144,15 @@ class ClientWebSocketHeldEndTest {
                 e.h1.webSocketCloseWaitMillis = 60_000
                 e.webSockets.hurryGraceMillis = grace
                 val port = (listener.localAddress as InetSocketAddress).port
-                c.webSocketSession("ws://127.0.0.1:$port/ws").close(CloseReason(4000, "bye"))
-                seen.await("close")
-                whileOpen(e, seen)
-                val closedAt = now()
-                c.close()
+                val closedAt: Long
+                try {
+                    c.webSocketSession("ws://127.0.0.1:$port/ws").close(CloseReason(4000, "bye"))
+                    seen.await("close")
+                    whileOpen(e, seen)
+                } finally {
+                    closedAt = now()
+                    c.close()
+                }
                 withTimeout(30.seconds) { e.cleanup.join() }
                 val took = now() - closedAt
                 withTimeout(30.seconds) { seen.all.first { l -> l.any { it.first == "FIN" || it.first == "RST" } } }
@@ -159,13 +168,20 @@ class ClientWebSocketHeldEndTest {
     /**
      * A server that keeps Pinging after the client's Close and never answers it: the open client's session goes on
      * answering, with no end of the connection. Before, Ktor's default session tried to answer on its closed outgoing
-     * channel and ended the session after about 200 ms (a FIN over HTTP/1.1, RST_STREAM CANCEL over HTTP/2).
+     * channel and ended the session after about 200 ms (a FIN over HTTP/1.1, RST_STREAM CANCEL over HTTP/2). Pongs are
+     * not counted against the Pings: several Pings read at once get one Pong (RFC 6455 section 5.5.3: "only the most
+     * recently processed Ping frame"), and a loaded host reads them in batches; what must hold is that the newest Ping
+     * still gets its Pong.
      */
     @Test fun negative_aServerPingingAfterOurCloseDoesNotEndTheSession() =
         h1(pings = true, grace = 200, whileOpen = { e, seen ->
             delay(800)
             assertEquals(null, seen.at("FIN") ?: seen.at("RST"), "the connection is still open: ${seen.all.value}")
-            assertTrue(seen.count("pong") >= 8, "Pongs kept coming: ${seen.all.value}")
+            // the newest Ping sent by now is answered (a Pong after it), and the session never stopped answering
+            val lastPing = assertNotNull(seen.all.value.lastOrNull { it.first == "ping" }, "${seen.all.value}").second
+            withTimeout(10.seconds) { seen.all.first { l -> l.any { it.first == "pong" && it.second >= lastPing } } }
+            assertTrue(seen.count("pong") >= 2, "Pongs kept coming: ${seen.all.value}")
+            assertEquals(null, seen.at("FIN") ?: seen.at("RST"), "the connection is still open: ${seen.all.value}")
             assertEquals(1, e.webSockets.size, "the session still waits for the server's Close")
         }) { seen, _, _ ->
             assertEquals(null, seen.at("RST"), "a clean end: ${seen.all.value}")
