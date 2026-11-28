@@ -217,12 +217,20 @@ class ClientWebSocketHeldEndTest {
     /**
      * HTTP/2: the stream's window takes exactly the client's Close (11 bytes); the server then reads nothing more and
      * Pings twice. The Pongs queue behind the closed window, and `client.close()` (300 ms after the Close arrived) gives the
-     * held end the rest of T1 (a 4 s close wait). Its in-order end, which waits for the Pongs to leave, does not wait past
-     * that bound: the stream is then reset. Before, the end waited a whole close wait more (6917 ms, 2898 ms of T1 left).
+     * held end the rest of T1 (a 4 s close wait), then its in-order end, which waits for the Pongs to leave, the grace
+     * (1 s) after that used-up bound (docs/spec/rfc/6455.md: its own END_STREAM still goes out after the hold, within the
+     * grace); the window never opens, so the stream is then reset, at the rest of T1 and the grace, not later. Before, the
+     * end waited a whole close wait more (6917 ms, 2898 ms of T1 left).
+     *
+     * The bound counts from what is left of T1 as the session counts it, from its own Close as the stream took it, and ends
+     * at the stream's end as the server sees it. Counted from before `close()` was called and up to the engine's whole
+     * cleanup, a slow host (the apple runner) added the time the Close took to reach the stream and the connection's own
+     * close to the bound (4050 ms, 2819 ms of T1 left).
      */
     @Test fun negative_aHeldEndBehindAZeroWindowEndsWithinT1() =
         clientTest {
             val arrived = CompletableDeferred<Unit>()
+            val streamEnded = CompletableDeferred<kotlin.time.TimeSource.Monotonic.ValueTimeMark>()
             tlsH2WithSilentUdp(
                 settings = io.kuicksilver.http2.http2Settings { initialStreamWindow = 11 },
                 enableConnectProtocol = true,
@@ -232,6 +240,7 @@ class ClientWebSocketHeldEndTest {
                         r.sendBody(ByteReadChannel("ok".encodeToByteArray()), end = true)
                         return@tlsH2WithSilentUdp
                     }
+                    r.invokeOnFailure { streamEnded.complete(TimeSource.Monotonic.markNow()) }
                     r.respond(200)
                     val out = ByteChannel()
                     launch { runCatching { r.sendBody(out, end = true) } }
@@ -248,16 +257,20 @@ class ClientWebSocketHeldEndTest {
                 e.h1.webSocketCloseWaitMillis = 4_000
                 c.get("https://127.0.0.1:$port/")
                 val s = c.webSocketSession("wss://127.0.0.1:$port/ws")
-                val ownClose = TimeSource.Monotonic.markNow()
                 s.close(CloseReason(4000, "bye"))
                 withTimeout(10.seconds) { arrived.await() }
                 delay(300)
-                val left = 4_000 - ownClose.elapsedNow().inWholeMilliseconds
+                // T1 as the session counts it, from its own Close as the stream took it
+                val left = assertNotNull(e.webSockets.remainingCloseWaitForTest(), "one live session")
+                assertTrue(left < 4_000, "T1 runs from the session's own Close")
                 val closed = TimeSource.Monotonic.markNow()
                 c.close()
                 withTimeout(30.seconds) { e.cleanup.join() }
-                val took = closed.elapsedNow()
-                assertTrue(took < (left + 1_200).milliseconds, "the cleanup took $took, $left ms of T1 were left")
+                val took = withTimeout(10.seconds) { streamEnded.await() } - closed
+                val bound = (left + WEBSOCKET_HURRY_GRACE_MILLIS).milliseconds
+                // the in-order end got its grace (a few ms for the whole milliseconds the bounds are counted in), and no more
+                assertTrue(took >= bound - 5.milliseconds, "the stream ended after $took, before the rest of T1 ($left ms) and the grace")
+                assertTrue(took < bound + 200.milliseconds, "the stream ended after $took, $left ms of T1 were left")
             }
         }
 }

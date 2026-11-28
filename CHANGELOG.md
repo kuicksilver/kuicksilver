@@ -2277,6 +2277,24 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   CRYPTO_ERROR before the handshake was confirmed) goes over TCP whatever its method when its body can be sent again:
   the server processed none of it (RFC 9001 section 5.7). Before, only an idempotent one did, so a POST failed with the
   QUIC close when HTTP/3 won the race and with the TCP failure when TCP did.
+- WebSocket client over HTTP/2 (RFC 8441), `client.close()` with a session whose bound was used up (a server that never
+  answered the Close): the stream could end with RST_STREAM CANCEL alone, without the END_STREAM the documented order
+  puts before it. The session's END_STREAM was handed to the connection, and the wait for the server, already over,
+  let the stream go at once: the reset drops what the connection still has queued for the stream (RFC 9113 section
+  5.4.2), so an END_STREAM the writer had not taken yet never went out. The end now waits, within the grace, until the
+  END_STREAM was handed to the transport; a transport that takes nothing is still reset at the bound. Found under load
+  by `ClientWebSocketCloseOrderTest.negative_h2EngineCloseEndsT1AgainstASilentServer`;
+  `negative_h2EngineCloseWritesTheEndStreamBeforeTheReset` holds the connection's writer to show it.
+- TLS over TCP, a connection whose job was cancelled: on Android its input (`TlsConnection.input`) read as ended cleanly,
+  as after the peer's close_notify, and so did a `TlsSocket`'s read channel whose relay saw that end before the socket's
+  cancellation reached it (the channel closed without a cause instead of failing with
+  `ConnectionEndedException.LocalClose`). The reader pump failed the input with the job's own cancellation, a
+  `JobCancellationException`, which Ktor's channels re-create through `createCopy()` wherever they hand the cause on, and
+  outside the coroutines debug mode (Android, Kotlin/Native, a JVM without -ea) that copy is null: the cause was
+  dropped. The input now fails with a plain `CancellationException` that carries the job's, which every runtime keeps.
+  Found on the API 35 emulator by `SocketTlsTest.negative_aCancelledSocketContextEndsTheRelayAndThePump`; the JVM tests run in debug
+  mode, where the copy survives (`TlsConnectionTest.negative_aCancelledJobFailsTheInputWithACauseEveryRuntimeKeeps`
+  checks the cause's type).
 - HTTP/1.1 client, a streamed upload the server stopped taking: the call could fail with
   `ClosedByteChannelException` ("connection closed") instead of its `SocketTimeoutException`. The timeout's expiry
   closes the connection under the stalled body, whose write then fails too, and that failure, preferred as the call's

@@ -694,6 +694,42 @@ class TlsConnectionTest {
         }
 
     /**
+     * The input of a connection whose job was cancelled fails with a cause ktor keeps on every runtime, never as a clean end.
+     * The reader pump cancelled it with the job's own cancellation, a JobCancellationException, which is a CopyableThrowable:
+     * ktor re-creates such a cause through createCopy() wherever it hands it on, and outside the coroutines debug mode
+     * (Android, Kotlin/Native, a JVM without -ea) createCopy() is null, so the input read as ended cleanly, a cancellation
+     * as the peer's close_notify (a TlsSocket's relay then ended the application's channel cleanly instead of with its
+     * LocalClose). The JVM tests run in debug mode, where the copy survives: the cause's type is what tells.
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    @Test
+    fun negative_aCancelledJobFailsTheInputWithACauseEveryRuntimeKeeps(): Unit =
+        runBlocking {
+            val pair = ChannelPair()
+            val clientJob = kotlinx.coroutines.Job()
+            val (c, s) =
+                withTimeout(20.seconds) {
+                    val c =
+                        async(Dispatchers.Default) { TlsConnection.client(pair.clientIn, pair.clientOut, TcpFixtures.client(), clientJob) }
+                    val s = async(Dispatchers.Default) { TlsConnection.server(pair.serverIn, pair.serverOut, TcpFixtures.server()) }
+                    c.await() to s.await()
+                }
+            try {
+                clientJob.cancel()
+                withTimeout(10.seconds) { while (!c.input.isClosedForRead) runCatching { c.input.awaitContent() } }
+                val cause = c.input.closedCause
+                assertIs<kotlinx.coroutines.CancellationException>(cause, "the cancelled input's cause")
+                assertTrue(
+                    cause !is kotlinx.coroutines.CopyableThrowable<*>,
+                    "the input's cause is re-created through createCopy(), which is null outside the debug mode: $cause",
+                )
+            } finally {
+                c.close()
+                s.close()
+            }
+        }
+
+    /**
      * The handshake reads the peer's chain and the negotiated parameters from ksl outside the session lock: a job cancelled
      * as the handshake completes (an HTTP client call cancelled, a hard stop) must not free the native session under it.
      * Freed at once from the job's end, it was gone while the handshake still used it (a use after free, and a cached

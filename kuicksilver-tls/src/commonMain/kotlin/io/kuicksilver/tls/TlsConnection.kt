@@ -126,7 +126,10 @@ public class TlsConnection private constructor(
     /** The most plaintext one ksl_tcp_write takes (a record), learnt from a write that took less than offered; the writer's alone. */
     private var recordBytes = Int.MAX_VALUE
 
-    /** Plaintext from the peer. Closed cleanly after `close_notify`; closed with a [TlsException] on any other end. */
+    /**
+     * Plaintext from the peer. Closed cleanly after `close_notify`; closed with a [TlsException] on any other end, with a
+     * [CancellationException] when the connection's job was cancelled under its reader pump.
+     */
     public val input: ByteReadChannel get() = inputView
 
     /** Plaintext to the peer. Closing it sends `close_notify`. */
@@ -735,7 +738,7 @@ public class TlsConnection private constructor(
         } catch (
             e: CancellationException,
         ) {
-            inputChannel.cancel(e)
+            inputChannel.cancel(keptCancellation(e))
             throw e
         } catch (
             _: InputDropLimitReached,
@@ -1683,6 +1686,17 @@ internal fun TrustConfig.cacheKey(): String =
 
         is TrustConfig.Custom -> "custom:${verifier.hashCode()}"
     }
+
+/**
+ * [e] as a cause a ktor channel keeps on every runtime. ktor re-creates a [kotlinx.coroutines.CopyableThrowable] cause
+ * through `createCopy()` wherever it hands the cause on (`closedCause`, a read's failure), and the job's own
+ * cancellation, a `JobCancellationException`, answers that with null outside the coroutines debug mode (Android,
+ * Kotlin/Native, a JVM without -ea): the input cancelled with it read as ended cleanly, a cancellation as the peer's
+ * close_notify. A plain [CancellationException] that carries [e] is wrapped, never dropped.
+ */
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+private fun keptCancellation(e: CancellationException): CancellationException =
+    if (e is kotlinx.coroutines.CopyableThrowable<*>) CancellationException(e.message, e) else e
 
 /**
  * [TlsConnection.input]: [inner] as the reader pump fills it, failing with a recorded failure only once what [inner]
