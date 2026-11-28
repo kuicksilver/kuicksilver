@@ -697,9 +697,9 @@ class TlsConnectionTest {
      * The input of a connection whose job was cancelled fails with a cause ktor keeps on every runtime, never as a clean end.
      * The reader pump cancelled it with the job's own cancellation, a JobCancellationException, which is a CopyableThrowable:
      * ktor re-creates such a cause through createCopy() wherever it hands it on, and outside the coroutines debug mode
-     * (Android) createCopy() is null, so the input read as ended cleanly, a cancellation as the peer's close_notify (a
-     * TlsSocket's relay then ended the application's channel cleanly instead of with its LocalClose). The JVM tests run in
-     * debug mode, where the copy survives: the cause's type is what tells.
+     * (Android, Kotlin/Native, a JVM without -ea) createCopy() is null, so the input read as ended cleanly, a cancellation
+     * as the peer's close_notify (a TlsSocket's relay then ended the application's channel cleanly instead of with its
+     * LocalClose). The JVM tests run in debug mode, where the copy survives: the cause's type is what tells.
      */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     @Test

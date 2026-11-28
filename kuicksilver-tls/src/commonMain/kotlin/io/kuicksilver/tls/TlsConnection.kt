@@ -1690,9 +1690,9 @@ internal fun TrustConfig.cacheKey(): String =
 /**
  * [e] as a cause a ktor channel keeps on every runtime. ktor re-creates a [kotlinx.coroutines.CopyableThrowable] cause
  * through `createCopy()` wherever it hands the cause on (`closedCause`, a read's failure), and the job's own
- * cancellation, a `JobCancellationException`, answers that with null outside the coroutines debug mode (Android, a JVM
- * without assertions): the input cancelled with it read as ended cleanly, a cancellation as the peer's close_notify. A
- * plain [CancellationException] that carries [e] is wrapped, never dropped.
+ * cancellation, a `JobCancellationException`, answers that with null outside the coroutines debug mode (Android,
+ * Kotlin/Native, a JVM without -ea): the input cancelled with it read as ended cleanly, a cancellation as the peer's
+ * close_notify. A plain [CancellationException] that carries [e] is wrapped, never dropped.
  */
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 private fun keptCancellation(e: CancellationException): CancellationException =

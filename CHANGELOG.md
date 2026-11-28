@@ -2276,9 +2276,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   cancellation reached it (the channel closed without a cause instead of failing with
   `ConnectionEndedException.LocalClose`). The reader pump failed the input with the job's own cancellation, a
   `JobCancellationException`, which Ktor's channels re-create through `createCopy()` wherever they hand the cause on, and
-  outside the coroutines debug mode (Android, a JVM without assertions) that copy is null: the cause was dropped. The
-  input now fails with a plain `CancellationException` that carries the job's, which every runtime keeps. Found on the
-  API 35 emulator by `SocketTlsTest.negative_aCancelledSocketContextEndsTheRelayAndThePump`; the JVM tests run in debug
+  outside the coroutines debug mode (Android, Kotlin/Native, a JVM without -ea) that copy is null: the cause was
+  dropped. The input now fails with a plain `CancellationException` that carries the job's, which every runtime keeps.
+  Found on the API 35 emulator by `SocketTlsTest.negative_aCancelledSocketContextEndsTheRelayAndThePump`; the JVM tests run in debug
   mode, where the copy survives (`TlsConnectionTest.negative_aCancelledJobFailsTheInputWithACauseEveryRuntimeKeeps`
   checks the cause's type).
 - HTTP/1.1 client, a streamed upload the server stopped taking: the call could fail with
