@@ -407,6 +407,19 @@ jobs:
           [ -n "$image" ] || { echo "::error::no digest-pinned image= line in tools/interop/autobahn.sh"; exit 1; }
           docker pull --platform linux/amd64 "$image"
           KSL_GRADLE="$G -x :kuicksilver-native:buildJniHost" bash tools/interop/autobahn.sh jvm
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        # the run's reports and logs, so a failed run can be read: each mode's summary, index.json and per-case JSON, the
+        # fuzzing suite's and the engine's output, the server's state when the suite ended (tools/interop/autobahn.sh); not
+        # the per-case HTML, which repeats the JSON
+        if: always() && matrix.arch == 'x64'
+        with:
+          name: 'autobahn-jvm-linux-x64-a${{ github.run_attempt }}'
+          path: |
+            build/autobahn/**/*.json
+            build/autobahn/**/*.log
+            build/autobahn/**/*.txt
+          if-no-files-found: warn
+          retention-days: 7
       - name: 'verify: results for the documentation site (tools/docs/verify.py)'
         if: '!cancelled()'
         env: { ARCH: '${{ matrix.arch }}', AUTOBAHN: "${{ matrix.arch == 'x64' && '--autobahn-manifest build/autobahn/variants.txt' || '' }}" }
@@ -508,6 +521,17 @@ jobs:
           [ -n "$image" ] || { echo "::error::no digest-pinned image= line in tools/interop/autobahn.sh"; exit 1; }
           docker pull --platform linux/amd64 "$image"
           KSL_GRADLE="$G" bash tools/interop/autobahn.sh linux-x64
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        # as after the JVM run: the reports and logs, not the per-case HTML
+        if: always()
+        with:
+          name: 'autobahn-linux-native-a${{ github.run_attempt }}'
+          path: |
+            build/autobahn/**/*.json
+            build/autobahn/**/*.log
+            build/autobahn/**/*.txt
+          if-no-files-found: warn
+          retention-days: 7
       - name: 'verify: results for the documentation site (tools/docs/verify.py)'
         if: '!cancelled()'
         run: |
