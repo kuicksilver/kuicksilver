@@ -2259,18 +2259,21 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   H3_NO_ERROR and repeats its CONNECTION_CLOSE once a probe timeout later (at most 250 ms; RFC 9000 section 10.2.1).
   Found on the API 24 emulator by the vendored contract test
   `HttpTimeoutTest.testSocketTimeoutWriteFailOnWritePerRequestAttributes` (`H3OrderlyCloseTest`).
-- HTTP/2 client, a new connection lost before the request got its stream. When the server refused this client in the
-  handshake (over TLS 1.3 its alert, certificate_required, comes after the client's side of the handshake, and a slow
+- HTTP/2 client, a new connection lost before the request got its stream. When the server refused this client's credentials
+  in the handshake (over TLS 1.3 its alert, certificate_required, comes after the client's side of the handshake, and a slow
   host may see it before the pool hands the connection out) the call depended on that order: in `Preferred` mode it
   carried HTTP/3's failure in `suppressed`, sent no `raceEnded` and left the lost QUIC setup unsettled, and over TCP alone
   it sent no `protocolSelected`, `connectionAcquired` or `connectionReleased` and its diagnostics named no connection.
   It now says the same as when the alert comes after the stream was taken: the TCP setup won the race, the events go out
-  and the diagnostics name the HTTP/2 connection. Any other loss there (a reset, a truncation) is a failed TCP setup: in
+  and the diagnostics name the HTTP/2 connection. Any other loss there (a reset, a truncation, an alert
+  about the server's own configuration such as unrecognized_name or no_application_protocol) is a failed TCP setup: in
   a race HTTP/3 may still win, and over TCP the request, never sent, is repeated on a new connection, at most twice, as
-  after its stream (RFC 9113 section 8.7). An endpoint of the HTTPS records whose server refuses this client in the
-  handshake (an alert it sends) fails the call with that refusal instead of passing on to the next endpoint and the
-  origin, which it did only when the refusal came before the request's stream; an endpoint whose certificate fails the
-  client's verification is still passed over for the next one and the origin (RFC 9460 section 3).
+  after its stream (RFC 9113 section 8.7), as is a loss after its stream before the server's SETTINGS. An endpoint of
+  the HTTPS records whose server refuses this client's credentials (certificate_required, or an alert about the
+  certificate the client sent) fails the call with that refusal instead of passing on to the next endpoint and the
+  origin, which it did only when the refusal came before the request's stream; an endpoint with any other alert, or
+  whose certificate fails the client's verification, is still passed over for the next one and the origin (RFC 9460
+  section 3).
 - HTTP/1.1 client, a streamed upload the server stopped taking: the call could fail with
   `ClosedByteChannelException` ("connection closed") instead of its `SocketTimeoutException`. The timeout's expiry
   closes the connection under the stalled body, whose write then fails too, and that failure, preferred as the call's

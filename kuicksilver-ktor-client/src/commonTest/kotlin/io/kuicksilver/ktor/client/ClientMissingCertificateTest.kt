@@ -310,6 +310,39 @@ class ClientMissingCertificateTest {
             }
         }
 
+    /**
+     * The other alerts are about one endpoint, not this client (RFC 9460 section 3: the next endpoint, then the origin): a
+     * records endpoint whose server offers no protocol the client does answers no_application_protocol (120, RFC 7301
+     * section 3.2) and the origin serves the call. Before, every alert but internal_error and user_canceled failed the
+     * call there.
+     */
+    @Test fun aRecordsEndpointWithAnotherAlertFallsToTheOrigin() =
+        clientTest {
+            val (origin, port) =
+                testServer(configure = { http3 { enabled = false } }) { routing { get("/") { call.respondText("origin") } } }
+            try {
+                tlsWithSilentUdp(alpn = listOf("x-none"), silentUdp = false, handler = { _, _, _, _ -> }) { other ->
+                    val name = "_$port._https.server.test"
+                    val record =
+                        io.kuicksilver.ktor.client.dns
+                            .SvcbRecord(1, "svc.server.test", listOf("h2"), false, other, emptyList(), emptyList(), 300, name)
+                    testClient(Http3Discovery.Auto, engine = {
+                        resolverForTest = { _, p ->
+                            listOf(
+                                io.kuicksilver.ktor.network
+                                    .TcpAddress(byteArrayOf(127, 0, 0, 1), p),
+                            )
+                        }
+                        network { httpsRecords = HttpsRecordsForTest { if (it == name) listOf(record) else emptyList() } }
+                    }).use { c ->
+                        assertEquals("origin", c.get("https://server.test:$port/").bodyAsText())
+                    }
+                }
+            } finally {
+                origin.stopSuspend(0, 0)
+            }
+        }
+
     private suspend fun withServer(
         http2: Boolean,
         block: suspend (port: Int) -> Unit,

@@ -2704,19 +2704,28 @@ internal class TcpProgress {
 }
 
 /**
- * Whether the causes hold the peer's refusal of this client in the handshake: an alert it sent (but internal_error and
- * user_canceled, which say nothing about this client), or this side's failed verification of it (but an unknown
- * revocation status, which may be gone on the next attempt). A transport loss (TlsException.Protocol) is not one.
+ * Whether the causes hold a refusal of this client in the handshake that another connection, or another endpoint of the
+ * origin, would meet again: the server's refusal of this client's credentials ([isCredentialRefusal]), or this side's failed
+ * verification of the server (but an unknown revocation status, which may be gone on the next attempt). Any other alert
+ * (unrecognized_name, no_application_protocol, handshake_failure, protocol_version, insufficient_security, a decode error...)
+ * is about one server's configuration, and a transport loss (TlsException.Protocol) is none at all: a request on such a
+ * connection is repeated as RFC 9113 section 8.7 allows, and in a race the TCP setup failed.
  */
-internal fun Throwable.isHandshakeRefusal(): Boolean = isPeerRefusal() || failedVerification()
+internal fun Throwable.isHandshakeRefusal(): Boolean = isCredentialRefusal() || failedVerification()
 
 /**
- * Whether the causes hold the peer's refusal of this client in the handshake: an alert it sent, but internal_error (80)
- * and user_canceled (90), which say nothing about this client. A refusal that holds on every server of the origin, as a
- * client certificate it does not take ([isHandshakeRefusal] adds this side's failed verification of the peer).
+ * Whether the causes hold the server's refusal of this client's own credentials: certificate_required (116, RFC 9846
+ * section 4.4.2.4) or an alert about the certificate it sent, bad_certificate (42), unsupported_certificate (43),
+ * certificate_revoked (44), certificate_expired (45), certificate_unknown (46), unknown_ca (48) or access_denied (49)
+ * (RFC 9846 section 6.2). Those hold on every server of the origin that asks for a client certificate; every other alert
+ * is about the endpoint. Whether the server sent a CertificateRequest is not known to this side (the TLS layer does not
+ * report it), so the alert alone decides.
  */
-internal fun Throwable.isPeerRefusal(): Boolean =
-    generateSequence(this) { it.cause }.any { it is io.kuicksilver.tls.TlsException.AlertReceived && it.code != 80 && it.code != 90 }
+internal fun Throwable.isCredentialRefusal(): Boolean =
+    generateSequence(this) { it.cause }.any { it is io.kuicksilver.tls.TlsException.AlertReceived && it.code in CREDENTIAL_ALERTS }
+
+/** The alerts of [isCredentialRefusal]. */
+private val CREDENTIAL_ALERTS = setOf(42, 43, 44, 45, 46, 48, 49, 116)
 
 /** Whether the causes hold this side's failed verification of the peer, but an unknown revocation status (it may be gone next time). */
 private fun Throwable.failedVerification(): Boolean =

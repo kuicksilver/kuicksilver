@@ -30,7 +30,7 @@ import io.kuicksilver.ktor.client.dns.HttpsResolution
 import io.kuicksilver.ktor.client.dns.httpsQueryName
 import io.kuicksilver.ktor.client.h1.H1Pool
 import io.kuicksilver.ktor.client.h1.SpinLock
-import io.kuicksilver.ktor.client.h1.isPeerRefusal
+import io.kuicksilver.ktor.client.h1.isCredentialRefusal
 import io.kuicksilver.ktor.client.h1.monotonicMillis
 import io.kuicksilver.ktor.client.h3.H3ClosedAfterGoAwayKey
 import io.kuicksilver.ktor.client.h3.H3NotSent
@@ -1165,8 +1165,9 @@ internal class KuicksilverEngine(
         return when (result.winner) {
             Protocol.H3 -> {
                 val conn = result.value as io.kuicksilver.http3.Http3Connection
-                // QUIC works here and the alternative works only once the handshake completed, not on a 0-RTT start
-                // (Chromium marks QUIC working at handshake confirmation); the RTT is a measured one then. A failed
+                // QUIC works here and the alternative works only once the handshake completed, not on a 0-RTT start (this
+                // side's handshake completion, RFC 9001 section 4.1.1, not its confirmation, section 4.1.2, which comes with
+                // HANDSHAKE_DONE; Chromium marks QUIC working when the handshake completes too); the RTT is a measured one then. A failed
                 // handshake marks nothing here: the request's fallback marks the alternative broken
                 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                 if (conn.quic.isHandshakeComplete) {
@@ -1682,11 +1683,12 @@ internal class KuicksilverEngine(
 
     /**
      * A TCP connection for [data] through [dns], or [EndpointUnreachable] when none could be set up. The server's refusal
-     * of this client in the handshake ([io.kuicksilver.ktor.client.h1.isPeerRefusal]: an alert it sent, such as
-     * certificate_required) is thrown as it is: every server of the origin would refuse the client again after a full
-     * handshake, and the call names the refusal as over any other path. This side's failed verification of the
-     * endpoint's certificate is EndpointUnreachable, as any failed endpoint (RFC 9460 section 3): the next endpoint, and
-     * in the end the origin, is tried, each verified the same way.
+     * of this client's credentials in the handshake ([io.kuicksilver.ktor.client.h1.isCredentialRefusal]: certificate_required,
+     * or an alert about the certificate the client sent) is thrown as it is: every server of the origin that asks for one
+     * would refuse the client again after a full handshake, and the call names the refusal as over any other path. Every
+     * other failure is EndpointUnreachable, as any failed endpoint (RFC 9460 section 3): any other alert (unrecognized_name
+     * at a TargetName, no_application_protocol, handshake_failure ...), which is about that endpoint's configuration, and
+     * this side's failed verification of the endpoint's certificate, as every later endpoint is verified the same way.
      */
     private suspend fun openOrUnreachable(
         data: HttpRequestData,
@@ -1697,7 +1699,7 @@ internal class KuicksilverEngine(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
-            if (e.isPeerRefusal()) throw e
+            if (e.isCredentialRefusal()) throw e
             throw EndpointUnreachable(e)
         }
 
