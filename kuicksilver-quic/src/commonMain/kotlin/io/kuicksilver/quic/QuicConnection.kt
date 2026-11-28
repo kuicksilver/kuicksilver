@@ -309,6 +309,13 @@ public suspend fun QuicConnection.repeatClose(): Boolean = (this as? io.kuicksil
 public fun QuicConnection.wasHandshakeConfirmed(): Boolean? =
     (this as? io.kuicksilver.quic.runtime.ConnectionRuntime)?.wasHandshakeConfirmed
 
+/**
+ * [QuicConnection.earlyDataAccepted] of an endpoint's connection, read as a function (an engine's loop that must not call
+ * through the interface); null when no 0-RTT was offered, not settled yet, or not an endpoint's connection.
+ */
+@io.kuicksilver.annotations.InternalKuicksilverApi
+public fun QuicConnection.wasEarlyDataAccepted(): Boolean? = (this as? io.kuicksilver.quic.runtime.ConnectionRuntime)?.earlyAcceptedNow
+
 /** The current probe timeout of [this] connection (RFC 9002 section 6.2.1, without the backoff); null when not an endpoint's. */
 @io.kuicksilver.annotations.InternalKuicksilverApi
 public suspend fun QuicConnection.currentPto(): kotlin.time.Duration? =

@@ -103,6 +103,7 @@ import io.kuicksilver.quic.probeUnsettled
 import io.kuicksilver.quic.repeatClose
 import io.kuicksilver.quic.sendsUnsettled
 import io.kuicksilver.quic.unmappedLiteral
+import io.kuicksilver.quic.wasEarlyDataAccepted
 import io.kuicksilver.quic.wasHandshakeConfirmed
 import io.kuicksilver.tls.TlsException
 import io.kuicksilver.tls.completedWithin
@@ -318,9 +319,14 @@ internal class H3FailureFacts(
     /** The ECH rejection in the failure's causes ([echRejectionIn]). */
     val echRejected: TlsException.EchRejected?,
     /**
-     * The connection ended with a CRYPTO_ERROR (0x0100 to 0x01ff, a TLS alert, RFC 9001 section 4.8) before this side's
-     * handshake was confirmed: the server refused the handshake, and a server "MUST NOT process incoming 1-RTT protected
-     * packets before the TLS handshake is complete" (RFC 9001 section 5.7), so no request sent on it was processed.
+     * The server ended the connection with a CRYPTO_ERROR (0x0100 to 0x01ff, a TLS alert, RFC 9001 section 4.8) before
+     * this side's handshake was confirmed: it refused the handshake, and a server "MUST NOT process incoming 1-RTT
+     * protected packets before the TLS handshake is complete" (RFC 9001 section 5.7), so no 1-RTT request on it was
+     * processed. Only the server's close: a CRYPTO_ERROR of this side (a NewSessionTicket it rejects, say) can come after
+     * the server's handshake completed and before HANDSHAKE_DONE arrived, when the server may have processed the request.
+     * Not when the server accepted 0-RTT, whose data it may process before the handshake completes (RFC 9001 section 4.6);
+     * the engine sends only a safe method without a body in 0-RTT anyway (`goesEarly`: Http3EarlyDataPolicy.SAFE_METHODS),
+     * so a request this concerns never went early.
      */
     val refusedUnconfirmed: Boolean = false,
 )
@@ -335,12 +341,15 @@ internal fun h3FailureFacts(
     connectionEnd: Throwable?,
     /** Whether the connection's handshake was ever confirmed (`QuicConnection.wasHandshakeConfirmed`); null when not known. */
     handshakeConfirmed: Boolean? = null,
+    /** Whether the server accepted the connection's 0-RTT (`QuicConnection.earlyDataAccepted`); null when none was offered or not known. */
+    earlyDataAccepted: Boolean? = null,
 ): H3FailureFacts {
     val cidChange = e !is CancellationException && (resumedServerCidChange(e) || resumedServerCidChange(connectionEnd))
     val named = e is QuicStalledException || e.cause is QuicStalledException
     val refused =
         e !is CancellationException && connectionEnd is QuicException.ConnectionLost.TransportClosed &&
-            connectionEnd.code in 0x0100L..0x01ffL && handshakeConfirmed == false
+            connectionEnd.initiator == Initiator.Peer && connectionEnd.code in 0x0100L..0x01ffL &&
+            handshakeConfirmed == false && earlyDataAccepted != true
     return H3FailureFacts(cidChange, named, isPeerShutdownClose(e), echRejectionIn(e), refused)
 }
 
@@ -2897,6 +2906,8 @@ internal class H3Pool(
                         },
                         @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
                         conn.quic.wasHandshakeConfirmed(),
+                        @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+                        conn.quic.wasEarlyDataAccepted(),
                     )
                 // a resumed handshake that met a server SCID change: the host's backoff starts now, before the retry below or
                 // the caller's fallback, so a retry makes a plain full handshake

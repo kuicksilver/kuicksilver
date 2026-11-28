@@ -698,7 +698,9 @@ internal class H1Pool(
         val conn: H2Conn,
         val loss: Throwable,
     ) : Exception(loss.message, loss) {
-        val refusal: Boolean get() = loss.cause?.isHandshakeRefusal() == true
+        // the server's refusal of this client's credentials alone: a verification of this side fails the handshake before
+        // the connection starts, and one that came later (a custom verifier, say) is no reason for the TCP setup to win
+        val refusal: Boolean get() = loss.cause?.isCredentialRefusal() == true
     }
 
     /**

@@ -15,7 +15,10 @@ import kotlin.test.assertTrue
  * method. A confirmed connection, another error code, an unknown confirmation and a cancellation are not that.
  */
 class H3FailureFactsTest {
-    private fun closed(code: Long) = QuicException.ConnectionLost.TransportClosed(code, 0, "", ByteArray(0), Initiator.Peer)
+    private fun closed(
+        code: Long,
+        initiator: Initiator = Initiator.Peer,
+    ) = QuicException.ConnectionLost.TransportClosed(code, 0, "", ByteArray(0), initiator)
 
     @Test fun aCryptoErrorBeforeConfirmationIsARefusedHandshake() {
         val end = closed(0x0174) // certificate_required
@@ -31,6 +34,14 @@ class H3FailureFactsTest {
         assertFalse(h3FailureFacts(end, closed(0x0200), handshakeConfirmed = false).refusedUnconfirmed, "above CRYPTO_ERROR")
         assertFalse(h3FailureFacts(end, closed(0x00ff), handshakeConfirmed = false).refusedUnconfirmed, "below CRYPTO_ERROR")
         assertFalse(h3FailureFacts(end, closed(0x0a), handshakeConfirmed = false).refusedUnconfirmed, "PROTOCOL_VIOLATION")
+        // this side's CRYPTO_ERROR (a NewSessionTicket it rejects) may come after the server processed the request
+        assertFalse(h3FailureFacts(end, closed(0x0174, Initiator.Local), handshakeConfirmed = false).refusedUnconfirmed, "local")
+        // 0-RTT the server accepted may have been processed before the handshake completed (RFC 9001 section 4.6)
+        assertFalse(
+            h3FailureFacts(end, end, handshakeConfirmed = false, earlyDataAccepted = true).refusedUnconfirmed,
+            "0-RTT accepted",
+        )
+        assertTrue(h3FailureFacts(end, end, handshakeConfirmed = false, earlyDataAccepted = false).refusedUnconfirmed, "0-RTT refused")
         val cancelled = kotlinx.coroutines.CancellationException("cancelled")
         assertFalse(h3FailureFacts(cancelled, end, handshakeConfirmed = false).refusedUnconfirmed, "a cancellation")
     }

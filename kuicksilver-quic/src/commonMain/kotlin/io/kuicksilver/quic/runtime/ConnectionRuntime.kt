@@ -166,6 +166,9 @@ internal class ConnectionRuntime(
 
     override val isHandshakeComplete: Boolean get() = handshake.isCompleted && !handshake.isCancelled
 
+    /** `QuicConnection.wasEarlyDataAccepted`: [earlyDataAccepted] as a final class's member. */
+    internal val earlyAcceptedNow: Boolean? get() = earlyAccepted
+
     /** `QuicConnection.wasHandshakeConfirmed`: the core's confirmation time, set on the loop and kept after the end. */
     internal val wasHandshakeConfirmed: Boolean get() = core.handshakeConfirmedAt != null
 
