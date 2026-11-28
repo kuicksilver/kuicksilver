@@ -4021,6 +4021,7 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerWebSocke
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerWebSocketHandshakeTest.negative_unreadableOwnAnswerClosesWith1011
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerWebSocketHandshakeTest.owsAroundTheKeyAndVersionIsAccepted
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerWebSocketHandshakeTest.validHandshakeIsUpgraded
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerWebSocketLargeEchoTest.messagesOf64KiBTo16MiBAreEchoedOneConnectionEach
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerWebTransportTest.echoRoute
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerWebTransportTest.h1RequestNeverMatchesWebTransportRoute
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerWebTransportTest.handlerExceptionClosesWithError

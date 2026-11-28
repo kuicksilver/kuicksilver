@@ -138,6 +138,22 @@ stop_server() { # <pid>: SIGTERM, then SIGKILL (a Kotlin/Native executable may h
   wait "$1" 2>/dev/null || true
 }
 
+# What the server was doing when the fuzzing client ended, for a run that stops early (a client that can no longer
+# connect, as 9.2.1 in int39's run): its sockets (lsof, when there is one) and, for the JVM, its threads (jcmd, of the
+# java process the background subshell started). Both go to <dir>/server-state.txt; nothing here fails the run.
+server_state() { # <kind> <pid> <port> <dir>
+  local kind=$1 pid=$2 port=$3 dir=$4 jpid
+  {
+    echo "== sockets of port $port"
+    if command -v lsof > /dev/null; then lsof -nP -iTCP:"$port" 2>&1 || true; else echo "(no lsof)"; fi
+    if [ "$kind" = jvm ]; then
+      jpid=$(pgrep -P "$pid" java 2>/dev/null | head -1)
+      echo "== threads of the server JVM (pid ${jpid:-$pid})"
+      if command -v jcmd > /dev/null; then jcmd "${jpid:-$pid}" Thread.print 2>&1 || true; else echo "(no jcmd)"; fi
+    fi
+  } > "$dir/server-state.txt" 2>&1
+}
+
 # The conformance program of a host kind with its arguments.
 run_host() { # <kind> <program> <argument>...
   local kind=$1; shift
@@ -164,6 +180,7 @@ host_server() { # <kind>: the server on this host, the fuzzing client in its con
   echo "{\"outdir\": \"/out\", \"servers\": [{\"agent\": \"$agent\", \"url\": \"ws://$target:$port\"}], $spec_cases}" > "$dir/spec.json"
   docker run --rm --platform linux/amd64 ${net[@]+"${net[@]}"} -v "$root/$dir:/out" "$image" \
     wstest -m fuzzingclient -s /out/spec.json > "$dir/wstest.log" 2>&1 || true
+  server_state "$kind" "$pid" "$port" "$dir"
   stop_server "$pid"
   verdict "$kind" server "$dir"
 }
