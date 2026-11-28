@@ -1066,7 +1066,7 @@ internal class ResponseWriterImpl(
      */
     internal val handedToTransport: Long get() = handed.value
 
-    /** [handedToTransport] as it moves: a wait for a count ([awaitHandedToTransport]) needs no polling. */
+    /** [handedToTransport] as it moves: a wait for a count ([awaitAcknowledged]) needs no polling. */
     private val handed = MutableStateFlow(0L)
 
     /**
