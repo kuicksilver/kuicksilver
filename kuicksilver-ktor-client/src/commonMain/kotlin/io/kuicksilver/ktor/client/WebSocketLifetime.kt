@@ -289,6 +289,14 @@ internal class WebSocketLifetime(
         writerEnd.complete()
     }
 
+    /** Whether the session's writer ended its channel in order ([writerEnded]; tests, in a failure's message). */
+    val writerEndedForTest: Boolean get() = writerEnd.isCompleted
+
+    /** The state a test reports when a session did not end as it should: what the lifetime knows of its end. */
+    fun stateForTest(): String =
+        "cut=$cutByCloseWait hurried=$isHurried writerEnded=${writerEnd.isCompleted} ownCloseQueued=$ownCloseQueued " +
+            "ended=${ended.load()} endCause=$endCause"
+
     /**
      * [block]'s result within [deadline] (as [io.kuicksilver.tls.completedWithin]: a result that came is never dropped),
      * or null when the deadline passed first. For the waits for the server's end of the transport: before this side's own
@@ -550,7 +558,10 @@ internal class WebSocketLifetime(
     private fun reportEndFailure(e: Throwable) {
         runCatching {
             val ev = events
-            if (ev != null && ev.logger.isEnabled(LogLevel.Warn)) ev.logger.log(LogLevel.Warn, "a WebSocket session's end failed", e)
+            // with the whole stack: an end handler that failed left its transport's end undone, and only the stack says where
+            if (ev != null && ev.logger.isEnabled(LogLevel.Warn)) {
+                ev.logger.log(LogLevel.Warn, "a WebSocket session's end failed: ${e.stackTraceToString()}", e)
+            }
         }
     }
 }

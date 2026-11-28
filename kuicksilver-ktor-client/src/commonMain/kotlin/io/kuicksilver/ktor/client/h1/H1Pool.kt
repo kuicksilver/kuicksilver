@@ -22,7 +22,6 @@ import io.ktor.util.date.GMTDate
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.ClosedReadChannelException
-import io.ktor.utils.io.availableForRead
 import io.ktor.utils.io.discard
 import io.kuicksilver.http2.runtime.H2ClientConnection
 import io.kuicksilver.ktor.client.Activity
@@ -206,64 +205,78 @@ internal class H1Connection(
         orderly?.invoke() ?: closeTransport()
     }
 
-    /**
-     * Everything handed to the connection's output has been taken by the socket's writer (and, over TLS, by the TLS
-     * session, then the socket's writer): nothing waits in the channels in front of the kernel. A TLS record the session
-     * is encrypting at that moment is not seen.
-     */
-    fun outputDrained(): Boolean = output.queuedNothing() && (tcpOut?.queuedNothing() ?: true)
+    /** The counts at a WebSocket's hand-over ([outputTakenFromNow]), from which [outputTaken] measures. */
+    private class SentAtHandOver(
+        /** The socket's kernel count ([bytesSent]); null for a socket that does not count. */
+        val raw: Long?,
+        /** Over TLS, the session's [TlsConnection.plaintextSent] and [TlsConnection.ciphertextSent]. */
+        val plain: Long,
+        val cipher: Long,
+    )
+
+    @kotlin.concurrent.Volatile private var sentAtHandOver: SentAtHandOver? = null
 
     /**
-     * From now on (a WebSocket's hand-over): a wait until what was handed to [output] since has reached the kernel, its
-     * first `handed` bytes (`HeldTransportEnd.handed`). A flush of [output] does not say so: it returns once the socket's
-     * channel holds less than its capacity, with the rest still queued in front of the kernel. Nor do empty channels: the
-     * socket's writer may hold a piece it took but the kernel has not (Kotlin/Native's write buffer, a JVM write blocked on
-     * a full kernel), and over TLS the session's writer pump one it read but has not written as records yet. So the counts
-     * decide. Without TLS, the socket's kernel count ([bytesSent] since now) covers `handed`. Over TLS, the session has
-     * written the records of `handed` plaintext bytes ([TlsConnection.plaintextSent] since now), and the kernel's count
-     * covers the ciphertext the session had written by then ([TlsConnection.ciphertextSent] since now). Both also need the
-     * channels empty. A socket that does not count ([bytesSent] null: one not opened by `connectTcp` or `bindTcp`) has
-     * only the channels and the session's count to go by. Polled while it has not happened, from 1 ms up to every
-     * [OUTPUT_TAKEN_POLL]: neither the channels nor the counts say when they move. The caller bounds the wait (a
-     * WebSocket's close wait).
+     * From now on (a WebSocket's hand-over): a wait until what was handed to [output] since, its first `handed` bytes
+     * (`HeldTransportEnd.handed`), has reached the kernel ([outputTaken]). A flush of [output] does not say so: it returns
+     * once the socket's channel holds less than its capacity, with the rest still queued in front of the kernel. Polled
+     * from 1 ms up to every [OUTPUT_TAKEN_POLL], as the counts do not say when they move. The caller bounds the wait (a
+     * WebSocket's close wait). A socket that does not count ([bytesSent] null: one not opened by `connectTcp` or
+     * `bindTcp`) does not wait: its flush is all there is to go by.
      */
     fun outputTakenFromNow(): suspend (handed: Long) -> Unit {
-        val sent0 = socket.bytesSent
-        val session = tls
-        if (session == null) return { handed -> pollUntil { outputDrained() && kernelTook(sent0, handed) } }
-        val plain0 = session.plaintextSent
-        val cipher0 = session.ciphertextSent
+        val at = SentAtHandOver(socket.bytesSent, tls?.plaintextSent ?: 0, tls?.ciphertextSent ?: 0)
+        sentAtHandOver = at
         return { handed ->
-            pollUntil { session.plaintextSent - plain0 >= handed }
-            val cipher = session.ciphertextSent - cipher0
-            pollUntil { outputDrained() && kernelTook(sent0, cipher) }
+            // the socket's writer usually takes the last bytes within a millisecond: short steps first
+            var step = 1.milliseconds
+            while (outputTaken(at, handed) == false) {
+                delay(step)
+                step = minOf(step * 2, OUTPUT_TAKEN_POLL)
+            }
         }
     }
 
-    /** The kernel took [bytes] since the socket's count was [sent0]; true when the socket does not count. */
-    private fun kernelTook(
-        sent0: Long?,
-        bytes: Long,
-    ): Boolean {
-        val sent = socket.bytesSent
-        return sent0 == null || sent == null || sent - sent0 >= bytes
+    /**
+     * Whether the first [handed] bytes written to [output] since the hand-over ([outputTakenFromNow]) have reached the
+     * kernel: null when that cannot be told (no hand-over, or a socket that does not count). The counts decide, never the
+     * channels. A look at a channel's content from outside its reader (`availableForRead`) moves the channel's flushed
+     * bytes into the buffer its reader is reading, from another thread than that reader's: with the wait polling it, a
+     * session of `everyClosedSessionDeliversItsClose` now and then never got its Close to the server on Kotlin/Native under
+     * load. Such a look also throws once the channel failed (ClosedReadChannelException). Empty channels
+     * would not say it either: the socket's writer may hold a chunk the kernel has not taken (Kotlin/Native's write
+     * buffer), and over TLS the session's writer pump a piece it has not written as records yet. Without TLS, the
+     * socket's kernel count since the hand-over covers [handed]. Over TLS, the session wrote the records of [handed]
+     * plaintext bytes ([TlsConnection.plaintextSent] since then), and the kernel's count covers all the ciphertext it has
+     * written since ([TlsConnection.ciphertextSent], which grows before the plaintext count does).
+     */
+    fun outputTaken(handed: Long): Boolean? = sentAtHandOver?.let { outputTaken(it, handed) }
+
+    private fun outputTaken(
+        at: SentAtHandOver,
+        handed: Long,
+    ): Boolean? {
+        val raw0 = at.raw ?: return null
+        val session = tls
+        if (session != null && session.plaintextSent - at.plain < handed) return false
+        val records = if (session == null) handed else session.ciphertextSent - at.cipher
+        val raw = socket.bytesSent ?: return null
+        return raw - raw0 >= records
     }
 
-    private suspend inline fun pollUntil(done: () -> Boolean) {
-        // the socket's writer usually takes the last bytes within a millisecond: short steps first
-        var step = 1.milliseconds
-        while (!done()) {
-            delay(step)
-            step = minOf(step * 2, OUTPUT_TAKEN_POLL)
-        }
+    /**
+     * The bytes handed to [output] since the hand-over that have not reached the kernel yet, given that [handed] were
+     * (tests: from the counts, as [outputTaken]; over TLS plaintext not yet sealed plus ciphertext not yet taken).
+     */
+    internal fun pendingForTest(handed: Long): Long? {
+        val at = sentAtHandOver ?: return null
+        val raw = (socket.bytesSent ?: return null) - (at.raw ?: return null)
+        val session = tls ?: return handed - raw
+        return (handed - (session.plaintextSent - at.plain)) + (session.ciphertextSent - at.cipher - raw)
     }
 
-    /** The bytes waiting in [output] and, over TLS, in the socket's own channel (tests). */
-    internal val queuedForTest: Int get() = output.queued() + (tcpOut?.queued() ?: 0)
-
-    private fun ByteWriteChannel.queued(): Int = (this as? ByteReadChannel)?.availableForRead ?: 0
-
-    private fun ByteWriteChannel.queuedNothing(): Boolean = (this as? ByteReadChannel)?.availableForRead == 0
+    /** The bytes the session's channel handed to [output] so far (tests; set at the hand-over). */
+    @kotlin.concurrent.Volatile internal var handedForTest: (() -> Long)? = null
 
     // the raw socket first, with a reset: the TLS session's close ends its output, and a raw writer still draining would
     // send a FIN (and the rest it holds) ahead of the reset
@@ -524,6 +537,13 @@ internal class H1Pool(
 
     /** Tests: the connection a WebSocket session was handed over. */
     internal var webSocketConnectionForTest: ((H1Connection) -> Unit)? = null
+
+    /**
+     * Tests: how a WebSocket session's connection ends ([webSocketTransportEnd]) and from what: the session's end cause,
+     * whether the writer failed or ended its channel, the frame guard's place, whether the channels were drained, and
+     * whether the close wait cut the session. A failure's message names it.
+     */
+    internal var webSocketEndForTest: ((WebSocketTransportEnd, String) -> Unit)? = null
 
     /** Runs after a request got a pool permit and before it may become its route's dialer (tests: widens that gap). */
     internal var beforeDialForTest: (suspend () -> Unit)? = null
@@ -1554,6 +1574,7 @@ internal class H1Pool(
                                     AfterResponse.HandOver -> {
                                         val ws = webSocket
                                         if (ws != null) {
+                                            conn.handedForTest = { ws.output.handed }
                                             webSocketConnectionForTest?.invoke(conn)
                                             ws.lifetime.invokeOnEnd { cause ->
                                                 try {
@@ -1565,9 +1586,17 @@ internal class H1Pool(
                                                             failed = failed,
                                                             writerDone = writerDone,
                                                             atFrameBoundary = ws.guard?.isAtWebSocketFrameBoundary() == true,
-                                                            drained = conn.outputDrained(),
+                                                            // from the counts: a channel's content is not looked at
+                                                            // from outside its reader (H1Connection.outputTaken); one
+                                                            // that cannot be told counts as not drained
+                                                            drained = conn.outputTaken(ws.output.handed) == true,
                                                             cutByCloseWait = ws.lifetime.cutByCloseWait,
                                                         )
+                                                    webSocketEndForTest?.invoke(
+                                                        end,
+                                                        "cause=$cause failed=$failed writerDone=$writerDone " +
+                                                            "endRequested=${ws.output.endRequested} cut=${ws.lifetime.cutByCloseWait}",
+                                                    )
                                                     when (end) {
                                                         WebSocketTransportEnd.AfterServer -> {
                                                             conn.closeAfterWebSocket(

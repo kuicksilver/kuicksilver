@@ -367,16 +367,35 @@ class ClientWebSocketCloseTest {
                                 }
                             }
                         }
+                    // what each session's end did, for the message of one that did not end as it should
+                    val seen = ArrayList<String>()
+                    val ends = ArrayList<String>()
                     testClient(block = { install(WebSockets) }).use { c ->
-                        (c.engine as KuicksilverEngine).h1.webSocketClosingForTest = { hooks.trySend(it) }
+                        (c.engine as KuicksilverEngine).h1.webSocketClosingForTest = {
+                            seen += it
+                            hooks.trySend(it)
+                        }
+                        (c.engine as KuicksilverEngine).h1.webSocketEndForTest = { end, why -> ends += "$end ($why)" }
+                        var conn: io.kuicksilver.ktor.client.h1.H1Connection? = null
+                        (c.engine as KuicksilverEngine).h1.webSocketConnectionForTest = { conn = it }
                         val port = (listener.localAddress as InetSocketAddress).port
                         repeat(sessions) { i ->
+                            seen.clear()
+                            ends.clear()
                             val sizes = List(random.nextInt(0, 4)) { random.nextInt(0, 200_000) }
                             val session = c.webSocketSession("ws://127.0.0.1:$port/ws")
+                            val lifetime = session.call.attributes[WebSocketLifetimeKey]
                             for (size in sizes) session.outgoing.send(Frame.Binary(true, ByteArray(size)))
                             session.close(CloseReason((4000 + i).toShort(), "bye $i"))
                             val expected = sizes.map { "binary $it" } + "close ${4000 + i} bye $i" + "waiting" + "server closed"
-                            assertEquals(expected, withTimeout(20.seconds) { results.receive() }, "session $i")
+                            val got =
+                                kotlinx.coroutines.withTimeoutOrNull(20.seconds) { results.receive() }
+                                    ?: kotlin.test.fail(
+                                        "session $i ($sizes) did not end in order within 20 s: ${lifetime.stateForTest()}, " +
+                                            "its end ${ends.toList()}, the hooks ${seen.toList()}, " +
+                                            "not in the kernel yet ${conn?.let { k -> k.handedForTest?.let { k.pendingForTest(it()) } }}",
+                                    )
+                            assertEquals(expected, got, "session $i")
                         }
                     }
                     served.join()
@@ -503,9 +522,10 @@ internal const val MAX_FILL_FRAMES: Int = 1024
 /**
  * Sends [frame] on [session] (an HTTP/1.1 session on [conn]) one at a time until one stays queued in front of the kernel
  * of a peer that reads nothing: the kernels' socket buffers (and the peer's channel) are full. Returns the frames sent.
- * Stays queued means: bytes wait in the connection's channels ([io.kuicksilver.ktor.client.h1.H1Connection.queuedForTest])
- * and none of them were taken for 1 s (polled every 10 ms); a frame the socket's writer took all of is followed by the
- * next. After each frame a pause of 20 ms lets Ktor's writer hand it on. Fails after [MAX_FILL_FRAMES] frames: buffers
+ * Stays queued means: bytes handed to the connection have not reached the kernel
+ * ([io.kuicksilver.ktor.client.h1.H1Connection.pendingForTest], from the counts: the channels are not looked at from
+ * outside their readers), and none of them did for 1 s (polled every 10 ms); a frame the kernel took all of is followed
+ * by the next. After each frame a pause of 20 ms lets Ktor's writer hand it on. Fails after [MAX_FILL_FRAMES] frames: buffers
  * that take more than that are not what this models. Fails as well when more than 256 KiB wait at the end, so that a
  * Close still fits into the channel behind them: with a full channel the writer is held in its flush and has not written
  * its Close either way, which the other tests cover.
@@ -523,19 +543,20 @@ internal suspend fun fillUntilAFrameStaysQueued(
         session.outgoing.send(Frame.Binary(true, frame))
         frames++
         kotlinx.coroutines.delay(20) // Ktor's writer hands the frame on
-        var seen = -1
+        var seen = -1L
         var since =
             kotlin.time.TimeSource.Monotonic
                 .markNow()
-        while (!conn.outputDrained()) {
-            val now = conn.queuedForTest
+        while (true) {
+            val now = conn.pendingForTest(conn.handedForTest!!.invoke())!!
+            if (now <= 0L) break
             if (now != seen) {
                 seen = now
                 since =
                     kotlin.time.TimeSource.Monotonic
                         .markNow()
             } else if (since.elapsedNow() >= 1.seconds) {
-                assertTrue(now in 1..(256 * 1024), "$now bytes queued in front of the kernel after $frames frames")
+                assertTrue(now in 1L..(256L * 1024), "$now bytes queued in front of the kernel after $frames frames")
                 return frames
             }
             kotlinx.coroutines.delay(10)
