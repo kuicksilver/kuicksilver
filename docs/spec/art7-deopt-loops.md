@@ -145,7 +145,7 @@ published.
 | D8 `--release`, before | 1 | 28 | 2 | 26 to judge | |
 | D8 `--release`, after | 1 | 17 | 2 | 15 `one-class`, 0 `open` | |
 | D8 `--debug`, before | 190 | 917 | 85 | | 832 to judge |
-| D8 `--debug`, after | 190 | 876 | 83 | 15 | 778 |
+| D8 `--debug`, after | 190 | 875 | 83 | 15 | 777 |
 
 "Before" is the tree this audit started from (`4214a86e1`), scanned by the final check without the app stub; with the
 stub R8 also keeps the listener's calls, which the fixes below take out of the loops.
@@ -185,10 +185,10 @@ inlining them back (R8 9.3 does without them).
 
 ### The debug dex
 
-The 778 listed sites are what an application's debug build on API 24/25 runs, and what the device tests run. By call:
+The 777 listed sites are what an application's debug build on API 24/25 runs, and what the device tests run. By call:
 `java.util` collections and iterators (309), coroutines (`Channel`, `Job`, `Deferred`, `CoroutineContext`, selects,
 flows: 167), the channels of Ktor and kotlinx.io (81), unboxing (`Number`: 62, one class each), Kuicksilver's own types
-(47), lambdas (`Function0` to `Function3`: 52) and 60 others (field updaters, pools, sockets). A debug build does not run
+(47), lambdas (`Function0` to `Function3`: 52) and 59 others (field updaters, pools, sockets). A debug build does not run
 long enough on users' devices for the JIT to compile most of these; the device tests do, with many classes at the same
 calls (every test passes its own lambdas, the client and the server run in one process). The lambdas were the cause of two
 of the three aborts; of the calls fixed here for the debug dex:

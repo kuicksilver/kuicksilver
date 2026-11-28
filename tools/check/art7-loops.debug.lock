@@ -450,7 +450,6 @@ io.kuicksilver.ktor.client.h3.H3Pool.execute | io.kuicksilver.quic.QuicConnectio
 io.kuicksilver.ktor.client.h3.H3Pool.execute | io.kuicksilver.quic.QuicConnection.getInfo | 1
 io.kuicksilver.ktor.client.h3.H3Pool.execute | java.lang.Number.intValue | 1
 io.kuicksilver.ktor.client.h3.H3Pool.execute | java.lang.Number.longValue | 1
-io.kuicksilver.ktor.client.h3.H3Pool.execute | java.lang.Throwable.getMessage | 2
 io.kuicksilver.ktor.client.h3.H3Pool.execute | kotlin.coroutines.CoroutineContext.get | 1
 io.kuicksilver.ktor.client.h3.H3Pool.execute | kotlin.jvm.functions.Function0.invoke | 2
 io.kuicksilver.ktor.client.h3.H3Pool.execute | kotlin.jvm.functions.Function1.invoke | 1
