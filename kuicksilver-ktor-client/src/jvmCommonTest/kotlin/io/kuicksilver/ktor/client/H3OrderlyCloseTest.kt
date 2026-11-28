@@ -95,7 +95,14 @@ class H3OrderlyCloseTest {
         }
     }
 
-    /** The client's qlog: how many RESET_STREAM frames its packets carried, copies included; [onCount] gets each new count. */
+    /**
+     * The client's qlog: how many RESET_STREAM frames its packets carried for a request stream (a client-initiated
+     * bidirectional one, RFC 9000 section 2.1), copies included; [onCount] gets each new count. Not those of its other
+     * streams: the reserved (GREASE) unidirectional stream the client opens after its critical ones is answered by the
+     * server with STOP_SENDING (H3_STREAM_CREATION_ERROR, RFC 9114 section 6.2.3), which the client answers with a
+     * RESET_STREAM when the stream's data was not acknowledged yet (RFC 9000 section 3.5): on a loaded host that reset came
+     * first, the request's first one then counted as the second, and the path came back before it went out.
+     */
     private class ResetsSent(
         private val onCount: (Int) -> Unit = {},
     ) : QlogSink {
@@ -108,7 +115,8 @@ class H3OrderlyCloseTest {
             object : QlogTrace {
                 override fun write(record: String) {
                     if ("packet_sent" in record) {
-                        val n = RESET.findAll(record).count()
+                        val n =
+                            RESET.findAll(record).count { f -> requestStream(STREAM_ID.find(f.value)) }
                         if (n > 0) onCount(resets.updateAndGet { it + n })
                     }
                 }
@@ -117,7 +125,12 @@ class H3OrderlyCloseTest {
             }
 
         private companion object {
-            val RESET = Regex("\"frame_type\":\"reset_stream\"")
+            /** One RESET_STREAM frame of a packet_sent record: the frame's own object, its stream_id inside. */
+            val RESET = Regex("\\{[^{}]*\"frame_type\":\"reset_stream\"[^{}]*\\}")
+            val STREAM_ID = Regex("\"stream_id\":(\\d+)")
+
+            /** A client-initiated bidirectional stream's id (its two low bits 0): a request stream. */
+            fun requestStream(id: MatchResult?): Boolean = id != null && id.groupValues[1].toLong() % 4 == 0L
         }
     }
 
@@ -203,9 +216,9 @@ class H3OrderlyCloseTest {
      * sending what is still unacknowledged after a probe timeout again, under the probe timeout's backoff: the server ends
      * the request, and the close follows.
      *
-     * The path is dark from the timeout (before the stream is reset) until the client's qlog shows the RESET_STREAM sent
-     * a second time: the first copy then went unacknowledged, and the server's acknowledgments always pass the relay, so
-     * that copy was lost whatever the load (a first dark window that ended at the start of the engine's wait caught no
+     * The path is dark from the timeout (before the stream is reset) until the client's qlog shows the request stream's
+     * RESET_STREAM sent a second time (not another stream's: [ResetsSent]): the first copy then went unacknowledged, and
+     * the server's acknowledgments always pass the relay, so that copy was lost whatever the load (a first dark window that ended at the start of the engine's wait caught no
      * datagram with the reset under load, which went out only after it). The wait must end settled (the server
      * acknowledged everything, not the connection's end) and the engine's cleanup within the wait's bound and the close's
      * repeat; the copies that bring the reset across are the wait's resends ([H3Pool.probedForTest] counts them) or the
