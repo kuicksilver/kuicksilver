@@ -1284,9 +1284,11 @@ internal class H3Pool(
      * and when that packet and the close were both lost (a server whose receive buffer the upload had filled: about 208
      * KiB on Linux and Android by default), the server learned of neither, and kept the request and the connection until
      * its idle timeout (30 s; found on the API 24 emulator by the vendored contract test
-     * `testSocketTimeoutWriteFailOnWritePerRequestAttributes`). Now the unacknowledged frames go again at once, within the
-     * congestion window (`probeUnsettled`, no wait for a probe timeout that a backoff may have put past the bound), and
-     * again halfway through the bound; loss recovery (RFC 9002 section 6) repeats them meanwhile. An acknowledgment also tells that the
+     * `testSocketTimeoutWriteFailOnWritePerRequestAttributes`). Now the frames still unacknowledged after one probe timeout without
+     * the backoff (at most half the bound) go again, within the congestion window (`probeUnsettled`, no wait for a probe
+     * timeout that a backoff may have put past the bound), and again each such timeout until the bound; a frame
+     * acknowledged within that time is not sent twice (RFC 9002 section 6.2.1: the probe timeout is the time its
+     * acknowledgment may take); loss recovery (RFC 9002 section 6) repeats them meanwhile. An acknowledgment also tells that the
      * server read what came before, so the close then finds room; the close's one repeat covers a close lost on its own
      * (quic-go and picoquic answer packets in their closing state; a peer that lost the close may send none). The
      * client's WebTransport sessions on a connection are closed first (WT_CLOSE_SESSION, section 6 of
@@ -1322,11 +1324,17 @@ internal class H3Pool(
         val settled =
             withTimeoutOrNull(bound) {
                 coroutineScope { for (session in wt) launch { runCatching { session.close() } } }
-                q.probeUnsettled()
-                withTimeoutOrNull(bound / 2 - started.elapsedNow()) { q.awaitSendsSettled() } ?: run {
-                    q.probeUnsettled() // the first resend went into the same loss: once more, still before any backoff
-                    q.awaitSendsSettled()
+                // a frame goes again only once it went unacknowledged for a probe timeout without the backoff (RFC 9002
+                // section 6.2.1: srtt + 4 rttvar + max_ack_delay, the time its acknowledgment may take), at most half the
+                // bound: one acknowledged within it is not sent again (no spurious copy), one lost goes again without
+                // waiting for a backed-off probe timeout past the bound
+                val wait = minOf(q.currentPto() ?: (bound / 2), bound / 2)
+                var outcome: Boolean? = null
+                while (outcome == null) {
+                    outcome = withTimeoutOrNull(wait) { q.awaitSendsSettled() }
+                    if (outcome == null) q.probeUnsettled()
                 }
+                outcome
             }
         val outcome =
             when (settled) {
