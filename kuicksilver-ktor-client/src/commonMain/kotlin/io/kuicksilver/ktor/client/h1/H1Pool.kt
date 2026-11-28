@@ -222,7 +222,9 @@ internal class H1Connection(
      * once the socket's channel holds less than its capacity, with the rest still queued in front of the kernel. Polled
      * from 1 ms up to every [OUTPUT_TAKEN_POLL], as the counts do not say when they move. The caller bounds the wait (a
      * WebSocket's close wait). A socket that does not count ([bytesSent] null: one not opened by `connectTcp` or
-     * `bindTcp`) does not wait: its flush is all there is to go by.
+     * `bindTcp`) does not wait: its flush is all there is to go by, so a Close still queued in front of its kernel counts as
+     * written. The engine does not reach that case: every socket it opens is a KslNioSocket (JVM, Android) or a
+     * NativeTcpSocket (Kotlin/Native), and both count.
      */
     fun outputTakenFromNow(): suspend (handed: Long) -> Unit {
         val at = SentAtHandOver(socket.bytesSent, tls?.plaintextSent ?: 0, tls?.ciphertextSent ?: 0)

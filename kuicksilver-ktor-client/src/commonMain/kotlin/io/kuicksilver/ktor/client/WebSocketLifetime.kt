@@ -564,7 +564,8 @@ internal class WebSocketLifetime(
             // that lands here too, and on Kotlin/Native formatting a stack symbolizes it, which under load took long
             // enough to delay the engine's cleanup past the leak sentinel's 1.5 s (ClientH2WebSocketTest)
             if (ev != null && ev.logger.isEnabled(LogLevel.Debug)) {
-                ev.logger.log(LogLevel.Debug, "a WebSocket session's end failed: ${e.stackTraceToString()}", e)
+                // the stack is in the message: no cause, which a logger that prints stacks would print a second time
+                ev.logger.log(LogLevel.Debug, "a WebSocket session's end failed: ${e.stackTraceToString()}", null)
             }
         }
     }
