@@ -2165,6 +2165,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientMigratio
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientMissingCertificateTest.negative_overHttp11TheCallNamesTheAlert
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientMissingCertificateTest.negative_overHttp2TheCallNamesTheAlert
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientMissingCertificateTest.negative_overHttp3TheCallNamesTheAlert
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientMissingCertificateTest.negative_preferredFailsAsOverTcpWhicheverOrder
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientOrderlyCloseTest.connectionCloseResponseEndsWithCloseNotify
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientOrderlyCloseTest.firstContactEndsWithCloseNotify
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientOrderlyCloseTest.h2ConnectionClosedWithTheEngineSendsGoAwayAndCloseNotify
@@ -2234,6 +2235,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientSocketTi
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientSocketTimeoutTest.negative_aSilentServerTimesOutBeforeTheHead
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientSocketTimeoutTest.negative_aStalledResponseBodyTimesOut
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientSocketTimeoutTest.negative_aStalledUploadTimesOut
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientSocketTimeoutTest.negative_aStalledUploadTimesOutWhenItsBodyFailsFirst
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientSocketTimeoutTest.negative_aTimeoutBelowOneMillisecondIsRefused
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientSocketTimeoutTest.negative_anEventStreamNobodyAskedForKeepsTheTimeout
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientSocketTimeoutTest.negative_anExplicitHttpTimeoutStillAppliesToEventStreams
@@ -2976,6 +2978,7 @@ kuicksilver-ktor-client/src/iosTest	io.kuicksilver.ktor.client.HostInteropTest.r
 kuicksilver-ktor-client/src/jvmCommonTest	io.kuicksilver.ktor.client.DnsJvmTest.aBlockingDnsRunsOnItsDispatcher
 kuicksilver-ktor-client/src/jvmCommonTest	io.kuicksilver.ktor.client.DnsJvmTest.inetAddressesConvert
 kuicksilver-ktor-client/src/jvmCommonTest	io.kuicksilver.ktor.client.H3OrderlyCloseTest.aResetLostWithTheCloseStillReachesTheServerBeforeTheEngineCloses
+kuicksilver-ktor-client/src/jvmCommonTest	io.kuicksilver.ktor.client.H3OrderlyCloseTest.negative_aSilentServerGetsResendsUnderTheBackoff
 kuicksilver-ktor-client/src/jvmCommonTest	io.kuicksilver.ktor.client.ProxyConfigJvmTest.negative_schemelessHttpProxyOn443IsRefused
 kuicksilver-ktor-client/src/jvmCommonTest	io.kuicksilver.ktor.client.ProxyConfigJvmTest.noProxyIsDirect
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.guide.both.GuideBothEnginesTest.bothEnginesSample
