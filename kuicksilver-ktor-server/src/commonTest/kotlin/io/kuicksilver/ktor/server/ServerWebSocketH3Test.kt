@@ -159,6 +159,9 @@ class ServerWebSocketH3Test {
                     assertEquals("server bye", (ws.incoming.receive() as Frame.Close).readReason()?.message)
                     ws.outgoing.send(Frame.Close(CloseReason(CloseReason.Codes.NORMAL, "client bye")))
                     assertEquals(CloseReason(CloseReason.Codes.NORMAL, "client bye"), withTimeout(5.seconds) { reply.await() })
+                    // the server's FIN ends the session's input: the connection closes only after it, so the session's
+                    // reader does not fail on a connection closed under it (the client's own close of it)
+                    withTimeout(5.seconds) { for (f in ws.incoming) continue }
                 }
             } finally {
                 server.stop(100, 500)
