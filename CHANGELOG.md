@@ -2268,8 +2268,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   and the diagnostics name the HTTP/2 connection. Any other loss there (a reset, a truncation) is a failed TCP setup: in
   a race HTTP/3 may still win, and over TCP the request, never sent, is repeated on a new connection, at most twice, as
   after its stream (RFC 9113 section 8.7). An endpoint of the HTTPS records whose server refuses this client in the
-  handshake fails the call with that refusal instead of passing on to the next endpoint and the origin, which it did
-  only when the refusal came before the request's stream.
+  handshake (an alert it sends) fails the call with that refusal instead of passing on to the next endpoint and the
+  origin, which it did only when the refusal came before the request's stream; an endpoint whose certificate fails the
+  client's verification is still passed over for the next one and the origin (RFC 9460 section 3).
 - HTTP/1.1 client, a streamed upload the server stopped taking: the call could fail with
   `ClosedByteChannelException` ("connection closed") instead of its `SocketTimeoutException`. The timeout's expiry
   closes the connection under the stalled body, whose write then fails too, and that failure, preferred as the call's

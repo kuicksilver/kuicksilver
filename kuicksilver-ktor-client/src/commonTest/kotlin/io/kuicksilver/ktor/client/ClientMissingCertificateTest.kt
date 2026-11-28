@@ -3,6 +3,7 @@
 package io.kuicksilver.ktor.client
 
 import io.ktor.client.request.get
+import io.ktor.client.statement.bodyAsText
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
@@ -267,6 +268,45 @@ class ClientMissingCertificateTest {
                 } finally {
                     origin.stopSuspend(0, 0)
                 }
+            }
+        }
+
+    /**
+     * The other side of the rule: an endpoint of the HTTPS records whose certificate fails this client's verification
+     * (an RSA leaf under a root the client does not trust) is a failed endpoint (RFC 9460 section 3), not the server's
+     * refusal of the client: the origin is tried next and serves the call, verified the same way.
+     */
+    @Test fun aRecordsEndpointWhoseCertificateFailsVerificationFallsToTheOrigin() =
+        clientTest {
+            val (untrusted, untrustedPort) =
+                testServer(configure = { http3 { enabled = false } }, tls = {
+                    tls {
+                        identity =
+                            io.kuicksilver.tls.TlsIdentity
+                                .fromDer(listOf(RsaTestCert.leaf), RsaTestCert.key.copyOf())
+                    }
+                }) { routing { get("/") { call.respondText("untrusted") } } }
+            val (origin, port) =
+                testServer(configure = { http3 { enabled = false } }) { routing { get("/") { call.respondText("origin") } } }
+            try {
+                val name = "_$port._https.server.test"
+                val record =
+                    io.kuicksilver.ktor.client.dns
+                        .SvcbRecord(1, "svc.server.test", listOf("h2"), false, untrustedPort, emptyList(), emptyList(), 300, name)
+                testClient(Http3Discovery.Auto, engine = {
+                    resolverForTest = { _, p ->
+                        listOf(
+                            io.kuicksilver.ktor.network
+                                .TcpAddress(byteArrayOf(127, 0, 0, 1), p),
+                        )
+                    }
+                    network { httpsRecords = HttpsRecordsForTest { if (it == name) listOf(record) else emptyList() } }
+                }).use { c ->
+                    assertEquals("origin", c.get("https://server.test:$port/").bodyAsText())
+                }
+            } finally {
+                origin.stopSuspend(0, 0)
+                untrusted.stopSuspend(0, 0)
             }
         }
 

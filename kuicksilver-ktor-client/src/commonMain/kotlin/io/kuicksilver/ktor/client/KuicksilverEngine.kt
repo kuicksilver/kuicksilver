@@ -30,7 +30,7 @@ import io.kuicksilver.ktor.client.dns.HttpsResolution
 import io.kuicksilver.ktor.client.dns.httpsQueryName
 import io.kuicksilver.ktor.client.h1.H1Pool
 import io.kuicksilver.ktor.client.h1.SpinLock
-import io.kuicksilver.ktor.client.h1.isHandshakeRefusal
+import io.kuicksilver.ktor.client.h1.isPeerRefusal
 import io.kuicksilver.ktor.client.h1.monotonicMillis
 import io.kuicksilver.ktor.client.h3.H3ClosedAfterGoAwayKey
 import io.kuicksilver.ktor.client.h3.H3NotSent
@@ -1682,9 +1682,11 @@ internal class KuicksilverEngine(
 
     /**
      * A TCP connection for [data] through [dns], or [EndpointUnreachable] when none could be set up. The server's refusal
-     * of this client in the handshake ([io.kuicksilver.ktor.client.h1.isHandshakeRefusal]: an alert such as
-     * certificate_required, or a failed verification) is thrown as it is: another endpoint of the same origin would only
-     * refuse it again after a full handshake, and the call names the refusal as over any other path.
+     * of this client in the handshake ([io.kuicksilver.ktor.client.h1.isPeerRefusal]: an alert it sent, such as
+     * certificate_required) is thrown as it is: every server of the origin would refuse the client again after a full
+     * handshake, and the call names the refusal as over any other path. This side's failed verification of the
+     * endpoint's certificate is EndpointUnreachable, as any failed endpoint (RFC 9460 section 3): the next endpoint, and
+     * in the end the origin, is tried, each verified the same way.
      */
     private suspend fun openOrUnreachable(
         data: HttpRequestData,
@@ -1695,7 +1697,7 @@ internal class KuicksilverEngine(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
-            if (e.isHandshakeRefusal()) throw e
+            if (e.isPeerRefusal()) throw e
             throw EndpointUnreachable(e)
         }
 

@@ -2708,8 +2708,18 @@ internal class TcpProgress {
  * user_canceled, which say nothing about this client), or this side's failed verification of it (but an unknown
  * revocation status, which may be gone on the next attempt). A transport loss (TlsException.Protocol) is not one.
  */
-internal fun Throwable.isHandshakeRefusal(): Boolean =
+internal fun Throwable.isHandshakeRefusal(): Boolean = isPeerRefusal() || failedVerification()
+
+/**
+ * Whether the causes hold the peer's refusal of this client in the handshake: an alert it sent, but internal_error (80)
+ * and user_canceled (90), which say nothing about this client. A refusal that holds on every server of the origin, as a
+ * client certificate it does not take ([isHandshakeRefusal] adds this side's failed verification of the peer).
+ */
+internal fun Throwable.isPeerRefusal(): Boolean =
+    generateSequence(this) { it.cause }.any { it is io.kuicksilver.tls.TlsException.AlertReceived && it.code != 80 && it.code != 90 }
+
+/** Whether the causes hold this side's failed verification of the peer, but an unknown revocation status (it may be gone next time). */
+private fun Throwable.failedVerification(): Boolean =
     generateSequence(this) { it.cause }.any {
-        (it is io.kuicksilver.tls.TlsException.AlertReceived && it.code != 80 && it.code != 90) ||
-            (it is io.kuicksilver.tls.TlsException.Verify && it.reason != io.kuicksilver.tls.VerifyReason.UnknownRevocationStatus)
+        it is io.kuicksilver.tls.TlsException.Verify && it.reason != io.kuicksilver.tls.VerifyReason.UnknownRevocationStatus
     }
