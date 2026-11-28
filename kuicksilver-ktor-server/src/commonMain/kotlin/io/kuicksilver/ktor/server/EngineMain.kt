@@ -25,7 +25,7 @@ import kotlin.time.Duration.Companion.seconds
  * exceptions: the TLS files (`kuicksilver.tls.certificateChain`, `privateKey`, `clientCa`, `ocspStapling`, `echKeys`,
  * which the DSL reads with `pemFiles`, `clientCaFile` and `ocspStaplingFile`), the `kuicksilver.connector` block (the
  * deployment port, a Ktor connector: `allowMisdirectedHosts`, `h2c`, `proxyProtocol.*`) and Ktor's own
- * `ktor.deployment.connectionIdleTimeoutSeconds` (`tcp { idleTimeout }`). Every key is in [KNOWN_KEYS]; the same keys
+ * `ktor.deployment.connectionIdleTimeoutSeconds` (`tcp { idleTimeout }`). Every key is in `KNOWN_KEYS`; the same keys
  * work in `application.yaml`. Without `ktor.deployment.host` (or `-host`) the deployment port binds every interface as a
  * host-less `tlsConnector { }` does (`::` dual-stack, `0.0.0.0` where the host has no IPv6), not Ktor's `0.0.0.0`.
  *
@@ -35,7 +35,7 @@ import kotlin.time.Duration.Companion.seconds
  * `http3.endpoint.maxConnectionsPerIp`, `http3.quic.maxIdleTimeout`, `http3.quic.keepAlive`, `tcp.maxConnectionsPerIp`),
  * where `0` is refused. An unknown key
  * under `kuicksilver.` fails the start, naming the key that replaced it (a 0.2.x key or an earlier 0.3.0 one,
- * [RENAMED_KEYS]) or the closest known key.
+ * `RENAMED_KEYS`) or the closest known key.
  */
 public object EngineMain {
     /** Starts the server from command-line arguments and the configuration file, and blocks until it stops. */
@@ -46,7 +46,7 @@ public object EngineMain {
 
     /**
      * The server [main] would run, not started yet. Throws [IllegalArgumentException] naming the key for a key that is not
-     * one of [KNOWN_KEYS] (an old key names its replacement), a value that does not parse or that the engine's option
+     * one of `KNOWN_KEYS` (an old key names its replacement), a value that does not parse or that the engine's option
      * refuses, `0` for a key whose "none" is `off`, only one of `kuicksilver.tls.certificateChain` and `privateKey`, another
      * `kuicksilver.tls.*` key without them, `kuicksilver.tls.clientAuth` other than `none` without `kuicksilver.tls.clientCa`
      * (or the other way round), `kuicksilver.connector.h2c` other than `off` with them, and a `kuicksilver.connector.proxyProtocol.*`
@@ -158,7 +158,7 @@ public object EngineMain {
         )
 
     /**
-     * Refuses every key under `kuicksilver.` that is not one of [KNOWN_KEYS], the first in alphabetical order: an old key
+     * Refuses every key under `kuicksilver.` that is not one of `KNOWN_KEYS`, the first in alphabetical order: an old key
      * with its replacement, any other with the closest known key when there is one.
      */
     internal fun checkKeys(config: ApplicationConfig) {

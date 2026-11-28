@@ -29,10 +29,10 @@ import kotlin.time.Duration
  * HTTP/3 over a bound QUIC endpoint: the transport surface the Ktor engines use (layer rule, ADR-0005). TLS
  * configurations must offer ALPN `h3` (RFC 9114 section 3.1); an accepted connection that negotiated anything else is
  * closed, and [connect]/[connectEarly] fail with H3_GENERAL_PROTOCOL_ERROR ([Http3Exception.Protocol]) when the server chose
- * another protocol the client offered. `SETTINGS_H3_DATAGRAM` follows the transport: it is 1 only when [QuicConfig.maxDatagramFrameSize] is not 0.
- * [QuicConfig.maxUniStreams] must be at least 3, so the peer can open its control and QPACK streams (RFC 9114 section
+ * another protocol the client offered. `SETTINGS_H3_DATAGRAM` follows the transport: it is 1 only when [QuicConfig.Builder.Datagrams.maxFrameSize] is not 0.
+ * [QuicConfig.Builder.Expert.maxUniStreams] must be at least 3, so the peer can open its control and QPACK streams (RFC 9114 section
  * 6.2): [bind], [connect] and [connectEarly] throw IllegalArgumentException for a smaller value. With
- * [Http3Settings.webTransport] [QuicConfig.resetStreamAt] is turned on (WebTransport needs `reset_stream_at` on both sides,
+ * [Http3Settings.webTransport] [QuicConfig.Builder.Expert.resetStreamAt] is turned on (WebTransport needs `reset_stream_at` on both sides,
  * draft-ietf-webtrans-http3-17 section 3.1), as the Ktor engines do.
  */
 public class Http3Endpoint private constructor(

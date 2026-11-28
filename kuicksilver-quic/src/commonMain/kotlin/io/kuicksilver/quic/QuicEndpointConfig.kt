@@ -308,7 +308,7 @@ public class QuicEndpointConfig private constructor(
     /** Decides per new client Initial: create, Retry, drop or refuse; the default asks for a Retry above 256 handshakes in flight or 8 MiB of handshake buffers. */
     @property:InternalKuicksilverApi
     public val admission: ConnectionAdmission,
-    /** Initials waiting for [admission][QuicEndpointConfig.admission] after one receive batch; more are dropped (1024 by default). */
+    /** Initials waiting for [admission][QuicEndpointConfig.Builder.admission] after one receive batch; more are dropped (1024 by default). */
     @property:InternalKuicksilverApi
     public val initialQueueCap: Int,
     /**

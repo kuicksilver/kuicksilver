@@ -129,7 +129,7 @@ public interface QuicEndpoint : AutoCloseable {
          * Binds [local] (port 0 picks a free port) and starts the endpoint loop. Throws
          * [QuicException.DontFragmentUnavailable] when the socket cannot set Don't Fragment on any of its traffic (RFC
          * 9000 section 14), and `UnsupportedOperationException` for a server on Kotlin/Native without the accelerated
-         * `ksl` socket (and no [QuicEndpointConfig.io]): the portable socket there serves clients only, and is not
+         * `ksl` socket (and no [QuicEndpointConfig.Builder.Runtime.io]): the portable socket there serves clients only, and is not
          * tried.
          */
         public suspend fun bind(

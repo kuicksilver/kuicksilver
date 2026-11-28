@@ -6,7 +6,7 @@ package io.kuicksilver.config
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 
 /**
- * A token bucket: [perSecond] events sustained, [burst] at once. The HTTP/2 flood limits (RST_STREAM and glitches) and the
+ * A token bucket: `perSecond` events sustained, `burst` at once. The HTTP/2 flood limits (RST_STREAM and glitches) and the
  * CONNECT-UDP packet limits are set with one; both values are at least 1.
  *
  * @property perSecond Tokens added per second: the rate the limit allows for good.
@@ -22,10 +22,10 @@ public class RateLimit(
         require(burst >= 1) { "RateLimit burst must be at least 1, got $burst" }
     }
 
-    /** Equal to another [RateLimit] of the same [perSecond] and [burst]. */
+    /** Equal to another `RateLimit` of the same `perSecond` and `burst`. */
     override fun equals(other: Any?): Boolean = other is RateLimit && other.perSecond == perSecond && other.burst == burst
 
-    /** A hash of [perSecond] and [burst]. */
+    /** A hash of `perSecond` and `burst`. */
     override fun hashCode(): Int = 31 * perSecond + burst
 
     /** `RateLimit(perSecond=..., burst=...)`. */

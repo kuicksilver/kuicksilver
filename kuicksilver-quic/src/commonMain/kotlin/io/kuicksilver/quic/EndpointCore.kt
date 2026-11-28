@@ -856,7 +856,7 @@ public class EndpointCore internal constructor(
     /**
      * Decides up to [max] queued client Initials: a duplicate of a connection created meanwhile is routed to it;
      * a forged or expired Retry token is refused with INVALID_TOKEN; a full accept queue is refused with CONNECTION_REFUSED;
-     * the hard limits `maxConnections` and `maxConnectionsPerIp` drop; then [QuicEndpointConfig.admission] decides. Returns the number of connections created.
+     * the hard limits `maxConnections` and `maxConnectionsPerIp` drop; then [QuicEndpointConfig.Builder.admission] decides. Returns the number of connections created.
      * The runtime calls it after every receive batch; what it leaves waits for the next one.
      */
     public fun processPending(

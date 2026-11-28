@@ -73,7 +73,7 @@ public sealed class RaceHeadStart {
     }
 
     /**
-     * A fixed head start of [delay], 10 ms..2 s (RFC 8305 section 5); another value, `Duration.INFINITE` included (that is
+     * A fixed head start of `delay`, 10 ms..2 s (RFC 8305 section 5); another value, `Duration.INFINITE` included (that is
      * [NoRace]), fails the engine's creation with IllegalArgumentException. On a network where QUIC was never confirmed the
      * head start is 10 ms, whatever this says.
      */
@@ -81,10 +81,10 @@ public sealed class RaceHeadStart {
         /** The head start, as given. */
         public val delay: Duration,
     ) : RaceHeadStart() {
-        /** Equal to another [Fixed] of the same [delay]. */
+        /** Equal to another `Fixed` of the same `delay`. */
         override fun equals(other: Any?): Boolean = other is Fixed && other.delay == delay
 
-        /** The [delay]'s hash code. */
+        /** The hash code of `delay`. */
         override fun hashCode(): Int = delay.hashCode()
 
         /** `Fixed(<delay>)`. */
@@ -133,7 +133,7 @@ public sealed class KnownServers {
     }
 
     /**
-     * The [servers] listed: the host and port of the server the request goes to (the origin, or for plain `http` through
+     * The `servers` listed: the host and port of the server the request goes to (the origin, or for plain `http` through
      * an HTTP proxy in absolute form, the proxy), compared as [HostPort] does.
      */
     public class Listed(
@@ -142,10 +142,10 @@ public sealed class KnownServers {
         /** The servers, as given. */
         public val servers: Set<HostPort> = servers.toSet()
 
-        /** Equal to another [Listed] of the same [servers]. */
+        /** Equal to another `Listed` of the same `servers`. */
         override fun equals(other: Any?): Boolean = other is Listed && other.servers == servers
 
-        /** The [servers]' hash code. */
+        /** The hash code of `servers`. */
         override fun hashCode(): Int = servers.hashCode()
 
         /** `Listed(<servers>)`. */

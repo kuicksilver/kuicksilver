@@ -124,7 +124,7 @@ public sealed class Http3Exception(
      *
      * @property streamId the request stream whose field section was refused; -1 for a request refused before its
      *   stream was opened.
-     * @property limit our [Http3Settings.maxFieldSectionSize], or the peer's limit when sending, in bytes, counted as
+     * @property limit our [Http3Settings.Builder.maxFieldSectionSize], or the peer's limit when sending, in bytes, counted as
      *   name + value + 32 per field (RFC 9114 section 4.2.2).
      */
     public class FieldSectionTooLarge(

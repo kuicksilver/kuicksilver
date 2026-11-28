@@ -1328,7 +1328,7 @@ public class ConnectionCore internal constructor(
     /**
      * Abandons sending on stream [id] with RESET_STREAM_AT (draft-ietf-quic-reliable-stream-reset): the first [reliableSize]
      * bytes (at most what was written) are still delivered, the rest is dropped. Without `reset_stream_at` from both sides
-     * ([QuicConfig.resetStreamAt] and the peer's) it is [resetStream]. Nothing happens for an unknown or reset stream.
+     * ([QuicConfig.Builder.Expert.resetStreamAt] and the peer's) it is [resetStream]. Nothing happens for an unknown or reset stream.
      */
     @ExperimentalKuicksilverApi
     public fun resetStreamAt(
