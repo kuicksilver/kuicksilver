@@ -29,6 +29,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
@@ -163,6 +165,41 @@ class H1IdleConnectionTest {
                 assertEquals(0, watchers.coroutineContext[Job]!!.children.count(), "a taken connection is watched no more")
                 assertFalse(conn.closed, "the pool closed a connection it had handed out")
                 assertEquals(1, pool.liveCount)
+            } finally {
+                watchers.cancel()
+            }
+        }
+
+    /**
+     * While the idle watch waits on the connection's input, the pool's looks at the connection (a take, an eviction, under
+     * the pool's lock on the pool's thread) do not look into that input: they ask the watch. `HeadLimitedInput.hasUnread`
+     * read the socket channel's `readBuffer`, whose getter moves the channel's flushed bytes into the buffer its reader
+     * takes from: two threads moving one channel's buffers, which can lose or corrupt the first bytes of the next response
+     * (the race that lost a WebSocket's Close, `H1Connection.outputTaken`). The input here records each look into its
+     * buffer made while a reader waits in it; before, the eviction and the take each made one. After the take the watch is
+     * over: the take returns the open connection.
+     */
+    @Test fun negative_theIdleWatchIsTheOnlyReaderOfAnIdleConnectionsInput() =
+        runTest {
+            val watchers = CoroutineScope(Dispatchers.Default + SupervisorJob())
+            try {
+                val wire = Wire()
+                val input = PeekRecordingInput(wire.fromServer)
+                val pool = ConnectionPool<H1Connection>(KuicksilverEngineConfig().poolLimits(), watchers) { 0L }
+                assertNull(pool.acquire("r"))
+                val conn = H1Connection(NoSocket(wire), null, input, wire.toServer, "r")
+                pool.adopt(conn)
+                assertTrue(pool.release(conn))
+                // the watch waits in the input; on the real clock: the watch runs on Dispatchers.Default, not under the test's
+                // virtual time, which would end this bound at once
+                kotlinx.coroutines.withContext(Dispatchers.Default) {
+                    kotlinx.coroutines.withTimeout(10_000) { input.waiting.first { it } }
+                }
+                pool.evictExpired() // an eviction looks at the idle connection, and keeps it
+                assertEquals(1, pool.idleCount)
+                assertSame(conn, pool.acquire("r"))
+                assertEquals(0, input.peeksWhileWaited.value, "looks into the input while its reader waited in it")
+                assertFalse(conn.closed)
             } finally {
                 watchers.cancel()
             }
@@ -618,4 +655,37 @@ class H1IdleConnectionTest {
                 assertEquals(0, h1.pool.idleCount)
             }
         }
+}
+
+/**
+ * [delegate] as a connection's input that records every look into its buffer ([readBuffer]) made while a reader waits in
+ * [awaitContent]: a look from outside that reader ([peeksWhileWaited] counts them). [waiting] says whether a reader waits
+ * now.
+ */
+private class PeekRecordingInput(
+    private val delegate: ByteChannel,
+) : ByteReadChannel {
+    val waiting = kotlinx.coroutines.flow.MutableStateFlow(false)
+    val peeksWhileWaited = kotlinx.coroutines.flow.MutableStateFlow(0)
+
+    override val closedCause: Throwable? get() = delegate.closedCause
+    override val isClosedForRead: Boolean get() = delegate.isClosedForRead
+
+    @io.ktor.utils.io.InternalAPI
+    override val readBuffer: kotlinx.io.Source
+        get() {
+            if (waiting.value) peeksWhileWaited.update { it + 1 }
+            return delegate.readBuffer
+        }
+
+    override suspend fun awaitContent(min: Int): Boolean {
+        waiting.value = true
+        try {
+            return delegate.awaitContent(min)
+        } finally {
+            waiting.value = false
+        }
+    }
+
+    override fun cancel(cause: Throwable?) = delegate.cancel(cause)
 }

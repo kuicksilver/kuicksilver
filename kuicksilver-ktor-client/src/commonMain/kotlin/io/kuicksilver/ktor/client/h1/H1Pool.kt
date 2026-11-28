@@ -144,11 +144,35 @@ internal class H1Connection(
      * connection that doesn't have outstanding requests, the client MUST NOT consider that data to be a valid response;
      * the client SHOULD close the connection".
      */
-    override val isOpen: Boolean get() = !closed && !input.isClosedForRead && !input.hasUnread
+    override val isOpen: Boolean
+        get() =
+            when {
+                closed -> false
+
+                // the watch reads the input while the connection is idle: what it saw answers, the input is not looked
+                // into from here (the pool's thread)
+                watched -> !watchSignalled
+
+                else -> !input.isClosedForRead && !input.hasUnread
+            }
 
     /** The watch of the idle connection ([startIdleWatch]); guarded by [watchLock]. */
     private var idleWatch: Job? = null
     private val watchLock = SpinLock()
+
+    /**
+     * A watch ([startIdleWatch]) is the input's reader now, from its start until [stopIdleWatch] joined it: [isOpen] then
+     * answers from what the watch saw ([watchSignalled]), never by looking into the input. `HeadLimitedInput.hasUnread`
+     * looks into the socket's channel through its `readBuffer`, whose getter moves the channel's flushed bytes into the
+     * buffer its reader takes from. From the pool's thread (a release, a take, an eviction, all under the pool's lock),
+     * while the watch waited in `awaitContent` on that same channel, that was two threads moving one channel's buffers: the
+     * race that lost a WebSocket's Close (`H1Connection.outputTaken`), here on the first bytes of a pooled connection's
+     * next response.
+     */
+    @kotlin.concurrent.Volatile private var watched = false
+
+    /** The watch saw the server's close or bytes no request asked for: the connection is not reused. */
+    @kotlin.concurrent.Volatile private var watchSignalled = false
 
     /**
      * Watches the input of the connection while it is idle, as Go's net/http (its persistConn's read loop peeks while
@@ -173,7 +197,10 @@ internal class H1Connection(
                 } catch (_: Throwable) {
                     // a failed or cancelled input is a closure signal too; this watch's own end is not (below)
                 }
-                if (isActive) onSignal()
+                if (isActive) {
+                    watchSignalled = true
+                    onSignal()
+                }
             }
         val recorded =
             watchLock.withLock {
@@ -181,6 +208,8 @@ internal class H1Connection(
                     false
                 } else {
                     idleWatch = watch
+                    // before the watch starts: from now on it is the input's reader ([isOpen])
+                    watched = true
                     true
                 }
             }
@@ -189,6 +218,8 @@ internal class H1Connection(
 
     override suspend fun stopIdleWatch() {
         takeIdleWatch()?.cancelAndJoin()
+        // the watch is over (joined): the taker is the input's only reader, and [isOpen] may look into it again
+        watched = false
     }
 
     private fun takeIdleWatch(): Job? = watchLock.withLock { idleWatch.also { idleWatch = null } }

@@ -230,7 +230,8 @@ internal class ConnectionPool<C : PooledConnection>(
     suspend fun acquire(route: String): C? {
         val c = take(route) ?: return null
         // the connection left the idle list under the lock, so the watch can no longer close it ([closeIfIdle]); its end
-        // is waited for also by a caller cancelled meanwhile, who settles what it got as any other
+        // is waited for also by a caller cancelled meanwhile, who settles what it got as any other. A close or bytes the
+        // watch had not acted on by the take are the exchange's to see, as those that come after it
         withContext(NonCancellable) { c.stopIdleWatch() }
         return c
     }
@@ -306,17 +307,18 @@ internal class ConnectionPool<C : PooledConnection>(
      */
     fun release(c: C): Boolean {
         if (c.closed) return false
-        // before anyone can take it: whoever does stops this watch first ([acquire]). A close or bytes that came already
-        // are seen below (isOpen), or by the watch once the connection is idle; either way it is closed
+        // looked at before the watch starts, while the releasing exchange is still the input's only reader: a close or
+        // bytes that came already are seen here; once the watch runs, isOpen answers from what the watch saw
+        val openAtRelease = c.isOpen
+        // before anyone can take it: whoever does stops this watch first ([acquire]). A close or bytes that come later
+        // are seen by the watch once the connection is idle, and it is closed
         idleWatchers?.let { scope -> c.startIdleWatch(scope) { closeIfIdle(c) } }
         val toClose = ArrayList<C>()
         val served = ArrayList<Waiter<C>>()
         val kept =
             lock.withLock {
                 val r = routes[c.route]
-                // isOpen reads the connection's channels, which the peer's side moves on its own: a racy snapshot, and a benign
-                // one (a close or bytes that come after it are seen by the watch, which closes the connection while idle)
-                if (shutDown || r == null || !c.isOpen || expired(c, now())) {
+                if (shutDown || r == null || !openAtRelease || !c.isOpen || expired(c, now())) {
                     toClose += c
                     return@withLock false
                 }

@@ -54,8 +54,10 @@ internal class HeadLimitedInput(
 
     /**
      * Whether bytes wait to be read, in this channel's buffer or [source]'s: between two exchanges, bytes no request asked
-     * for. Looks into [source]'s buffer, so only for a connection no one reads (an idle one); a [source] that failed counts
-     * as having them.
+     * for. Looks into [source]'s buffer through its `readBuffer`, whose getter moves [source]'s flushed bytes into the
+     * buffer its reader takes from: only for the input's own reader, or with none at all, never while another coroutine
+     * waits on [source] ([awaitUnsolicited]: `H1Connection.isOpen` asks the idle watch instead). A [source] that failed
+     * counts as having them.
      */
     val hasUnread: Boolean
         get() = cancelCause.load() != null || !buffer.exhausted() || runCatching { !source.readBuffer.exhausted() }.getOrDefault(true)
