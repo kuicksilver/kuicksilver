@@ -2250,11 +2250,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   closed the socket (RFC 9000 section 10.2 allows that), so loss recovery never repeated a reset still in flight. A
   server whose receive buffer the upload had filled (about 208 KiB by default on Linux and Android) lost both and
   learned of neither. The engine's close now gives each HTTP/3 connection up to 1 s, as an HTTP/1.1 connection's
-  close_notify and at the same time as those, for the server to acknowledge what it sent: a frame still unacknowledged after one probe timeout without the backoff
-  (at most half the bound; RFC 9002 section 6.2.1, the time its acknowledgment may take) goes again, and again after
-  each such timeout, so one acknowledged meanwhile is never sent twice, within the congestion window (RFC 9002 section 7: no datagram above it
-  without a probe timer expiry, so a full window waits for the regular probe; the probe timeout's backoff is left as
-  it is), the client's WebTransport sessions on it are closed first, and the connection then closes with
+  close_notify and at the same time as those, for the server to acknowledge what it sent: a frame still unacknowledged
+  after one probe timeout without the connection's backoff (at most half the bound; RFC 9002 section 6.2.1, the time
+  its acknowledgment may take) goes again, and again after twice that wait, each wait twice the one before (section
+  6.2.1's backoff, at most half the bound), so one acknowledged meanwhile is never sent twice and a silent peer gets a
+  handful of resends, within the congestion window (RFC 9002 section 7: no datagram above it without a probe timer
+  expiry, so a full window waits for the regular probe; the connection's own probe timeout backoff is left as it is), the client's WebTransport sessions on it are closed first, and the connection then closes with
   H3_NO_ERROR and repeats its CONNECTION_CLOSE once a probe timeout later (at most 250 ms; RFC 9000 section 10.2.1).
   Found on the API 24 emulator by the vendored contract test
   `HttpTimeoutTest.testSocketTimeoutWriteFailOnWritePerRequestAttributes` (`H3OrderlyCloseTest`).

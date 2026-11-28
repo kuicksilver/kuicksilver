@@ -37,8 +37,8 @@ import kotlin.time.TimeSource
  */
 class H3OrderlyCloseTest {
     /**
-     * Forwards UDP between one client and [upstream]; while [blackout] is on, every datagram of the client is dropped
-     * ([dropped] counts them). The server's answers always pass.
+     * Forwards UDP between one client and [upstream]; while [blackoutUntil] is ahead, every datagram of the client is
+     * dropped ([dropped] counts them, [firstDrop] completes at the first). The server's answers always pass.
      */
     private class Relay(
         upstream: InetSocketAddress,
@@ -53,6 +53,8 @@ class H3OrderlyCloseTest {
 
         @Volatile var dropped = 0
 
+        val firstDrop = CompletableDeferred<Unit>()
+
         val port: Int get() = (down.localAddress as InetSocketAddress).port
 
         private val toServer =
@@ -63,6 +65,7 @@ class H3OrderlyCloseTest {
                     client = runCatching { down.receive(b) }.getOrNull() ?: break
                     if (System.nanoTime() - blackoutUntil < 0) {
                         dropped++
+                        firstDrop.complete(Unit)
                         continue
                     }
                     b.flip()
@@ -97,37 +100,93 @@ class H3OrderlyCloseTest {
      * stayed open until its idle timeout (30 s; the leak sentinel saw quic.connection, h3.session, 7 quic.stream and
      * h3.serverRequest open after 10 s). The close went out once and the socket closed after it, so loss recovery never
      * repeated the reset. Now the engine's close first waits (bounded) for its connections' frames to be acknowledged,
-     * sending them again at once as a probe: the server ends the request, and the close follows.
+     * sending what is still unacknowledged after a probe timeout again, under the probe timeout's backoff: the server ends
+     * the request, and the close follows.
      *
-     * The path stays dark from the timeout until the engine's wait starts: what brings the reset across is that wait's
-     * own probe, not a probe timeout, so the outcome does not hang on the PTO backoff. The wait must end settled (the
-     * server acknowledged everything, not the connection's end) and the engine's cleanup within the wait's bound and the
-     * close's repeat.
+     * The path is dark from the timeout (before the stream is reset) until the relay dropped a datagram of the client and
+     * the engine's wait started, whichever comes last: the request's upload is stalled on flow control, so the first
+     * datagram the client sends after the timeout is the one with the reset, and it is lost whatever the load. What
+     * brings the reset across is then that wait's resend, not the connection's own backed-off probe timeout. The wait must
+     * end settled (the server acknowledged everything, not the connection's end) and the engine's cleanup within the
+     * wait's bound and the close's repeat.
      */
+
+    /**
+     * RFC 9002 section 6.2.1 ("When a PTO timer expires, the PTO backoff MUST be increased"): against a server that hears
+     * nothing more of the client, the engine's close sends the unacknowledged frames again after a probe timeout, then
+     * after twice that, each wait twice the one before and at most half the bound, so a loopback path's probe timeout of a
+     * few tens of milliseconds gives a handful of resends within the 1 s bound, not one per probe timeout (about 30). The
+     * wait times out, and the engine's cleanup still ends within the bound and the close's repeat.
+     */
+    @Test fun negative_aSilentServerGetsResendsUnderTheBackoff() =
+        h3Test {
+            val (server, port) = stallServer(CompletableDeferred())
+            val relay = Relay(InetSocketAddress("127.0.0.1", port))
+            try {
+                val client = testClient(Http3Discovery.H3Only) { install(HttpTimeout) }
+                val engine = client.engine as KuicksilverEngine
+                val pool = engine.h3
+                val outcomes = CompletableDeferred<H3Pool.SettleOutcome>()
+                val waits = java.util.Collections.synchronizedList(ArrayList<Duration>())
+                pool.socketTimeoutForTest = { relay.blackoutUntil = Long.MAX_VALUE } // dark for good from the timeout
+                pool.probedForTest = { _, wait -> waits += wait }
+                pool.settledForTest = { _, outcome, _, _ -> outcomes.complete(outcome) }
+                try {
+                    assertFailsWith<SocketTimeoutException> {
+                        client.post("https://127.0.0.1:${relay.port}/stall") {
+                            setBody("x".repeat(4 * 1024 * 1024))
+                            timeout { socketTimeoutMillis = 500 }
+                        }
+                    }
+                } finally {
+                    client.close()
+                }
+                val closed = TimeSource.Monotonic.markNow()
+                val bound = pool.orderlyCloseTimeoutForTest
+                assertNotNull(withTimeoutOrNull(bound + H3Pool.CLOSE_REPEAT_CAP + 1.seconds) { engine.cleanup.join() }, "cleanup ended")
+                val cleanupTook = closed.elapsedNow()
+                assertEquals(H3Pool.SettleOutcome.TimedOut, assertNotNull(withTimeoutOrNull(1.seconds) { outcomes.await() }), "$waits")
+                val w = synchronized(waits) { waits.toList() }
+                assertTrue(w.isNotEmpty(), "the wait sent the unacknowledged frames again")
+                for (k in 1 until w.size) assertEquals(minOf(w[k - 1] * 2, bound / 2), w[k], "each wait twice the one before: $w")
+                assertTrue(w.first() <= bound / 2, "$w")
+                // the waits before each resend fit in the bound: with a first wait w0, at most log2(bound / w0) + 1 of them
+                val most = 1 + generateSequence(w.first()) { it * 2 }.takeWhile { it < bound }.count()
+                assertTrue(w.size <= most, "${w.size} resends, at most $most: $w")
+                assertTrue(cleanupTook < bound + H3Pool.CLOSE_REPEAT_CAP + 300.milliseconds, "the engine's cleanup took $cleanupTook")
+            } finally {
+                server.stopSuspend(0, 500)
+                relay.close()
+            }
+        }
+
+    /** A server whose `/stall` takes 1 MiB of the upload and then nothing more; [handlerEnded] completes as it ends. */
+    private suspend fun stallServer(handlerEnded: CompletableDeferred<Unit>) =
+        testServer {
+            routing {
+                post("/stall") {
+                    try {
+                        // takes 1 MiB and then nothing more: the client's upload stops on flow control
+                        val input = call.receiveChannel()
+                        val buffer = ByteArray(64 * 1024)
+                        var read = 0
+                        while (read < 1024 * 1024) {
+                            val n = input.readAvailable(buffer)
+                            if (n < 0) break
+                            read += n
+                        }
+                        awaitCancellation() // until the client abandons the request, or the connection ends
+                    } finally {
+                        handlerEnded.complete(Unit)
+                    }
+                }
+            }
+        }
+
     @Test fun aResetLostWithTheCloseStillReachesTheServerBeforeTheEngineCloses() =
         h3Test {
             val handlerEnded = CompletableDeferred<Unit>()
-            val (server, port) =
-                testServer {
-                    routing {
-                        post("/stall") {
-                            try {
-                                // takes 1 MiB and then nothing more: the client's upload stops on flow control
-                                val input = call.receiveChannel()
-                                val buffer = ByteArray(64 * 1024)
-                                var read = 0
-                                while (read < 1024 * 1024) {
-                                    val n = input.readAvailable(buffer)
-                                    if (n < 0) break
-                                    read += n
-                                }
-                                awaitCancellation() // until the client abandons the request, or the connection ends
-                            } finally {
-                                handlerEnded.complete(Unit)
-                            }
-                        }
-                    }
-                }
+            val (server, port) = stallServer(handlerEnded)
             val relay = Relay(InetSocketAddress("127.0.0.1", port))
             try {
                 val client = testClient(Http3Discovery.H3Only) { install(HttpTimeout) }
@@ -136,8 +195,11 @@ class H3OrderlyCloseTest {
                 val outcomes = CompletableDeferred<Triple<H3Pool.SettleOutcome, String?, Duration>>()
                 // the timeout fires: from here, before the stream is reset, the server hears nothing of the client ...
                 pool.socketTimeoutForTest = { relay.blackoutUntil = Long.MAX_VALUE }
-                // ... until the engine's close starts waiting for its acknowledgments
-                pool.settleStartedForTest = { relay.blackoutUntil = 0L }
+                // ... until the reset was dropped and the engine's close started waiting for its acknowledgments
+                pool.settleStartedForTest = {
+                    withTimeoutOrNull(5.seconds) { relay.firstDrop.await() }
+                    relay.blackoutUntil = 0L
+                }
                 pool.settledForTest = { _, outcome, unsettled, took -> outcomes.complete(Triple(outcome, unsettled, took)) }
                 try {
                     assertFailsWith<SocketTimeoutException> {

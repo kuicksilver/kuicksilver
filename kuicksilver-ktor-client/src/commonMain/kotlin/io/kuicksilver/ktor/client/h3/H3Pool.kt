@@ -1285,8 +1285,9 @@ internal class H3Pool(
      * KiB on Linux and Android by default), the server learned of neither, and kept the request and the connection until
      * its idle timeout (30 s; found on the API 24 emulator by the vendored contract test
      * `testSocketTimeoutWriteFailOnWritePerRequestAttributes`). Now the frames still unacknowledged after one probe timeout without
-     * the backoff (at most half the bound) go again, within the congestion window (`probeUnsettled`, no wait for a probe
-     * timeout that a backoff may have put past the bound), and again each such timeout until the bound; a frame
+     * the connection's backoff (at most half the bound) go again, within the congestion window (`probeUnsettled`, no wait for
+     * a probe timeout that a backoff may have put past the bound), and again after twice that wait, and so on, each wait
+     * twice the one before (RFC 9002 section 6.2.1's backoff, at most half the bound) until the bound; a frame
      * acknowledged within that time is not sent twice (RFC 9002 section 6.2.1: the probe timeout is the time its
      * acknowledgment may take); loss recovery (RFC 9002 section 6) repeats them meanwhile. An acknowledgment also tells that the
      * server read what came before, so the close then finds room; the close's one repeat covers a close lost on its own
@@ -1324,15 +1325,21 @@ internal class H3Pool(
         val settled =
             withTimeoutOrNull(bound) {
                 coroutineScope { for (session in wt) launch { runCatching { session.close() } } }
-                // a frame goes again only once it went unacknowledged for a probe timeout without the backoff (RFC 9002
-                // section 6.2.1: srtt + 4 rttvar + max_ack_delay, the time its acknowledgment may take), at most half the
-                // bound: one acknowledged within it is not sent again (no spurious copy), one lost goes again without
-                // waiting for a backed-off probe timeout past the bound
-                val wait = minOf(q.currentPto() ?: (bound / 2), bound / 2)
+                // a frame goes again only once it went unacknowledged for a probe timeout (RFC 9002 section 6.2.1: srtt +
+                // 4 rttvar + max_ack_delay, the time its acknowledgment may take), at most half the bound: one acknowledged
+                // within it is not sent again (no spurious copy), one lost goes again without waiting for the connection's
+                // own backed-off probe timeout, which may lie past the bound. Each wait doubles the one before (section
+                // 6.2.1: "the PTO period is set to twice its current value"), still at most half the bound: a peer that
+                // acknowledges nothing gets a handful of resends within the bound, not one per probe timeout
+                var wait = minOf(q.currentPto() ?: (bound / 2), bound / 2)
                 var outcome: Boolean? = null
                 while (outcome == null) {
                     outcome = withTimeoutOrNull(wait) { q.awaitSendsSettled() }
-                    if (outcome == null) q.probeUnsettled()
+                    if (outcome == null) {
+                        probedForTest?.invoke(c, wait)
+                        q.probeUnsettled()
+                        wait = minOf(wait * 2, bound / 2)
+                    }
                 }
                 outcome
             }
@@ -1353,8 +1360,11 @@ internal class H3Pool(
     /** How one connection's wait in [closeOrderly] ended (tests). */
     internal enum class SettleOutcome { Settled, Ended, TimedOut }
 
-    /** Test hook: [closeOrderly] starts waiting for a connection. */
-    internal var settleStartedForTest: ((Http3Connection) -> Unit)? = null
+    /** Test hook: [closeOrderly] starts waiting for a connection (suspends that wait until it returns). */
+    internal var settleStartedForTest: (suspend (Http3Connection) -> Unit)? = null
+
+    /** Test hook: [closeOrderly] sends a connection's unacknowledged frames again, after waiting the given time for them. */
+    internal var probedForTest: ((Http3Connection, kotlin.time.Duration) -> Unit)? = null
 
     /** Test hook: how a connection's wait in [closeOrderly] ended, what it still waited for when it timed out, and how long it took. */
     internal var settledForTest: ((Http3Connection, SettleOutcome, String?, kotlin.time.Duration) -> Unit)? = null
