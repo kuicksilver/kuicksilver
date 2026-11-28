@@ -92,6 +92,64 @@ class ClientMissingCertificateTest {
             }
         }
 
+    /**
+     * Preferred mode (docs/guide/engine-tls.md, mutual TLS): HTTP/3 fails with the alert, the call goes on over TCP and fails
+     * there as over TCP, with no suppressed exceptions (the TCP setup did not fail) and a `raceEnded` that names HTTP/2,
+     * whatever the order: the alert ends the new HTTP/2 connection after the request got its stream, or before
+     * ([io.kuicksilver.ktor.client.h1.H1Pool.afterH2StartForTest] waits for the connection's end, as a slow host does).
+     */
+    @Test fun negative_preferredFailsAsOverTcpWhicheverOrder() =
+        h3Test {
+            withServer(http2 = true) { port ->
+                for (lostBeforeStream in listOf(false, true)) {
+                    repeat(ROUNDS / 2) { round ->
+                        val at = "lostBeforeStream=$lostBeforeStream, round $round"
+                        val races =
+                            kotlin.concurrent.atomics.AtomicReference(
+                                emptyList<Pair<io.ktor.http.HttpProtocolVersion, Throwable?>>(),
+                            )
+                        val e =
+                            assertFails {
+                                testClient(Http3Discovery.Preferred, engine = {
+                                    observability {
+                                        eventListener =
+                                            object : KuicksilverEventListener() {
+                                                override fun raceEnded(
+                                                    request: io.ktor.client.request.HttpRequestData,
+                                                    winner: io.ktor.http.HttpProtocolVersion,
+                                                    headStart: kotlin.time.Duration,
+                                                    h3Failure: Throwable?,
+                                                ) {
+                                                    while (true) {
+                                                        val l = races.load()
+                                                        if (races.compareAndSet(l, l + (winner to h3Failure))) break
+                                                    }
+                                                }
+                                            }
+                                    }
+                                }).use { c ->
+                                    if (lostBeforeStream) {
+                                        (c.engine as KuicksilverEngine).h1.afterH2StartForTest = { client, _ -> client.awaitClosed() }
+                                    }
+                                    c.get("https://127.0.0.1:$port/")
+                                }
+                            }
+                        assertIs<Http2Exception.ConnectionClosed>(e, "$at: $e")
+                        assertEquals("the connection was lost: $alert", e.message, at)
+                        assertIs<TlsException.AlertReceived>(generateSequence<Throwable>(e) { it.cause }.last(), "$at: $e")
+                        assertEquals(emptyList(), e.suppressedExceptions.filter { it !is FailureDiagnostics }, "$at: $e")
+                        val (winner, h3Failure) = races.load().singleOrNull() ?: kotlin.test.fail("$at: one raceEnded, got ${races.load()}")
+                        assertEquals(io.ktor.http.HttpProtocolVersion.HTTP_2_0, winner, at)
+                        // HTTP/3 had failed with the alert (CRYPTO_ERROR 0x0100 + 116), or had not answered yet
+                        assertTrue(
+                            h3Failure == null || (h3Failure is QuicException.ConnectionLost.TransportClosed && h3Failure.code == 0x0174L),
+                            "$at: $h3Failure",
+                        )
+                    }
+                }
+            }
+        }
+
     private suspend fun withServer(
         http2: Boolean,
         block: suspend (port: Int) -> Unit,

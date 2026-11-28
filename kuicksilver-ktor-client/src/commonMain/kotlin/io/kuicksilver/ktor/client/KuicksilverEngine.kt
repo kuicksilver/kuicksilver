@@ -1126,7 +1126,7 @@ internal class KuicksilverEngine(
         var bothFailedH3: Throwable? = null
         val result =
             try {
-                race.race<Any>({ h3Attempt.await() }, { h1.open(data, tcpDns) }, rtt, confirmed, onLoser = {
+                race.race<Any>({ h3Attempt.await() }, { h1.openOrLost(data, tcpDns) }, rtt, confirmed, onLoser = {
                     (it as? H1Pool.Opened)?.let { o -> h1.recycle(o) } // unused: back to the pool, or its HTTP/2 stream given back
                 }, onBothFailed = { bothFailedH3 = it })
             } catch (e: CancellationException) {
@@ -1148,6 +1148,7 @@ internal class KuicksilverEngine(
         val winner =
             when {
                 result.winner == Protocol.H3 -> HttpProtocolVersion.HTTP_3_0
+                result.value is H1Pool.LostBeforeRequest -> HttpProtocolVersion.HTTP_2_0
                 (result.value as H1Pool.Opened).h2 != null -> HttpProtocolVersion.HTTP_2_0
                 else -> HttpProtocolVersion.HTTP_1_1
             }
@@ -1181,6 +1182,16 @@ internal class KuicksilverEngine(
 
             Protocol.H1 -> {
                 settleLostQuic(h3Attempt, network, origin, alt)
+                val lost = result.value as? H1Pool.LostBeforeRequest
+                if (lost != null) {
+                    // the TCP setup completed and won; its new HTTP/2 connection was lost before it took the request (over
+                    // TLS 1.3, the server's alert after the client's side of the handshake): the call fails as over TCP,
+                    // as when the loss comes after the request got its stream
+                    d.transport = Transport.Tcp
+                    if (d.connectionTransport == Transport.Quic) d.connection = null
+                    selected(data, HttpProtocolVersion.HTTP_2_0, ProtocolReason.Race, d)
+                    throw lost.loss
+                }
                 tcp(data, callContext, ProtocolReason.Race, d, result.value as H1Pool.Opened, tcpDns)
             }
         }

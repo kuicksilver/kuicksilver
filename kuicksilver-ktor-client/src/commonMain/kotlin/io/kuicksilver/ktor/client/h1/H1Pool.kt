@@ -656,6 +656,30 @@ internal class H1Pool(
         }
 
     /**
+     * [open] for the race's TCP side: a new HTTP/2 connection whose transport was lost before it took the request (over
+     * TLS 1.3 the client's side of the handshake completes before the server checks its certificate, and the server's
+     * alert, certificate_required, may end the connection before its first stream is reserved) is a [LostBeforeRequest],
+     * not a failure: the TCP setup completed, so it wins the race, and the loss is the call's failure, as when the alert
+     * comes after the request got its stream. Every other failure is thrown.
+     */
+    suspend fun openOrLost(
+        data: HttpRequestData,
+        dns: RequestDns = config.newRequestDns(events.dnsObserver(data)),
+    ): Any =
+        try {
+            open(data, dns)
+        } catch (e: io.kuicksilver.http2.runtime.Http2Exception.ConnectionClosed) {
+            // obtain throws a ConnectionClosed only for that loss, and only with the transport's failure as its cause
+            if (e.cause == null) throw e
+            LostBeforeRequest(e)
+        }
+
+    /** [openOrLost]'s new HTTP/2 connection, lost before it took the request: [loss] is the call's failure. */
+    class LostBeforeRequest(
+        val loss: Throwable,
+    )
+
+    /**
      * A connection [open] handed out and whether it came from the idle pool (or, for HTTP/2, was open already): an HTTP/1.1
      * [connection], or a stream reserved on the HTTP/2 connection [h2], another origin's when [coalesced] (ADR-0018).
      */
