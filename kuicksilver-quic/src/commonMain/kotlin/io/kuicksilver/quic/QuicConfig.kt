@@ -194,7 +194,7 @@ public class QuicConfig private constructor(
     /** Let validated ICMP Packet Too Big messages and EMSGSIZE speed up DPLPMTUD as hints; see [Builder.PathMtu.icmpHints]. */
     @property:InternalKuicksilverApi
     public val pmtudIcmpHints: Boolean,
-    /** Client: move to the server's preferred address after the handshake; see [Builder.followPreferredAddress]. */
+    /** Client: move to the server's preferred address after the handshake; see [Builder.Migration.followPreferredAddress]. */
     @property:InternalKuicksilverApi
     public val followPreferredAddress: Boolean,
     /** `max_datagram_frame_size` we advertise (RFC 9221 section 3); 0 (the builder's null) does not advertise it and refuses DATAGRAM frames. */

@@ -40,7 +40,7 @@ internal fun HttpRequestData.connectTimeoutException(
     io.ktor.client.network.sockets
         .ConnectTimeoutException("$what [url=$url, connect_timeout=${millis ?: "unknown"} ms]", cause)
 
-/** [HttpRequestData.connectTimeoutException]'s [what] for a WebSocket not connected within the connect timeout. */
+/** [HttpRequestData.connectTimeoutException]'s `what` for a WebSocket not connected within the connect timeout. */
 internal const val WEBSOCKET_NOT_CONNECTED = "The WebSocket was not connected within the connect timeout"
 
 /** Request timeout of a request (`HttpTimeout`'s, which the plugin enforces itself), null for none. */

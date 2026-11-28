@@ -19,7 +19,7 @@ import io.kuicksilver.native.KslConst
  * another origin on a connection (RFC 9113 section 9.1.1: "The certificate presented by the server MUST satisfy any checks
  * that the client would perform when forming a new TLS connection for the host in the URI"; RFC 9114 section 3.3: "clients
  * MUST validate the certificate presented by the server for the new origin server using the process described in Section
- * 4.3.4 of [HTTP]").
+ * 4.3.4 of \[HTTP\]").
  *
  * - Validity is checked at the current time, so a certificate that expired since the handshake fails with
  *   [VerifyReason.Expired].

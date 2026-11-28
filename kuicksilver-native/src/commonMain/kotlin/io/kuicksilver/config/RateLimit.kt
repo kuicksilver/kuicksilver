@@ -22,9 +22,12 @@ public class RateLimit(
         require(burst >= 1) { "RateLimit burst must be at least 1, got $burst" }
     }
 
+    /** Equal to another [RateLimit] of the same [perSecond] and [burst]. */
     override fun equals(other: Any?): Boolean = other is RateLimit && other.perSecond == perSecond && other.burst == burst
 
+    /** A hash of [perSecond] and [burst]. */
     override fun hashCode(): Int = 31 * perSecond + burst
 
+    /** `RateLimit(perSecond=..., burst=...)`. */
     override fun toString(): String = "RateLimit(perSecond=$perSecond, burst=$burst)"
 }

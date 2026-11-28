@@ -108,7 +108,7 @@ internal class RecvFlowController(
 
 /**
  * The largest limit MAX_DATA and MAX_STREAM_DATA can carry, 2^62-1 (RFC 9000 sections 16, 19.9 and 19.10: a variable-length
- * integer); a credit of [consumed] + window is clamped to it (2^62-1 bytes is never reached, but the arithmetic must not
+ * integer); a credit of `consumed + window` is clamped to it (2^62-1 bytes is never reached, but the arithmetic must not
  * advertise more).
  */
 internal const val MAX_LIMIT: Long = (1L shl 62) - 1

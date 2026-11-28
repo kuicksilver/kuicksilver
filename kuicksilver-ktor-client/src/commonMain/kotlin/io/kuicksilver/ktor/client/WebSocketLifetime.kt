@@ -276,8 +276,8 @@ internal class WebSocketLifetime(
     /**
      * The one deadline of the waits after this side's own end once the engine was closed ([hurry]), set by the first of
      * them and shared by the rest, so that they do not add up (the held end for Pongs, then the server's end of the
-     * transport): the grace from then, or, over a transport whose end [discardsUnread] and for a session ended before the
-     * server answered its Close, what is left of T1 and at least the grace ([serverWithin]).
+     * transport): the grace from then, or, over a transport whose end discards unread data (`discardsUnread`) and for a
+     * session ended before the server answered its Close, what is left of T1 and at least the grace ([serverWithin]).
      */
     private val ownEndAt = kotlin.concurrent.atomics.AtomicLong(UNSET) // milliseconds since [epoch]
 

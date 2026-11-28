@@ -68,6 +68,7 @@ public class HostPort(
 public sealed class RaceHeadStart {
     /** 1.5 x the host's smoothed RTT, or 250 ms without history, clamped to 100 ms..2 s. The default. */
     public object Adaptive : RaceHeadStart() {
+        /** `Adaptive`. */
         override fun toString(): String = "Adaptive"
     }
 
@@ -77,17 +78,22 @@ public sealed class RaceHeadStart {
      * head start is 10 ms, whatever this says.
      */
     public class Fixed(
+        /** The head start, as given. */
         public val delay: Duration,
     ) : RaceHeadStart() {
+        /** Equal to another [Fixed] of the same [delay]. */
         override fun equals(other: Any?): Boolean = other is Fixed && other.delay == delay
 
+        /** The [delay]'s hash code. */
         override fun hashCode(): Int = delay.hashCode()
 
+        /** `Fixed(<delay>)`. */
         override fun toString(): String = "Fixed($delay)"
     }
 
     /** No race: TCP only after HTTP/3 failed, on every network. */
     public object NoRace : RaceHeadStart() {
+        /** `NoRace`. */
         override fun toString(): String = "NoRace"
     }
 }
@@ -116,11 +122,13 @@ public enum class WebTransportProxyPolicy {
 public sealed class KnownServers {
     /** None: a chunked request to a server not seen yet goes after an `OPTIONS` probe. The default. */
     public object None : KnownServers() {
+        /** `None`. */
         override fun toString(): String = "None"
     }
 
     /** Every server. */
     public object All : KnownServers() {
+        /** `All`. */
         override fun toString(): String = "All"
     }
 
@@ -134,10 +142,13 @@ public sealed class KnownServers {
         /** The servers, as given. */
         public val servers: Set<HostPort> = servers.toSet()
 
+        /** Equal to another [Listed] of the same [servers]. */
         override fun equals(other: Any?): Boolean = other is Listed && other.servers == servers
 
+        /** The [servers]' hash code. */
         override fun hashCode(): Int = servers.hashCode()
 
+        /** `Listed(<servers>)`. */
         override fun toString(): String = "Listed($servers)"
     }
 

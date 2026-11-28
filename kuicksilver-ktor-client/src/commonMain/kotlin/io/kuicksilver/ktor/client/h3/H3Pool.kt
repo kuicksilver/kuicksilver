@@ -1581,7 +1581,7 @@ internal class H3Pool(
      * (the address now, the certificate once per connection): one that no longer passes, or a request that may not coalesce
      * (a WebSocket, a WebTransport session, the repeat after a 421), leaves it and gets a connection of [t]'s own origin; the
      * other origin's connection is never retired for that, unless its certificate failed for a reason that may apply to its
-     * own origins too ([Coalesce.Retire], RFC 9114 section 3.3).
+     * own origins too ([io.kuicksilver.ktor.client.Coalesce.Retire], RFC 9114 section 3.3).
      */
     private suspend fun shareSameAddress(
         t: H3Target,
