@@ -169,11 +169,14 @@ server_state() { # <kind> <pid> <port> <dir>
 # listening and idle). When the fuzzing client's last connect timed out ("User timeout caused connection failure") and
 # the server logged no connection for that case (one "autobahn-server: opened" line per case the report has), the cases
 # not reported yet run again, in a fuzzing client of their own, and their reports join the first ones; at most 3 times. A
-# connection the server did see is never retried: that failure is the server's, and the verdict reports it.
+# connection the server did see is never retried, nor is a server that is no longer running: that failure is the server's,
+# and the verdict reports it. Only the last fuzzing client's output (after the last "== retry" line) counts.
 # Prints the cases still to run, or nothing (no retry: every case reported, or the failure is not that one).
-dropped_by_docker_desktop() { # <dir>
-  local dir=$1
-  grep -q 'User timeout caused connection failure' "$dir/wstest.log" 2>/dev/null || return 0
+dropped_by_docker_desktop() { # <dir> <server pid>
+  local dir=$1 pid=$2
+  kill -0 "$pid" 2>/dev/null || return 0
+  awk '/^== retry [0-9]+:/ { last = "" } { last = last $0 "\n" } END { printf "%s", last }' "$dir/wstest.log" 2>/dev/null |
+    grep -q 'User timeout caused connection failure' || return 0
   python3 -I - "$dir" "$agent" << 'PYEOF'
 import ast, json, os, re, sys
 d, agent = sys.argv[1], sys.argv[2]
@@ -240,18 +243,19 @@ host_server() { # <kind>: the server on this host, the fuzzing client in its con
   if [ "$(uname -s)" = Darwin ]; then
     local retry left list
     for retry in 1 2 3; do
-      left=$(dropped_by_docker_desktop "$dir")
+      left=$(dropped_by_docker_desktop "$dir" "$pid")
       [ -n "$left" ] || break
       echo "autobahn ($kind server): Docker Desktop's host networking dropped the connection of case ${left%% *} before it reached the server (it logged no connection for it): the $(wc -w <<< "$left" | tr -d ' ') cases not reported run again (retry $retry of 3)" >&2
       list=$(sed 's/[^ ][^ ]*/"&"/g; s/ /, /g' <<< "$left")
       mkdir -p "$dir/retry-$retry"
       echo "{\"outdir\": \"/out/retry-$retry\", \"servers\": [{\"agent\": \"$agent\", \"url\": \"ws://$target:$port\"}], \"cases\": [$list], \"exclude-cases\": [], \"exclude-agent-cases\": {}}" > "$dir/retry-$retry/spec.json"
       { echo "== retry $retry: the cases from ${left%% *} on"
-        docker run --rm --platform linux/amd64 -v "$root/$dir:/out" "$image" wstest -m fuzzingclient -s "/out/retry-$retry/spec.json" 2>&1 || true
+        docker run --rm --platform linux/amd64 ${net[@]+"${net[@]}"} -v "$root/$dir:/out" "$image" \
+          wstest -m fuzzingclient -s "/out/retry-$retry/spec.json" 2>&1 || true
       } >> "$dir/wstest.log"
       join_reports "$dir" "retry-$retry"
     done
-    [ -z "$(dropped_by_docker_desktop "$dir")" ] || echo "autobahn ($kind server): Docker Desktop's host networking kept dropping connections after 3 reruns; the cases not reported fail the run" >&2
+    [ -z "$(dropped_by_docker_desktop "$dir" "$pid")" ] || echo "autobahn ($kind server): Docker Desktop's host networking kept dropping connections after 3 reruns; the cases not reported fail the run" >&2
   fi
   server_state "$kind" "$pid" "$port" "$dir"
   stop_server "$pid"
