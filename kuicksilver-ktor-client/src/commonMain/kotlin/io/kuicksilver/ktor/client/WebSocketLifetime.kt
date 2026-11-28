@@ -558,9 +558,13 @@ internal class WebSocketLifetime(
     private fun reportEndFailure(e: Throwable) {
         runCatching {
             val ev = events
-            // with the whole stack: an end handler that failed left its transport's end undone, and only the stack says where
-            if (ev != null && ev.logger.isEnabled(LogLevel.Warn)) {
-                ev.logger.log(LogLevel.Warn, "a WebSocket session's end failed: ${e.stackTraceToString()}", e)
+            if (ev != null && ev.logger.isEnabled(LogLevel.Warn)) ev.logger.log(LogLevel.Warn, "a WebSocket session's end failed", e)
+            // the whole stack at Debug only: an end handler that failed left its transport's end undone, and the stack says
+            // where. It is not built at Warn: the end handlers' bound (two close waits) ends a handler with a cancellation
+            // that lands here too, and on Kotlin/Native formatting a stack symbolizes it, which under load took long
+            // enough to delay the engine's cleanup past the leak sentinel's 1.5 s (ClientH2WebSocketTest)
+            if (ev != null && ev.logger.isEnabled(LogLevel.Debug)) {
+                ev.logger.log(LogLevel.Debug, "a WebSocket session's end failed: ${e.stackTraceToString()}", e)
             }
         }
     }
