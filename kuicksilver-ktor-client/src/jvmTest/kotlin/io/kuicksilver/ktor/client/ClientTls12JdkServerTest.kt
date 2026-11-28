@@ -130,10 +130,18 @@ class ClientTls12JdkServerTest {
             val cp = System.getProperty("java.class.path").replace("\\", "\\\\").replace("\"", "\\\"")
             val charset =
                 System.getProperty("native.encoding")?.let { runCatching { Charset.forName(it) }.getOrNull() } ?: Charset.defaultCharset()
-            argFile.writeText("-cp\n\"$cp\"\n", charset)
             // the JDK's TLS and the test certificates only: no native library, no flags of the test JVM
             val cmd = listOf(javaBin, "-Xmx64m", "@${argFile.path}", WeakTls12ServerMain::class.java.name, suite, rsa.toString())
-            process = ProcessBuilder(cmd).redirectErrorStream(true).start()
+            // the argument file goes in close(), once the server JVM (whose launcher reads it as it starts) ended; here only
+            // when there is no such JVM
+            process =
+                try {
+                    argFile.writeText("-cp\n\"$cp\"\n", charset)
+                    ProcessBuilder(cmd).redirectErrorStream(true).start()
+                } catch (e: Throwable) {
+                    if (!argFile.delete()) argFile.deleteOnExit()
+                    throw e
+                }
             thread(isDaemon = true, name = "tls12-weak-server-out") {
                 process.inputStream.bufferedReader().forEachLine {
                     output.append(it).append('\n')
