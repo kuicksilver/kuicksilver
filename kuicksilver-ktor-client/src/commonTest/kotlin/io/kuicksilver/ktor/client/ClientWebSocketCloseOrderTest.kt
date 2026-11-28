@@ -1219,54 +1219,69 @@ class ClientWebSocketCloseOrderTest {
      * for the grace after both Closes, for the rest of the close wait (T1) when it never answered the Close (it may still
      * be reading it, and the reset would discard it); the stream is let go after it (the server reads the client's side to a clean end, so any RST_STREAM came
      * after the END_STREAM), and the cleanup is over at once.
+     *
+     * [holdWriter]: the connection's writer is held [WRITER_HELD] once the engine was closed, so the END_STREAM the session's
+     * sender queued waits in the connection's queue when the wait for the server is over (the bound used up: at once).
      */
-    private fun engineCloseH2(answers: Boolean) =
-        clientTest {
-            val events = Events()
-            val hook = Events()
-            val frames = CompletableDeferred<List<String>>()
-            tlsH2WithSilentUdp(
-                enableConnectProtocol = true,
-                onRequest = { _, r ->
-                    if (r.method != "CONNECT") return@tlsH2WithSilentUdp ok(r)
-                    r.invokeOnFailure { events += "client RST" }
-                    r.respond(200)
-                    val out = ByteChannel()
-                    launch { runCatching { r.sendBody(out, end = true) } }
-                    frames.complete(readClientFrames(r.body))
-                    if (answers) {
-                        out.writeFully(byteArrayOf(0x88.toByte(), 2, 0x03, 0xE8.toByte()))
-                        out.flush()
-                    }
-                    launch {
-                        runCatching { r.body.discard() }
-                        if (r.body.closedCause == null) events += "client END_STREAM"
-                    }
-                    kotlinx.coroutines.awaitCancellation()
-                },
-            ) { port, _ ->
-                val c = testClient(block = { install(WebSockets) })
-                try {
-                    val e = engine(c)
-                    e.h1.h2WebSocketClosingForTest = { hook += it }
-                    // an unanswered Close keeps the rest of its close wait over HTTP/2 (a short one here)
-                    e.h1.webSocketCloseWaitMillis = if (answers) 60_000 else 1_500
-                    e.webSockets.hurryGraceMillis = 200 // a silent server: the grace is waited out, shortened here
-                    c.get("https://127.0.0.1:$port/")
-                    c.webSocketSession("wss://127.0.0.1:$port/ws").close(CloseReason(4000, "client bye"))
-                    assertEquals("close 4000 client bye", withTimeout(20.seconds) { frames.await() }.last())
-                    if (answers) hook.await("waiting")
-                    events.assertClientQuietWhileServerHolds()
-                    c.close()
-                    withTimeout(ENGINE_CLOSE_BOUND) { e.cleanup.join() }
-                    events.await("client END_STREAM")
-                    hook.await("engine closed")
-                    assertFalse(hook.has("T2"), "${hook.timed.value}")
-                } finally {
-                    c.close()
+    private fun engineCloseH2(
+        answers: Boolean,
+        holdWriter: Boolean = false,
+    ) = clientTest {
+        val events = Events()
+        val hook = Events()
+        val frames = CompletableDeferred<List<String>>()
+        tlsH2WithSilentUdp(
+            enableConnectProtocol = true,
+            onRequest = { _, r ->
+                if (r.method != "CONNECT") return@tlsH2WithSilentUdp ok(r)
+                r.invokeOnFailure { events += "client RST" }
+                r.respond(200)
+                val out = ByteChannel()
+                launch { runCatching { r.sendBody(out, end = true) } }
+                frames.complete(readClientFrames(r.body))
+                if (answers) {
+                    out.writeFully(byteArrayOf(0x88.toByte(), 2, 0x03, 0xE8.toByte()))
+                    out.flush()
                 }
+                launch {
+                    runCatching { r.body.discard() }
+                    if (r.body.closedCause == null) events += "client END_STREAM"
+                }
+                kotlinx.coroutines.awaitCancellation()
+            },
+        ) { port, _ ->
+            val c = testClient(block = { install(WebSockets) })
+            try {
+                val e = engine(c)
+                val hold = kotlin.concurrent.atomics.AtomicBoolean(false)
+                if (holdWriter) {
+                    e.h1.afterH2StartForTest = { client, _ ->
+                        client.writerPassForTest = { if (hold.compareAndSet(true, false)) holdTheWriter() }
+                    }
+                }
+                e.h1.h2WebSocketClosingForTest = {
+                    hook += it
+                    if (it == "engine closed") hold.store(true) // right before the session's END_STREAM is queued
+                }
+                // an unanswered Close keeps the rest of its close wait over HTTP/2 (a short one here)
+                e.h1.webSocketCloseWaitMillis = if (answers) 60_000 else 1_500
+                // a silent server: the grace is waited out, shortened here; well above the writer's hold with [holdWriter]
+                e.webSockets.hurryGraceMillis = if (holdWriter) 600 else 200
+                c.get("https://127.0.0.1:$port/")
+                c.webSocketSession("wss://127.0.0.1:$port/ws").close(CloseReason(4000, "client bye"))
+                assertEquals("close 4000 client bye", withTimeout(20.seconds) { frames.await() }.last())
+                if (answers) hook.await("waiting")
+                events.assertClientQuietWhileServerHolds()
+                c.close()
+                withTimeout(ENGINE_CLOSE_BOUND) { e.cleanup.join() }
+                events.await("client END_STREAM")
+                hook.await("engine closed")
+                assertFalse(hook.has("T2"), "${hook.timed.value}")
+            } finally {
+                c.close()
             }
         }
+    }
 
     /**
      * The server's Close first, the client's reply, then `client.close()` in T2 against a server that reads slowly (it has
@@ -1316,6 +1331,15 @@ class ClientWebSocketCloseOrderTest {
         }
 
     @Test fun negative_h2EngineCloseEndsT1AgainstASilentServer() = engineCloseH2(answers = false)
+
+    /**
+     * The engine's close of a session whose bound is used up (a server that never answered its Close) ends the stream with
+     * END_STREAM, then RST_STREAM CANCEL, also when the END_STREAM still waits in the connection's queue as the wait ends:
+     * the reset dropped it there (RFC 9113 section 5.4.2: the reset is the stream's last frame), and the server saw the reset
+     * alone (under load 1 run in 8 of [negative_h2EngineCloseEndsT1AgainstASilentServer] timed out waiting for the
+     * END_STREAM). The END_STREAM now goes out first, within the grace.
+     */
+    @Test fun negative_h2EngineCloseWritesTheEndStreamBeforeTheReset() = engineCloseH2(answers = false, holdWriter = true)
 
     @Test fun negative_h2EngineCloseEndsT2AgainstAServerThatKeepsTheStream() = engineCloseH2(answers = true)
 
@@ -1474,6 +1498,15 @@ class ClientWebSocketCloseOrderTest {
  * wait (60 s in those tests), which it used to wait out.
  */
 private val ENGINE_CLOSE_BOUND = 2.seconds
+
+/**
+ * How long the connection's writer is held with the session's END_STREAM queued (engineCloseH2's holdWriter): a slow
+ * transport, well within the grace (600 ms there) the END_STREAM has to go out in.
+ */
+private val WRITER_HELD = 200.milliseconds
+
+/** Holds the connection's writer [WRITER_HELD]: the slow transport of engineCloseH2's holdWriter. */
+private val holdTheWriter: suspend () -> Unit = { kotlinx.coroutines.delay(WRITER_HELD) }
 
 /** How long the slow servers above hold their close once the client waits for it: a behaviour under test, not a wait. */
 private val SLOW_SERVER = 300.milliseconds

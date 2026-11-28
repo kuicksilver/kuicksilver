@@ -328,6 +328,9 @@ internal class H2Runtime(
     /** Runs right before a body's END_STREAM is queued (tests: the peer's reset arrives in that gap). */
     internal var beforeEndStreamForTest: (() -> Unit)? = null
 
+    /** Test hook: runs in [writeLoop] before each frame it takes from the core ([H2ClientConnection.writerPassForTest]). */
+    @Volatile internal var writerPassForTest: (suspend () -> Unit)? = null
+
     /** Runs between a malformed message's failure and its RST_STREAM (tests: another reset arrives in that gap). */
     internal var afterMalformedFailForTest: (() -> Unit)? = null
 
@@ -801,6 +804,7 @@ internal class H2Runtime(
         var drained = false
         try {
             while (true) {
+                writerPassForTest?.invoke()
                 val n = withCore { poll(buf, 0, clock()) }
                 if (n > 0) {
                     output.writeFully(buf, 0, n)
@@ -1017,6 +1021,20 @@ internal class H2Runtime(
 
     /** Waits until the peer ended its side of [s] in order (true) or the stream failed (false). */
     suspend fun awaitRemoteEnd(s: StreamRt): Boolean = s.remoteEnd.await()
+
+    /**
+     * Suspends until nothing of [s] waits in the core's queue: what it queued (its END_STREAM) was handed to the transport
+     * by the writer, which writes in order, so a RST_STREAM queued after this returns goes out after it. A reset drops
+     * what is still queued (RFC 9113 section 5.4.2: it is the stream's last frame). At once for a stream that is gone; the
+     * caller bounds the wait (a transport that takes nothing more).
+     */
+    suspend fun awaitQueuedWritten(s: StreamRt) {
+        while (true) {
+            val seen = written.value
+            if (!lock.withLock { core.hasQueued(s.id) }) return
+            written.first { it != seen }
+        }
+    }
 
     /** RFC 9110 section 10.1.1: waits until the peer answered (an interim or final response), at most [millis]. */
     suspend fun awaitAnswer(

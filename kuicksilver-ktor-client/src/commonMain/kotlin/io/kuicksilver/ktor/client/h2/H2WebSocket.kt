@@ -236,6 +236,10 @@ internal suspend fun h2WebSocket(
                     // ended before the server's Close gives it the grace, from the end of what this side sent)
                     withTimeoutOrNull(lifetime.ownEndBoundMillis()) {
                         sender.join()
+                        // the END_STREAM the sender handed on is on the transport before the reset below: the reset drops what
+                        // the connection still has queued for the stream (RFC 9113 section 5.4.2), and a server whose wait
+                        // ends at once (the bound used up) got RST_STREAM CANCEL alone, the session's end cut
+                        stream.awaitQueuedWritten()
                         if (serverEnded == null) {
                             lifetime.serverWithin(kotlin.time.Duration.INFINITE, afterOwnEnd = true, discardsUnread = true) {
                                 discardToEnd(stream.body)

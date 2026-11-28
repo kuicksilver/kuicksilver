@@ -2271,6 +2271,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   handshake (an alert it sends) fails the call with that refusal instead of passing on to the next endpoint and the
   origin, which it did only when the refusal came before the request's stream; an endpoint whose certificate fails the
   client's verification is still passed over for the next one and the origin (RFC 9460 section 3).
+- WebSocket client over HTTP/2 (RFC 8441), `client.close()` with a session whose bound was used up (a server that never
+  answered the Close): the stream could end with RST_STREAM CANCEL alone, without the END_STREAM the documented order
+  puts before it. The session's END_STREAM was handed to the connection, and the wait for the server, already over,
+  let the stream go at once: the reset drops what the connection still has queued for the stream (RFC 9113 section
+  5.4.2), so an END_STREAM the writer had not taken yet never went out. The end now waits, within the grace, until the
+  END_STREAM was handed to the transport; a transport that takes nothing is still reset at the bound. Found under load
+  by `ClientWebSocketCloseOrderTest.negative_h2EngineCloseEndsT1AgainstASilentServer`;
+  `negative_h2EngineCloseWritesTheEndStreamBeforeTheReset` holds the connection's writer to show it.
 - TLS over TCP, a connection whose job was cancelled: on Android its input (`TlsConnection.input`) read as ended cleanly,
   as after the peer's close_notify, and so did a `TlsSocket`'s read channel whose relay saw that end before the socket's
   cancellation reached it (the channel closed without a cause instead of failing with

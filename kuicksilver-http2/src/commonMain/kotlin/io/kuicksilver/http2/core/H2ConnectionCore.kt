@@ -521,6 +521,9 @@ internal class H2ConnectionCore(
         return true
     }
 
+    /** Whether frames of [streamId] still wait in the queue for [poll] (its END_STREAM among them, after [endStream]). */
+    fun hasQueued(streamId: Int): Boolean = streams[streamId]?.out?.isNotEmpty() == true
+
     /** The application read [n] bytes of [streamId]: credit goes back to the peer (WINDOW_UPDATE) when due. */
     fun consumed(
         streamId: Int,

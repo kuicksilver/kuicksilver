@@ -43,6 +43,13 @@ public class H2ClientConnection private constructor(
     /** Ended: nothing more is sent or received. */
     public val isClosed: Boolean get() = rt.closed.isCompleted
 
+    /** Test hook: runs in the connection's writer before each frame it takes from the queue (a slow transport, held). */
+    public var writerPassForTest: (suspend () -> Unit)?
+        get() = rt.writerPassForTest
+        set(value) {
+            rt.writerPassForTest = value
+        }
+
     /** The error code of the server's GOAWAY, once one arrived (HTTP_1_1_REQUIRED asks for HTTP/1.1, RFC 9113 section 7). */
     public val goAwayCode: Http2ErrorCode? get() = rt.goAwayCode
 
@@ -267,6 +274,12 @@ public class H2ClientStream internal constructor(
      * the wait.
      */
     public suspend fun awaitServerEnd(): Boolean = rt.awaitRemoteEnd(s)
+
+    /**
+     * Suspends until what this stream queued (its END_STREAM, once [sendBody] ended it) was handed to the transport: a
+     * reset of the stream after this goes out after it instead of dropping it. The caller bounds the wait.
+     */
+    public suspend fun awaitQueuedWritten(): Unit = rt.awaitQueuedWritten(s)
 
     /**
      * Sends this request's new priority as the server can use it (RFC 9218 section 2.1.1): a PRIORITY_UPDATE with the
