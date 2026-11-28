@@ -223,6 +223,53 @@ class ClientMissingCertificateTest {
             }
         }
 
+    /**
+     * An endpoint of the origin's HTTPS records (RFC 9460 section 3) whose server refuses this client in the handshake: the
+     * call fails with that refusal, as on the origin itself and whatever the order, and does not go on to the origin (it
+     * would only refuse the client again after a full handshake), here with the alert before the request got its stream.
+     */
+    @Test fun negative_aRecordsEndpointThatRefusesTheClientFailsTheCall() =
+        clientTest {
+            withServer(http2 = true) { refusing ->
+                val originRequests = kotlin.concurrent.atomics.AtomicInt(0)
+                val (origin, port) =
+                    testServer(configure = { http3 { enabled = false } }) {
+                        routing {
+                            get("/") {
+                                originRequests.addAndFetch(1)
+                                call.respondText("origin")
+                            }
+                        }
+                    }
+                try {
+                    val name = "_$port._https.server.test"
+                    val record =
+                        io.kuicksilver.ktor.client.dns
+                            .SvcbRecord(1, "svc.server.test", listOf("h2"), false, refusing, emptyList(), emptyList(), 300, name)
+                    val e =
+                        assertFails {
+                            testClient(Http3Discovery.Auto, engine = {
+                                resolverForTest = { _, p ->
+                                    listOf(
+                                        io.kuicksilver.ktor.network
+                                            .TcpAddress(byteArrayOf(127, 0, 0, 1), p),
+                                    )
+                                }
+                                network { httpsRecords = HttpsRecordsForTest { if (it == name) listOf(record) else emptyList() } }
+                            }).use { c ->
+                                (c.engine as KuicksilverEngine).h1.afterH2StartForTest = { client, _ -> client.awaitClosed() }
+                                c.get("https://server.test:$port/")
+                            }
+                        }
+                    assertIs<Http2Exception.ConnectionClosed>(e, "$e")
+                    assertEquals("the connection was lost: $alert", e.message)
+                    assertEquals(0, originRequests.load(), "the origin was not tried after the refusal")
+                } finally {
+                    origin.stopSuspend(0, 0)
+                }
+            }
+        }
+
     private suspend fun withServer(
         http2: Boolean,
         block: suspend (port: Int) -> Unit,
