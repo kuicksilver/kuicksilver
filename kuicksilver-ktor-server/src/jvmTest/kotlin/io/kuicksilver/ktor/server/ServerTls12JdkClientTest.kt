@@ -341,11 +341,9 @@ class ServerTls12JdkClientTest {
                             listOf("TLS_RSA_WITH_AES_128_GCM_SHA256", "TLS_RSA_WITH_AES_256_GCM_SHA384"),
                         )
                     for (suites in refused) {
-                        val supported = jdkContext().supportedSSLParameters.cipherSuites.toSet()
-                        val offered = suites.filter { it in supported }
-                        if (offered.isEmpty()) continue // a JDK that dropped them all cannot offer them
-                        val e = assertFailsWith<SSLHandshakeException>("$offered") { jdkTls12(port, "http/1.1", offered).close() }
-                        assertContains(e.message.orEmpty(), "handshake_failure", message = "$offered")
+                        // in a JVM of its own, which leaves them enabled: newer JDKs disable some (JDK 25, Temurin 21.0.13: `TLS_RSA_*`)
+                        val r = forkedProbe(port, ems = true, suites = suites)
+                        assertTrue(r.startsWith("FAIL") && "handshake_failure" in r, "$suites: $r")
                     }
                 }
             } finally {
@@ -629,10 +627,11 @@ class ServerTls12JdkClientTest {
             }
         }
 
-    /** Runs [Tls12ProbeMain] in a JVM of its own; returns the last line it printed. */
+    /** Runs [Tls12ProbeMain] in a JVM of its own, offering only [suites] when given; returns the last line it printed. */
     private fun forkedProbe(
         port: Int,
         ems: Boolean,
+        suites: List<String>? = null,
     ): String {
         val javaBin = File(System.getProperty("java.home"), "bin/java").path
         val argFile = File.createTempFile("tls12-probe", ".args")
@@ -651,7 +650,7 @@ class ServerTls12JdkClientTest {
             // the probe uses the JDK's TLS and the test certificates only: no native library, no flags of the test JVM
             val cmd =
                 listOf(javaBin, "-Xmx64m", "-Djdk.tls.useExtendedMasterSecret=$ems", "@${argFile.path}") +
-                    Tls12ProbeMain::class.java.name + port.toString()
+                    Tls12ProbeMain::class.java.name + port.toString() + listOfNotNull(suites?.joinToString(","))
             val p = ProcessBuilder(cmd).redirectErrorStream(true).start()
             val out = p.inputStream.bufferedReader().readText()
             if (!p.waitFor(60, TimeUnit.SECONDS)) {
@@ -724,16 +723,30 @@ internal fun jdkContext(keys: Array<javax.net.ssl.KeyManager>? = null): SSLConte
 }
 
 /**
- * The forked JVM of [ServerTls12JdkClientTest.negative_jdkTls12ClientWithoutEmsRefused]: a TLS 1.2 handshake with the port of
- * its argument; prints `OK <protocol>` or `FAIL <reason>`.
+ * The forked JVM of [ServerTls12JdkClientTest.negative_jdkTls12ClientWithoutEmsRefused] and
+ * [ServerTls12JdkClientTest.negative_cbcSha1AndStaticRsaOnlyClientsRefused]: a TLS 1.2 handshake with the port of its first
+ * argument, offering only the comma-separated suites of the second when there is one; prints `OK <protocol>` or
+ * `FAIL <reason>`. With suites, it first sets `jdk.tls.disabledAlgorithms` to the JDK 21.0.5 list, which leaves CBC and static
+ * RSA suites enabled, before any TLS class loads (the JDK reads it once): the suites are offered on every JDK.
  */
 object Tls12ProbeMain {
     @JvmStatic fun main(args: Array<String>) {
+        val suites = args.getOrNull(1)?.split(',')
+        if (suites != null) {
+            java.security.Security.setProperty(
+                "jdk.tls.disabledAlgorithms",
+                "SSLv3, TLSv1, TLSv1.1, DTLSv1.0, RC4, DES, MD5withRSA, DH keySize < 1024, EC keySize < 224, 3DES_EDE_CBC, anon, NULL, ECDH",
+            )
+        }
         val line =
             runCatching {
                 (jdkContext().socketFactory.createSocket(InetAddress.getLoopbackAddress(), args[0].toInt()) as SSLSocket).use { s ->
                     s.soTimeout = 20_000
-                    s.sslParameters = s.sslParameters.apply { protocols = arrayOf("TLSv1.2") }
+                    s.sslParameters =
+                        s.sslParameters.apply {
+                            protocols = arrayOf("TLSv1.2")
+                            if (suites != null) cipherSuites = suites.toTypedArray()
+                        }
                     s.startHandshake()
                     "OK ${s.session.protocol}"
                 }

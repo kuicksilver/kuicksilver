@@ -15,11 +15,14 @@ import io.kuicksilver.tls.TlsVersions
 import io.kuicksilver.tls.TrustConfig
 import io.kuicksilver.tls.VerifyReason
 import java.io.ByteArrayInputStream
+import java.io.File
 import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.nio.charset.Charset
 import java.security.KeyFactory
 import java.security.KeyStore
 import java.security.MessageDigest
+import java.security.Security
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 import java.security.spec.PKCS8EncodedKeySpec
@@ -30,6 +33,7 @@ import javax.net.ssl.SSLSocket
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 import kotlin.concurrent.thread
+import kotlin.system.exitProcess
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -37,6 +41,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import kotlin.test.fail
 
 /**
  * The client's default TLS versions (0.3.0: TLS 1.3, or 1.2 with a server without 1.3) against servers that are not ours:
@@ -61,30 +66,12 @@ class ClientTls12JdkServerTest {
         override fun close() = socket.close()
     }
 
-    private fun ecKey() = KeyFactory.getInstance("EC").generatePrivate(PKCS8EncodedKeySpec(TestCerts.serverKey))
-
-    private fun rsaKey() = KeyFactory.getInstance("RSA").generatePrivate(PKCS8EncodedKeySpec(RsaTestCert.key))
-
-    private fun cert(der: ByteArray) =
-        CertificateFactory.getInstance("X.509").generateCertificate(ByteArrayInputStream(der)) as X509Certificate
-
-    private fun serverContext(rsa: Boolean): SSLContext {
-        val ks = KeyStore.getInstance("PKCS12").apply { load(null, null) }
-        if (rsa) {
-            ks.setKeyEntry("k", rsaKey(), CharArray(0), arrayOf(cert(RsaTestCert.leaf)))
-        } else {
-            ks.setKeyEntry("k", ecKey(), CharArray(0), arrayOf(cert(TestCerts.server)))
-        }
-        val kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm()).apply { init(ks, CharArray(0)) }
-        return SSLContext.getInstance("TLS").apply { init(kmf.keyManagers, null, null) }
-    }
-
     private fun jdkServer(
         protocols: Array<String>,
         suites: Array<String>? = null,
         rsa: Boolean = false,
     ): JdkServer {
-        val ss = serverContext(rsa).serverSocketFactory.createServerSocket(0, 50, InetAddress.getByName("127.0.0.1")) as SSLServerSocket
+        val ss = jdkServerContext(rsa).serverSocketFactory.createServerSocket(0, 50, InetAddress.getByName("127.0.0.1")) as SSLServerSocket
         ss.enabledProtocols = protocols
         if (suites != null) ss.enabledCipherSuites = suites
         ss.sslParameters = ss.sslParameters.apply { applicationProtocols = arrayOf("http/1.1") }
@@ -124,36 +111,51 @@ class ClientTls12JdkServerTest {
         return JdkServer(ss, handshakes)
     }
 
-    /** A JDK client handshake with [suite] over TLS 1.2, trusting anything: whether the server can serve that suite at all. */
-    private fun jdkClientCanUse(
-        port: Int,
-        suite: String,
-    ): Boolean {
-        val trustAll =
-            object : X509TrustManager {
-                override fun checkClientTrusted(
-                    chain: Array<out X509Certificate>?,
-                    authType: String?,
-                ) = Unit
+    /**
+     * A JDK TLS 1.2 server that offers only [suite], in a JVM of its own ([WeakTls12ServerMain]): the JDK's
+     * `jdk.tls.disabledAlgorithms` is read once, when its TLS classes load, and newer JDKs list weak suites there (JDK 25 and
+     * Temurin 21.0.13 list `TLS_RSA_*`), so only a fresh JVM that sets its own list first serves each weak suite on every JDK.
+     */
+    private class ForkedWeakServer(
+        val suite: String,
+        rsa: Boolean,
+    ) : AutoCloseable {
+        private val argFile = File.createTempFile("tls12-weak-server", ".args")
+        private val process: Process
+        private val lines = java.util.concurrent.LinkedBlockingQueue<String>()
+        private val output = StringBuffer()
 
-                override fun checkServerTrusted(
-                    chain: Array<out X509Certificate>?,
-                    authType: String?,
-                ) = Unit
+        init {
+            val javaBin = File(System.getProperty("java.home"), "bin/java").path
+            val cp = System.getProperty("java.class.path").replace("\\", "\\\\").replace("\"", "\\\"")
+            val charset =
+                System.getProperty("native.encoding")?.let { runCatching { Charset.forName(it) }.getOrNull() } ?: Charset.defaultCharset()
+            argFile.writeText("-cp\n\"$cp\"\n", charset)
+            // the JDK's TLS and the test certificates only: no native library, no flags of the test JVM
+            val cmd = listOf(javaBin, "-Xmx64m", "@${argFile.path}", WeakTls12ServerMain::class.java.name, suite, rsa.toString())
+            process = ProcessBuilder(cmd).redirectErrorStream(true).start()
+            thread(isDaemon = true, name = "tls12-weak-server-out") {
+                process.inputStream.bufferedReader().forEachLine {
+                    output.append(it).append('\n')
+                    lines += it
+                }
+            }
+        }
 
-                override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+        /** The next line the server JVM printed that starts with [prefix], without it (waits for it, bounded). */
+        fun next(prefix: String): String {
+            while (true) {
+                val l =
+                    lines.poll(30, java.util.concurrent.TimeUnit.SECONDS) ?: fail("$suite: no `$prefix` line from the server JVM:\n$output")
+                if (l.startsWith(prefix)) return l.removePrefix(prefix)
             }
-        val ctx = SSLContext.getInstance("TLS").apply { init(null, arrayOf<TrustManager>(trustAll), null) }
-        return runCatching {
-            (ctx.socketFactory.createSocket() as SSLSocket).use { s ->
-                s.connect(InetSocketAddress("127.0.0.1", port), 5_000)
-                s.soTimeout = 5_000
-                s.enabledProtocols = arrayOf("TLSv1.2")
-                s.enabledCipherSuites = arrayOf(suite)
-                s.startHandshake()
-                s.session.cipherSuite == suite
-            }
-        }.getOrDefault(false)
+        }
+
+        override fun close() {
+            process.destroyForcibly()
+            process.waitFor(30, java.util.concurrent.TimeUnit.SECONDS)
+            if (!argFile.delete()) argFile.deleteOnExit()
+        }
     }
 
     private fun diagnosticsOf(r: io.ktor.client.statement.HttpResponse): TcpConnectionSnapshot =
@@ -198,8 +200,9 @@ class ClientTls12JdkServerTest {
     /**
      * Self-attack, RFC 9325 section 4.1 and RFC 10015: TLS 1.2 servers that offer only CBC suites (with SHA-1 and SHA-2 MACs),
      * static RSA key exchange or finite-field DHE (with AES-GCM, so the AEAD alone does not decide). A JDK client gets each one
-     * served (the control: the server really would), the default client gets no handshake: it never offers them. The same
-     * server with an ECDHE + AEAD suite serves the client.
+     * served (the control: the server really would, under a policy of the server's own JVM that leaves them enabled on every
+     * JDK), the default client gets no handshake: it never offers them. The same server with an ECDHE + AEAD suite serves the
+     * client.
      */
     @Test fun negative_tls12ServerWithOnlyWeakSuitesIsRefused() =
         clientTest {
@@ -213,16 +216,16 @@ class ClientTls12JdkServerTest {
                     true to "TLS_DHE_RSA_WITH_AES_128_GCM_SHA256",
                 )
             for ((rsa, suite) in weak) {
-                jdkServer(arrayOf("TLSv1.2"), arrayOf(suite), rsa).use { n ->
-                    assertTrue(jdkClientCanUse(n.port, suite), "control: the JDK server serves $suite")
-                    assertTrue(n.next().isSuccess, "$suite: the control's handshake")
+                ForkedWeakServer(suite, rsa).use { n ->
+                    assertEquals("OK TLSv1.2 $suite", n.next("CONTROL "), "control: the JDK server serves $suite")
+                    val port = n.next("PORT ").toInt()
                     testClient().use { c ->
-                        val e = assertFailsWith<Throwable>(suite) { c.get("https://127.0.0.1:${n.port}/") }
+                        val e = assertFailsWith<Throwable>(suite) { c.get("https://127.0.0.1:$port/") }
                         val alert = generateSequence(e) { it.cause }.filterIsInstance<TlsException.AlertReceived>().firstOrNull()
                         assertEquals("handshake_failure", alert?.description, "$suite: $e")
                     }
-                    val ours = n.next()
-                    assertTrue(ours.isFailure, "$suite: our client's handshake failed on the server too: $ours")
+                    val ours = n.next("HANDSHAKE ")
+                    assertTrue(ours.startsWith("FAIL"), "$suite: our client's handshake failed on the server too: $ours")
                 }
             }
             jdkServer(arrayOf("TLSv1.2"), arrayOf("TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256")).use { n ->
@@ -235,7 +238,7 @@ class ClientTls12JdkServerTest {
     @Test fun negative_pinsHoldOverTls12() =
         clientTest {
             jdkServer(arrayOf("TLSv1.2")).use { n ->
-                val spki = SpkiSha256(MessageDigest.getInstance("SHA-256").digest(cert(TestCerts.server).publicKey.encoded))
+                val spki = SpkiSha256(MessageDigest.getInstance("SHA-256").digest(jdkCert(TestCerts.server).publicKey.encoded))
                 val other = SpkiSha256(ByteArray(32) { 7 })
                 testClient(engine = { tls { trust = TrustConfig.Pinned(setOf(other), base = ClientFixtures.trust) } }).use { c ->
                     val e = assertFailsWith<Throwable> { c.get("https://127.0.0.1:${n.port}/") }
@@ -249,4 +252,90 @@ class ClientTls12JdkServerTest {
                 }
             }
         }
+}
+
+private fun jdkCert(der: ByteArray) =
+    CertificateFactory.getInstance("X.509").generateCertificate(ByteArrayInputStream(der)) as X509Certificate
+
+/** A JDK server context with the test EC identity (TestCerts.server) or, with [rsa], the RSA 2048 one (RsaTestCert). */
+private fun jdkServerContext(rsa: Boolean): SSLContext {
+    val ks = KeyStore.getInstance("PKCS12").apply { load(null, null) }
+    if (rsa) {
+        val key = KeyFactory.getInstance("RSA").generatePrivate(PKCS8EncodedKeySpec(RsaTestCert.key))
+        ks.setKeyEntry("k", key, CharArray(0), arrayOf(jdkCert(RsaTestCert.leaf)))
+    } else {
+        val key = KeyFactory.getInstance("EC").generatePrivate(PKCS8EncodedKeySpec(TestCerts.serverKey))
+        ks.setKeyEntry("k", key, CharArray(0), arrayOf(jdkCert(TestCerts.server)))
+    }
+    val kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm()).apply { init(ks, CharArray(0)) }
+    return SSLContext.getInstance("TLS").apply { init(kmf.keyManagers, null, null) }
+}
+
+/**
+ * The forked JVM of [ClientTls12JdkServerTest.negative_tls12ServerWithOnlyWeakSuitesIsRefused]: a JDK TLS 1.2 server on
+ * 127.0.0.1 that offers only the suite of its first argument (with the RSA identity when the second is `true`). It first sets
+ * `jdk.tls.disabledAlgorithms` to the JDK 21.0.5 list, which leaves CBC, static RSA and finite-field DHE suites enabled, before
+ * any TLS class loads; then a JDK client of its own, trusting anything and offering only that suite, shows that the server serves
+ * it (`CONTROL OK <protocol> <suite>`, or `CONTROL FAIL <reason>`). It prints `PORT <port>`, then the outcome of the next handshake
+ * (`HANDSHAKE OK ...` or `HANDSHAKE FAIL <reason>`), and ends.
+ */
+internal object WeakTls12ServerMain {
+    @JvmStatic fun main(args: Array<String>) {
+        Security.setProperty(
+            "jdk.tls.disabledAlgorithms",
+            "SSLv3, TLSv1, TLSv1.1, DTLSv1.0, RC4, DES, MD5withRSA, DH keySize < 1024, EC keySize < 224, 3DES_EDE_CBC, anon, NULL, ECDH",
+        )
+        val suite = args[0]
+        val ss =
+            jdkServerContext(
+                args[1].toBoolean(),
+            ).serverSocketFactory.createServerSocket(0, 50, InetAddress.getByName("127.0.0.1")) as SSLServerSocket
+        ss.soTimeout = 30_000
+        ss.enabledProtocols = arrayOf("TLSv1.2")
+        ss.enabledCipherSuites = arrayOf(suite)
+
+        fun handshake(): String =
+            runCatching {
+                (ss.accept() as SSLSocket).use { s ->
+                    s.soTimeout = 10_000
+                    s.startHandshake()
+                    "OK ${s.session.protocol} ${s.session.cipherSuite}"
+                }
+            }.getOrElse { "FAIL $it" }
+        val trustAll =
+            object : X509TrustManager {
+                override fun checkClientTrusted(
+                    chain: Array<out X509Certificate>?,
+                    authType: String?,
+                ) = Unit
+
+                override fun checkServerTrusted(
+                    chain: Array<out X509Certificate>?,
+                    authType: String?,
+                ) = Unit
+
+                override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+            }
+        val ctx = SSLContext.getInstance("TLS").apply { init(null, arrayOf<TrustManager>(trustAll), null) }
+        var served: String? = null
+        val acceptor = thread(name = "control-accept") { served = handshake() }
+        val control =
+            runCatching {
+                (ctx.socketFactory.createSocket() as SSLSocket).use { s ->
+                    s.connect(InetSocketAddress("127.0.0.1", ss.localPort), 10_000)
+                    s.soTimeout = 10_000
+                    s.enabledProtocols = arrayOf("TLSv1.2")
+                    s.enabledCipherSuites = arrayOf(suite)
+                    s.startHandshake()
+                    "OK ${s.session.protocol} ${s.session.cipherSuite}"
+                }
+            }.getOrElse { "FAIL $it" }
+        acceptor.join()
+        println("CONTROL ${if (served?.startsWith("OK") == true) control else "FAIL server side: $served (client side: $control)"}")
+        println("PORT ${ss.localPort}")
+        println("HANDSHAKE ${handshake()}")
+        System.out.flush()
+        ss.close()
+        exitProcess(0)
+    }
 }
