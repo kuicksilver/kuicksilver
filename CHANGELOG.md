@@ -2271,6 +2271,16 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   handshake (an alert it sends) fails the call with that refusal instead of passing on to the next endpoint and the
   origin, which it did only when the refusal came before the request's stream; an endpoint whose certificate fails the
   client's verification is still passed over for the next one and the origin (RFC 9460 section 3).
+- TLS over TCP, a connection whose job was cancelled: on Android its input (`TlsConnection.input`) read as ended cleanly,
+  as after the peer's close_notify, and so did a `TlsSocket`'s read channel whose relay saw that end before the socket's
+  cancellation reached it (the channel closed without a cause instead of failing with
+  `ConnectionEndedException.LocalClose`). The reader pump failed the input with the job's own cancellation, a
+  `JobCancellationException`, which Ktor's channels re-create through `createCopy()` wherever they hand the cause on, and
+  outside the coroutines debug mode (Android, a JVM without assertions) that copy is null: the cause was dropped. The
+  input now fails with a plain `CancellationException` that carries the job's, which every runtime keeps. Found on the
+  API 35 emulator by `SocketTlsTest.negative_aCancelledSocketContextEndsTheRelayAndThePump`; the JVM tests run in debug
+  mode, where the copy survives (`TlsConnectionTest.negative_aCancelledJobFailsTheInputWithACauseEveryRuntimeKeeps`
+  checks the cause's type).
 - HTTP/1.1 client, a streamed upload the server stopped taking: the call could fail with
   `ClosedByteChannelException` ("connection closed") instead of its `SocketTimeoutException`. The timeout's expiry
   closes the connection under the stalled body, whose write then fails too, and that failure, preferred as the call's
