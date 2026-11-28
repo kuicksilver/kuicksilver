@@ -2259,6 +2259,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   H3_NO_ERROR and repeats its CONNECTION_CLOSE once a probe timeout later (at most 250 ms; RFC 9000 section 10.2.1).
   Found on the API 24 emulator by the vendored contract test
   `HttpTimeoutTest.testSocketTimeoutWriteFailOnWritePerRequestAttributes` (`H3OrderlyCloseTest`).
+- HTTP/1.1 client, a streamed upload the server stopped taking: the call could fail with
+  `ClosedByteChannelException` ("connection closed") instead of its `SocketTimeoutException`. The timeout's expiry
+  closes the connection under the stalled body, whose write then fails too, and that failure, preferred as the call's
+  own when the body fails, won whenever it was recorded before the exchange looked at it (a loaded host). Once the
+  socket timeout expired, the timeout is the call's failure.
 - HTTP/2 body, cancelled while it was read: the cancel emptied the body's buffer from its own thread while the reader
   (Ktor's copier into the application's channel, in `HttpStatement.execute {}`) read it on another, so `Buffer.clear`
   threw an EOFException out of `cancel` (or the read lost its bytes), the stream was never reset with CANCEL (RFC 9113

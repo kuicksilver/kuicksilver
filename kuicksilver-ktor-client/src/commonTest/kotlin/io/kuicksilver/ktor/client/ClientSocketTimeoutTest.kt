@@ -43,12 +43,14 @@ import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration
@@ -222,6 +224,43 @@ class ClientSocketTimeoutTest {
                             }
                         }
                     assertSocketTimeout(e, "$proto")
+                }
+            }
+        }
+
+    /**
+     * HTTP/1.1, the order a loaded host can take: the expiry closes the connection under the stalled body, whose write then
+     * fails with "connection closed"; that failure may be recorded before the exchange looks at it
+     * ([io.kuicksilver.ktor.client.h1.H1Pool.exchangeFailedForTest] waits for the body's end there). The call still fails
+     * with the socket timeout, not with the closed channel the timeout caused.
+     */
+    @Test fun negative_aStalledUploadTimesOutWhenItsBodyFailsFirst() =
+        clientTest {
+            each { proto, port ->
+                if (proto != Proto.H1) return@each
+                client(proto).use { c ->
+                    var bodyFailure: Throwable? = null
+                    (c.engine as KuicksilverEngine).h1.exchangeFailedForTest = { sender ->
+                        if (sender != null) {
+                            withTimeout(10.seconds) { sender.sent.await() }
+                            bodyFailure = sender.failure
+                        }
+                    }
+                    val e =
+                        assertFailsWith<Throwable> {
+                            c.post("https://127.0.0.1:$port/sink") {
+                                setBody(
+                                    object : OutgoingContent.WriteChannelContent() {
+                                        override suspend fun writeTo(channel: ByteWriteChannel) {
+                                            val chunk = ByteArray(64 * 1024)
+                                            repeat(4096) { channel.writeFully(chunk) } // 256 MiB: more than any buffer on the way
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                    assertNotNull(bodyFailure, "the body's write failed before the exchange looked: $e")
+                    assertSocketTimeout(e, "$proto (the body failed with $bodyFailure)")
                 }
             }
         }

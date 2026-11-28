@@ -497,6 +497,9 @@ internal class H1Pool(
     /** Tests: the connection a WebSocket session was handed over. */
     internal var webSocketConnectionForTest: ((H1Connection) -> Unit)? = null
 
+    /** Test hook: an exchange failed, before its request body's failure is looked at (with the body's sender, if any). */
+    internal var exchangeFailedForTest: (suspend (BodySender?) -> Unit)? = null
+
     /** Runs after a request got a pool permit and before it may become its route's dialer (tests: widens that gap). */
     internal var beforeDialForTest: (suspend () -> Unit)? = null
 
@@ -1767,7 +1770,11 @@ internal class H1Pool(
                 closeAfterFailure(e)
                 // every connectionAcquired gets its connectionReleased, also when the exchange failed before a response
                 events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_1_1, kept = false) }
-                bodyJob?.failure?.let { throw it }
+                exchangeFailedForTest?.invoke(bodyJob)
+                // the request body's own failure is the call's (the exchange then only saw its connection closed), unless
+                // the socket timeout expired: its expiry closed the connection under the body, whose write then failed
+                // with "connection closed" as well, sooner or later than this check, and the timeout is what happened
+                if (e !is SocketTimeoutException) bodyJob?.failure?.let { throw it }
                 // a pooled connection the server already closed: one transparent retry on a fresh connection, for an
                 // idempotent request with a replayable body only (a non-idempotent one may have been processed, RFC 9112 section 9.3.1);
                 // a socket timeout is an IOException too, but a slow server, not a closed connection: it is not repeated,
