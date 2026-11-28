@@ -3430,9 +3430,10 @@ Ping, so the peer gets one. Pings are answered after this side's Close too, unti
 side of the transport open after its Close until the peer's Close arrives (or the close wait passes, 5 s; on the
 client `webSocketCloseWaitMillis`), and closes it then, at once when the peer answers the Close promptly; a closed
 client or a stopping server closes it sooner (below). After this side's Close a Ping is the engine's alone: answered,
-and not handed to the session, whose outgoing channel is closed by then. This holds for a raw `webSocketRaw` session too,
-which still sees the Ping in `incoming` but no longer needs to answer it: its own Pong with the Ping's data is taken
-for that answer and dropped (an unsolicited Pong with other data goes out).
+and not handed to the session, whose outgoing channel is closed by then. This holds for a raw `webSocketRaw` session too:
+before its own Close it still sees the Ping in `incoming` but no longer needs to answer it (its own Pong with the
+Ping's data is taken for that answer and dropped; an unsolicited Pong with other data goes out), and after its own
+Close the engine answers the Ping inline and the session does not see it.
 
 #### Which protocol a client WebSocket takes, and how it closes
 
