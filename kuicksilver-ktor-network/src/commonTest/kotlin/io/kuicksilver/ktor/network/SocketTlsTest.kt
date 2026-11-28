@@ -44,6 +44,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CompletableJob
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.Job
@@ -326,7 +327,10 @@ class SocketTlsTest {
     /**
      * A write waiting for room when the socket is aborted (the peer stopped reading) fails with the write side's
      * LocalClose, not with the pump's cancellation. Over [MemorySocket], whose buffers are known
-     * ([negative_closeIsBoundedWhenThePeerStopsReading]): 64 MiB never fit.
+     * ([negative_closeIsBoundedWhenThePeerStopsReading]): the server never reads, so the writes fill them and one waits.
+     * One large write did not always wait: ktor's flush hands the bytes over before it checks for room, and a write pump
+     * woken on another thread could take them all into its own buffer in between, so the write returned (a slow or a
+     * different host). The writes go on until one is really suspended, which the writer's own coroutine tells.
      */
     @Test fun negative_aWritePendingAtTheAbortIsALocalClose(): Unit =
         runBlocking {
@@ -336,9 +340,21 @@ class SocketTlsTest {
             val s = withTimeout(20.seconds) { server.await() }
             try {
                 val out = c.openWriteChannel(autoFlush = true)
-                val data = ByteArray(64 shl 20)
-                val write = async(start = CoroutineStart.UNDISPATCHED) { runCatching { out.writeFully(data, 0, data.size) } }
-                assertTrue(!write.isCompleted, "the write waits for room before the abort")
+                val data = ByteArray(1 shl 20)
+                // undispatched: each write runs here until it suspends, so a write not completed on return waits for room
+                // (writeFully suspends only in its flush); one that returned is followed by the next. The buffers on the
+                // way are some 5 MiB, so 64 writes are far more than ever return
+                var waiting: Deferred<Result<Unit>>? = null
+                for (i in 0 until 64) {
+                    val w = async(start = CoroutineStart.UNDISPATCHED) { runCatching { out.writeFully(data, 0, data.size) } }
+                    if (!w.isCompleted) {
+                        waiting = w
+                        break
+                    }
+                    w.await().getOrThrow()
+                }
+                val write = waiting
+                assertTrue(write != null && !write.isCompleted, "the write waits for room before the abort")
                 c.abort()
                 val pending = withTimeout(20.seconds) { write.await() }.exceptionOrNull()
                 // ktor's channel may take the rest of a waiting write into its buffer once it is woken: then the next write fails
