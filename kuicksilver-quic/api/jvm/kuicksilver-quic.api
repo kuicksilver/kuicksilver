@@ -1340,7 +1340,6 @@ public abstract interface class io/kuicksilver/quic/QuicStream {
 	public fun getReceivedOffset ()Lkotlinx/coroutines/flow/StateFlow;
 	public fun getSendReleased ()Lkotlinx/coroutines/flow/StateFlow;
 	public fun getSentFinalSize ()Lkotlinx/coroutines/Deferred;
-	public fun getSentToConnection ()Ljava/lang/Long;
 	public abstract fun reset (J)V
 	public fun resetAt (JJ)V
 	public abstract fun setPriority (Lio/kuicksilver/quic/StreamPriority;)V
@@ -1353,7 +1352,6 @@ public final class io/kuicksilver/quic/QuicStream$DefaultImpls {
 	public static fun getReceivedOffset (Lio/kuicksilver/quic/QuicStream;)Lkotlinx/coroutines/flow/StateFlow;
 	public static fun getSendReleased (Lio/kuicksilver/quic/QuicStream;)Lkotlinx/coroutines/flow/StateFlow;
 	public static fun getSentFinalSize (Lio/kuicksilver/quic/QuicStream;)Lkotlinx/coroutines/Deferred;
-	public static fun getSentToConnection (Lio/kuicksilver/quic/QuicStream;)Ljava/lang/Long;
 	public static fun resetAt (Lio/kuicksilver/quic/QuicStream;JJ)V
 }
 

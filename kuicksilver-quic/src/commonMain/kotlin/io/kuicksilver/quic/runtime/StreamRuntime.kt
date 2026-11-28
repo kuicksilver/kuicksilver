@@ -183,7 +183,8 @@ internal class StreamRuntime(
     @Volatile
     internal var sentToCore = 0L
 
-    override val sentToConnection: Long get() = sentToCore
+    /** [io.kuicksilver.quic.sentToConnection] of this stream. */
+    internal val sentToConnection: Long get() = sentToCore
 
     override val sendReleased: kotlinx.coroutines.flow.StateFlow<Long>
         get() {

@@ -46,6 +46,7 @@ import io.kuicksilver.quic.markTunnel
 import io.kuicksilver.quic.ownAddresses
 import io.kuicksilver.quic.readAhead
 import io.kuicksilver.quic.releaseStreamCredit
+import io.kuicksilver.quic.sentToConnection
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
@@ -1071,14 +1072,14 @@ internal class ResponseWriterImpl(
     /**
      * Returns once the first [bytes] written to [output] were acknowledged by the peer. The pump first has to hand them
      * to the QUIC stream ([handedToTransport]). Then the connection's send buffer has to release everything the stream
-     * had taken by then ([QuicStream.sendReleased] reaching [QuicStream.sentToConnection]). A stream that does not track
+     * had taken by then ([QuicStream.sendReleased] reaching [io.kuicksilver.quic.sentToConnection]). A stream that does not track
      * the second step (another QUIC implementation) returns once they were handed. Waits for good when that never happens,
      * for example when the pump abandoned the response or the peer gives no credit: the caller bounds the wait.
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     internal suspend fun awaitAcknowledged(bytes: Long) {
         handed.first { it >= bytes }
-        val target = st.sentToConnection ?: return
+        val target = st.sentToConnection() ?: return
         val released = st.sendReleased ?: return
         released.first { it >= target }
     }

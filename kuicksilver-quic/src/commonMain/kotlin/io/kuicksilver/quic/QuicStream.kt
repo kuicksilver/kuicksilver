@@ -125,17 +125,18 @@ public interface QuicStream {
     @ExperimentalKuicksilverApi
     public val sendReleased: StateFlow<Long>? get() = null
 
-    /**
-     * The bytes of our sending half handed to the connection so far (what [output]'s flushes passed on to its send buffer).
-     * It only grows. Once [sendReleased] reaches it, the peer acknowledged everything written up to then. The other ways
-     * the buffer is released (a reset, the stream's retirement, the connection's end) also count. A flush that returned
-     * does not say that: the send buffer takes data beyond the peer's flow-control credit, and the connection's close
-     * would discard it. Null from implementations outside this library that do not track it.
-     */
-    @ExperimentalKuicksilverApi
-    public val sentToConnection: Long? get() = null
-
     /** Server: data of this stream arrived in 0-RTT packets, before the handshake completed; it may be a replay (RFC 9846 section 8). */
     @ExperimentalKuicksilverApi
     public val receivedEarly: Boolean get() = false
 }
+
+/**
+ * The bytes of [this] stream's sending half handed to the connection so far (what [QuicStream.output]'s flushes passed on
+ * to its send buffer). It only grows. Once [QuicStream.sendReleased] reaches it, the peer acknowledged everything written
+ * up to then. The other ways the buffer is released (a reset, the stream's retirement, the connection's end) also count.
+ * A flush that returned does not say that: the send buffer takes data beyond the peer's flow-control credit, and the
+ * connection's close would discard it. Null for streams of other implementations. A function, not a property: as an
+ * internal API it stays out of the ABI dumps, which keep an annotated interface property's getter.
+ */
+@io.kuicksilver.annotations.InternalKuicksilverApi
+public fun QuicStream.sentToConnection(): Long? = (this as? io.kuicksilver.quic.runtime.StreamRuntime)?.sentToConnection
