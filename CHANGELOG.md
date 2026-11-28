@@ -1799,6 +1799,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Client engine (HTTP/1.1 over TCP or TLS): a connection closed while a writer of its own still wrote to it (a
+  request body sent alongside the response, a WebSocket session's writer) could corrupt kotlinx-io's buffers. The
+  socket's close moved the application channel's write buffer to the socket's writer while that write filled it, so the
+  close failed with a NullPointerException, the stream was cut or left waiting, and a segment sent and recycled under the
+  write could come back from kotlinx-io's pool to another channel of the process (an HTTP/1.1 read loop then failed the
+  same way). A socket's close now ends an auto-flushing application channel (the client engine's) without that move; the
+  bytes written before it are sent, then the FIN. Channels without auto-flush (the server engine's) keep ktor-io's close,
+  which sends bytes written but not yet flushed.
 - QUIC: when a handshake's active address came back to where the client is, the resend of what had gone to the other
   address owed a PTO probe in each space, so its first datagram went out above the congestion window although no
   probe timer had expired (RFC 9002 section 7: only "on a PTO timer expiration ... or when entering recovery"). The

@@ -8,6 +8,7 @@ import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ClosedWriteChannelException
 import io.ktor.utils.io.ConcurrentIOException
 import io.ktor.utils.io.discard
+import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeFully
 import kotlinx.coroutines.CompletableDeferred
@@ -18,6 +19,7 @@ import kotlinx.io.readByteArray
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.microseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -27,7 +29,7 @@ import kotlin.time.Duration.Companion.seconds
  * and the waiting write was resumed with ConcurrentIOException, which escaped the application's coroutine (it also failed
  * the next runTest of the JVM as an uncaught exception from TcpWriterTest).
  */
-@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
 class CloseWhileWritingTest {
     /**
      * An application writing 512 KiB at a time into a channel nobody reads: ktor-io holds 1 MiB, so a write waits
@@ -102,4 +104,93 @@ class CloseWhileWritingTest {
                 srv.close()
             }
         }
+
+    /**
+     * The close of an [autoFlush][ByteChannel.autoFlush] channel (the client engine's) under a write running on another
+     * thread: the reader gets a prefix of what was written, in order, then the end; the write ends as closed. Before,
+     * close() moved the channel's write buffer to the reader while the write filled it: on the JVM 3 to 8 of 20000 closes
+     * failed with a NullPointerException in kotlinx-io's Buffer.write, the write and the reader then waiting for good
+     * (closeFromSocketClose). A race, so many rounds; each round's close comes a little later.
+     */
+    @Test fun negative_aCloseUnderARunningWriteLeavesTheStreamWhole() =
+        kotlinx.coroutines.runBlocking {
+            val odd = ArrayList<String>()
+            repeat(CLOSE_RACE_ROUNDS) { round ->
+                val channel = ByteChannel(autoFlush = true)
+                val wrote = CompletableDeferred<Throwable?>()
+                val read = CompletableDeferred<String?>()
+                val writing = kotlin.concurrent.atomics.AtomicInt(0)
+                launch(kotlinx.coroutines.Dispatchers.Default) {
+                    val chunk = ByteArray(1 + round % 3000)
+                    var next = 0
+                    try {
+                        while (true) {
+                            for (j in chunk.indices) chunk[j] = (next++).toByte()
+                            channel.writeFully(chunk)
+                            writing.store(1)
+                        }
+                    } catch (e: Throwable) {
+                        wrote.complete(e)
+                    }
+                }
+                launch(kotlinx.coroutines.Dispatchers.Default) {
+                    val buf = ByteArray(8192)
+                    var next = 0
+                    try {
+                        while (true) {
+                            val n = channel.readAvailable(buf)
+                            if (n < 0) break
+                            for (j in 0 until n) {
+                                if (buf[j] != (next++).toByte()) {
+                                    read.complete("byte ${next - 1} out of order")
+                                    return@launch
+                                }
+                            }
+                        }
+                        read.complete(null)
+                    } catch (e: Throwable) {
+                        read.complete("the read failed: $e")
+                    }
+                }
+                // once the write runs, and a little later each round (0 to 49 µs)
+                while (writing.load() == 0) kotlinx.coroutines.yield()
+                val until =
+                    kotlin.time.TimeSource.Monotonic
+                        .markNow() + (round % 50).microseconds
+                while (until.hasNotPassedNow()) {
+                    // spins: a suspension would hand the thread over and lose the moment
+                }
+                val closed = runCatching { channel.closeFromSocketClose() }.exceptionOrNull()
+                if (closed != null) odd += "round $round: the close failed: $closed"
+                val writeEnd = kotlinx.coroutines.withTimeoutOrNull(5.seconds) { wrote.await() }
+                val readEnd = kotlinx.coroutines.withTimeoutOrNull(5.seconds) { read.await() }
+                if (writeEnd !is ClosedWriteChannelException) odd += "round $round: the write ended with $writeEnd"
+                if (!read.isCompleted) odd += "round $round: the reader never saw the end"
+                readEnd?.let { odd += "round $round: $it" }
+                channel.cancel(null)
+            }
+            assertEquals(emptyList<String>(), odd.take(10), "${odd.size} of $CLOSE_RACE_ROUNDS rounds")
+        }
+
+    /**
+     * What [closeFromSocketClose] relies on: ktor-io's `cancel(null)` is a clean end, as close() without its move. The
+     * bytes flushed before it stay readable, then the end comes without a cause; a later write fails as closed.
+     */
+    @Test fun cancelWithoutACauseEndsAChannelCleanly() =
+        runTest {
+            val channel = ByteChannel(autoFlush = true)
+            channel.writeFully(ByteArray(1000) { it.toByte() })
+            channel.closeFromSocketClose()
+            assertTrue(channel.isClosedForWrite, "closed for write")
+            assertEquals(null, channel.closedCause, "no cause")
+            assertEquals(1000, channel.readBuffer().readByteArray().size, "the flushed bytes")
+            assertTrue(channel.isClosedForRead && channel.closedCause == null, "a clean end")
+            val late = runCatching { channel.writeFully(ByteArray(1)) }.exceptionOrNull()
+            assertTrue(late is ClosedWriteChannelException, "a later write fails as closed, got $late")
+        }
+
+    private companion object {
+        /** Rounds of the close race: a few seconds on the JVM, where 3 to 8 of 20000 failed before. */
+        const val CLOSE_RACE_ROUNDS = 20_000
+    }
 }

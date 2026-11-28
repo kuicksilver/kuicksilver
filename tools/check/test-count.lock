@@ -2883,7 +2883,9 @@ kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.AddressSelec
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.AddressSelectionTest.rule9LongestMatchingPrefix
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.AddressSelectionTest.rule9StopsAtTheSourcesPrefixLength
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.AddressSelectionTest.sourcesAreAskedOncePerDestination
+kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.CloseWhileWritingTest.cancelWithoutACauseEndsAChannelCleanly
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.CloseWhileWritingTest.flushAndCloseNextToAWaitingWriteFailsIt
+kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.CloseWhileWritingTest.negative_aCloseUnderARunningWriteLeavesTheStreamWhole
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.CloseWhileWritingTest.negative_closeWhileAWriteWaitsForRoomEndsItAsClosed
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.CloseWhileWritingTest.tlsCloseSendsEverythingQueuedBeforeCloseNotify
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.EngineSelectorTest.socketClosedWhileTheSelectorIsIdleIsReleased
