@@ -122,6 +122,9 @@ internal class WebSocketSessions {
     /** The grace each session gives the server after its own end once the engine was closed (tests shorten it). */
     @kotlin.concurrent.Volatile var hurryGraceMillis: Long = WEBSOCKET_HURRY_GRACE_MILLIS
 
+    /** Test hook: runs as a session's held end for Pongs goes on to its in-order end ([WebSocketLifetime.awaitHeldOutputEnd]). */
+    @kotlin.concurrent.Volatile var heldEndForTest: (suspend () -> Unit)? = null
+
     /** The sessions not ended yet (tests). */
     val size: Int get() = lock.withLock { live.size }
 }
@@ -391,11 +394,17 @@ internal class WebSocketLifetime(
         }
         if (guard.holdsWebSocketOutputEnd) {
             guard.endWebSocketOutputHold()
-            // its in-order end (the waiting Pongs, then the transport's end) within what is left of the same bound; a
-            // transport that takes nothing more (a peer that reads nothing) does not keep it: the hold is given up and
-            // the engine resets the transport
-            val left = if (hurried.isCompleted) leftOf(ownEndDeadline(discardsUnread)) else closeWaitMillis
-            withTimeoutOrNull(left) { guard.awaitWebSocketOutputEnd() }
+            // its in-order end (the waiting Pongs, then the transport's end: close_notify and a FIN over TLS) within what
+            // is left of the same bound, and at least the grace, as ownEndBoundMillis gives the session's own end: when
+            // the hold used the bound up (a server that never answers the Close), what is left is nothing, and the end of
+            // a transport that still takes data (a slow host, a TLS flush) was cut into a reset. A transport that takes
+            // nothing more (a peer that reads nothing) still does not keep it past that: the hold is given up and the
+            // engine resets the transport
+            val left = if (hurried.isCompleted) maxOf(leftOf(ownEndDeadline(discardsUnread)), hurryGraceMillis) else closeWaitMillis
+            withTimeoutOrNull(left) {
+                track?.sessions?.heldEndForTest?.invoke()
+                guard.awaitWebSocketOutputEnd()
+            }
             if (guard.holdsWebSocketOutputEnd) guard.abandonWebSocketOutputHold()
         }
     }

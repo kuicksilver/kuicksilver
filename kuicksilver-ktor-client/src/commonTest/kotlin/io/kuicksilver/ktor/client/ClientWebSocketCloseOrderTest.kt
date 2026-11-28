@@ -999,11 +999,13 @@ class ClientWebSocketCloseOrderTest {
      * connection still ends cleanly: close_notify over TLS, a FIN, no reset before that clean end (RFC 6455 section 5.5.1:
      * the client "MAY close the connection at any time after sending and receiving a Close message"; sections 7.1.1 and
      * 7.1.4: in the abnormal case it may initiate the TCP close). The engine's cleanup is over long before the close wait. Before, `client.close()` waited the close wait out (the leak sentinel saw 4990 ms
-     * against Ktor's Netty server).
+     * against Ktor's Netty server). With [slowHeldEnd] the held end's in-order end runs it first
+     * ([WebSocketSessions.heldEndForTest]), as a slow host's TLS end takes its time, and must be given that time.
      */
     private fun engineCloseH1(
         tls: Boolean,
         answers: Boolean,
+        slowHeldEnd: (suspend () -> Unit)? = null,
     ) = clientTest {
         val conns = CompletableDeferred<RawConnection>()
         val frames = CompletableDeferred<List<String>>()
@@ -1023,6 +1025,13 @@ class ClientWebSocketCloseOrderTest {
                 e.h1.webSocketClosingForTest = { hook += it }
                 e.h1.webSocketCloseWaitMillis = 60_000
                 e.webSockets.hurryGraceMillis = 200 // a silent server: the grace is waited out, shortened here
+                val slowEnded = CompletableDeferred<Unit>()
+                if (slowHeldEnd != null) {
+                    e.webSockets.heldEndForTest = {
+                        slowHeldEnd()
+                        slowEnded.complete(Unit)
+                    }
+                }
                 c.webSocketSession("${scheme(tls)}://127.0.0.1:$port/ws").close(CloseReason(4000, "client bye"))
                 val conn = conns.await()
                 assertEquals("close 4000 client bye", withTimeout(20.seconds) { frames.await() }.last())
@@ -1037,6 +1046,8 @@ class ClientWebSocketCloseOrderTest {
                 hook.await("engine closed")
                 assertFalse(hook.has("T2"), "${hook.timed.value}")
                 assertFalse(conn.events.has("client RST"), "a clean close, not a reset: ${conn.events.timed.value}")
+                // the held end's in-order end had its time (at least the grace), not what was left of a used-up bound
+                if (slowHeldEnd != null) assertTrue(slowEnded.isCompleted, "the held end's in-order end was cut short")
                 assertEquals(0, e.webSockets.size)
             } finally {
                 c.close()
@@ -1047,6 +1058,15 @@ class ClientWebSocketCloseOrderTest {
     @Test fun negative_engineCloseEndsT1AgainstASilentPlainServer() = engineCloseH1(tls = false, answers = false)
 
     @Test fun negative_engineCloseEndsT1AgainstASilentTlsServer() = engineCloseH1(tls = true, answers = false)
+
+    /**
+     * The API 35 emulator timed out waiting for the client's FIN here: against a silent server the held end for Pongs
+     * uses the whole shared bound, so its in-order end (the waiting Pongs, close_notify, the FIN) got what was left, none,
+     * and the transport's end was decided with its last bytes still in front of the socket on a slow host (a reset, not
+     * a FIN). It gets at least the grace now, as the session's own end does (WebSocketLifetime.ownEndBoundMillis).
+     */
+    @Test fun negative_engineCloseEndsT1CleanlyWhenTheHeldEndIsSlow() =
+        engineCloseH1(tls = true, answers = false, slowHeldEnd = { kotlinx.coroutines.delay(50) }) // a 50 ms end
 
     @Test fun negative_engineCloseEndsT2AgainstAPlainServerThatKeepsTheConnection() = engineCloseH1(tls = false, answers = true)
 
