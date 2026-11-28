@@ -3428,7 +3428,9 @@ answers every Ping itself as soon as it reads it (RFC 6455 section 5.5.2: "as so
 carrying its data, between the frames the session is sending; it drops the Pong the session then writes for that
 Ping, so the peer gets one. Pings are answered after this side's Close too, until the peer's: the engine keeps its
 side of the transport open after its Close until the peer's Close arrives (or the close wait passes, 5 s; on the
-client `webSocketCloseWaitMillis`), and closes it then, at once when the peer answers the Close promptly. This holds for a raw `webSocketRaw` session too,
+client `webSocketCloseWaitMillis`), and closes it then, at once when the peer answers the Close promptly; a closed
+client or a stopping server closes it sooner (below). After this side's Close a Ping is the engine's alone: answered,
+and not handed to the session, whose outgoing channel is closed by then. This holds for a raw `webSocketRaw` session too,
 which still sees the Ping in `incoming` but no longer needs to answer it: its own Pong with the Ping's data is taken
 for that answer and dropped (an unsolicited Pong with other data goes out).
 
@@ -3488,9 +3490,12 @@ least the grace; over HTTP/2 the Close counts as written only once the stream to
 the connection does not discard it. A session whose Close cannot be written (a server that reads slowly or not at all)
 keeps its close wait: the engine's close does not cut it short. Over HTTP/1.1 the connection closes after the grace, and
 bytes the server still sends then get a reset from the closed socket (RFC 6455 sections 5.5.1 and 7.1.1 allow the
-close). While the client is open the waits above apply in full. The server engine's stop likewise stops waiting for a
-client's END_STREAM or FIN after a WebSocket that ended in order, so its grace period goes to the requests still
-running.
+close). These waits after the client's own end share one bound: the end held for Pongs after the Close, during which
+the session goes on answering the server's Pings, and the wait for the server's end of the transport after it take
+the grace (or the rest of the close wait) together, not one each. While the client is open the waits above apply in
+full. The server engine's stop likewise lets go at once the end it holds for Pongs after its own Close (in order,
+within 1 s; over HTTP/1.1, HTTP/2 and HTTP/3), ends a session that still waits for the client's Close, and stops waiting for a client's END_STREAM or FIN after a WebSocket
+that ended in order, so its grace period goes to the requests still running.
 
 ## Observability and diagnostics
 

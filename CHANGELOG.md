@@ -2222,9 +2222,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   peer's: the engine keeps its side of the transport open after its own Close (Ktor's writer ends its channel right
   after it) until the peer's Close is read, the input ends or the close wait passes (5 s; the client's
   `webSocketCloseWaitMillis`), and closes it then (RFC 6455 section 5.5.1: the transport is closed "after both sending
-  and receiving a Close message"); a peer that answers the Close at once sees no delay. Before, a server that closed
-  first ended the transport (FIN, END_STREAM) right after its Close, and a Ping sent before the client's Close went
-  unanswered on both engines. At most 16 Pings wait; past that only the newest is answered and the session answers the
+  and receiving a Close message"); a peer that answers the Close at once sees no delay. A closed client lets that end
+  go within the bound of its waits after its own end, and a stopping server at once (see the next entries). After this
+  side's Close a Ping is the engine's alone: answered, and not handed to the session, whose outgoing channel is closed
+  by then (Ktor's default session failed answering on it and ended the session about 200 ms into a server's Pings).
+  The transport's delivery of the writer's last frame is waited for once, without holding the Pongs back. Before, a
+  server that closed first ended the transport (FIN, END_STREAM) right after its Close, and a Ping sent before the
+  client's Close went unanswered on both engines. At most 16 Pings wait; past that only the newest is answered and the session answers the
   others (section 5.5.3). A Pong whose write fails (a reset transport) is not an uncaught exception. Before, the Pong
   was left to Ktor's session, whose pong coroutine could run after the application had echoed the whole message the
   Ping came in the middle of (Autobahn|Testsuite 5.6 to 5.8, 5.19 and 5.20 failed in some runs).
@@ -2271,7 +2275,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   side the Close may be unread there, so the server still gets 1 s to do so. Over HTTP/2 and HTTP/3, where the stream's
   reset or the connection's close would discard it, a Close the server never answered keeps the rest of its close wait
   instead, at least the grace (over HTTP/2 the Close counts as written only once the stream took it, not once it is
-  queued behind the window). Over HTTP/1.1 the connection closes after the grace: bytes the server still sends then get
+  queued behind the window). The end held for Pongs after the client's Close (see the entry above) is one of these
+  waits: the session goes on answering the server's Pings while it is held, and it shares one bound with the wait for
+  the server's end after it, so a silent server costs one grace, not two; an in-order end that the transport holds
+  past that bound (a server that opens no window) is given up and the stream reset. Over HTTP/1.1 the connection closes after the grace: bytes the server still sends then get
   a reset from the closed socket, which RFC 6455 sections 5.5.1 and 7.1.1 allow. A session ended before the server's
   Close is not a clean close (section 7.1.5: 1006), though Ktor's `closeReason` reports the client's own code. A session
   whose Close cannot be written (a server that reads slowly or not at all) keeps its close wait, as before. Before, the
@@ -2279,7 +2286,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   against Ktor's Netty server (`ClientToNettyWebSocketTest`, whose teardown stopped the server under closing sessions;
   it now waits for each closing handshake and for the client's end first). The server engine's stop likewise no longer
   waits for a client's END_STREAM or FIN after a WebSocket over HTTP/2 or HTTP/3 that ended in order; the client gets
-  RST_STREAM NO_ERROR or STOP_SENDING H3_NO_ERROR. Before, a stop with a grace period waited up to 5 s for it.
+  RST_STREAM NO_ERROR or STOP_SENDING H3_NO_ERROR. The end the server holds for Pongs after its own Close goes at once
+  too, in order, within 1 s, over HTTP/1.1, HTTP/2 and HTTP/3, and a session that still waits for the client's Close
+  then ends. Before, a stop with a grace period waited up to 5 s for
+  either.
+- WebSocket over HTTP/2, client: after an orderly close the client could reset the stream with CANCEL right after its
+  END_STREAM (Node's http2 server saw `STREAM_CLOSED rst=8`). The end held for Pongs waits, as it ends, until the stream
+  took what was written; when the session ended meanwhile (the server's Close arrived), that end was marked done
+  without ending the transport, and the engine took the session for one that had not ended in order. It is now ended
+  again, in order (`NodeH2WebSocketInteropTest`).
 - QUIC client, rejected 0-RTT: the server's 0.5-RTT flight was read before the rejection. A 1-RTT packet held for its
   key was replayed when the key arrived, a step before the handshake's end settled the 0-RTT (RFC 9001 section 4.6.2).
   The rejection then restarted the connection's credit and stream limits at the server's transport parameters, so a
