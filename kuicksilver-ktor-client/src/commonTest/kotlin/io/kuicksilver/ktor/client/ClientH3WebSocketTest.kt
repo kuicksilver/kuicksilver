@@ -306,6 +306,15 @@ class ClientH3WebSocketTest {
         clientCloseWithAHeldWriter(serverReads = false, closeWait = 1_000)
 
     /**
+     * The same with a frame of 3 MB, which the stream's channel, the pump and QUIC's send buffer take whole in front of a
+     * server that gives no credit: the Close behind it waits there, not written, and the session keeps its close wait (T1,
+     * 2 s here); it is cut at T1 and the stream reset. Before, the Close counted as written once the stream's channel took
+     * it (its flush returns below its capacity), and the session ended at the engine's close without it ever leaving.
+     */
+    @Test fun negative_aCloseQueuedInFrontOfAStreamWithoutCreditIsNotWritten() =
+        clientCloseWithAHeldWriter(serverReads = false, size = 3_000_000, closeWait = 2_000)
+
+    /**
      * The same with `client.close()` late in T1 (1.5 s into a 2 s close wait): the session still ends at its T1, counted
      * from its own Close, and the stream reset; the engine's close starts no close wait of its own.
      */
@@ -371,6 +380,7 @@ class ClientH3WebSocketTest {
                 testClient(Http3DiscoveryMode.H3Only, block = { install(WebSockets) }).let { c ->
                     (c.engine as KuicksilverEngine).h3.webSocketCloseWaitMillis = closeWait
                     val session = c.webSocketSession("wss://127.0.0.1:${ep.localAddress.port}/ws")
+                    val lifetime = session.call.attributes[WebSocketLifetimeKey]
                     session.outgoing.send(Frame.Binary(true, ByteArray(size)))
                     val started =
                         kotlin.time.TimeSource.Monotonic
@@ -405,6 +415,9 @@ class ClientH3WebSocketTest {
                             frames.getOrNull()?.none { it.startsWith("close") } ?: true,
                             "the Close of a cut writer left: $frames",
                         )
+                        // the server gave no credit: the Close cannot have left, and the close wait cut the writer at T1
+                        assertTrue(lifetime.cutByCloseWait, "a writer whose Close never left was not cut at its T1: $frames")
+                        assertEquals("reset", frames.getOrNull()?.lastOrNull(), "the stream was reset at T1: $frames")
                     }
                 }
             } finally {

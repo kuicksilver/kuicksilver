@@ -609,10 +609,13 @@ internal class HeldTransportEnd(
     /** Told when the writer ended this channel in order ([WebSocketLifetime.writerEnded]). */
     private val lifetime: WebSocketLifetime? = null,
     /**
-     * Waits, at the writer's end, until [out] handed everything on to the transport, given the bytes handed to [out]
-     * ([handed]): [out]'s flush may return with bytes still queued in front of it (HTTP/2's lead after the session's own
-     * Close; HTTP/1.1's socket channel, whose flush returns once it holds less than its capacity), and the writer has not
-     * written its Close until they went. Null where a flush already waits for that (HTTP/3).
+     * Waits, at the writer's end, until what was handed to [out] ([handed] bytes) is out of reach of the end that follows
+     * the session: [out]'s flush may return with bytes still queued in front of the transport, and the writer has not
+     * written its Close until they went. Over HTTP/2 that is the stream's lead after the session's own Close (the stream
+     * took them). Over HTTP/1.1 it is the socket's channel, whose flush returns once it holds less than its capacity (the
+     * kernel took them). Over HTTP/3 it is the stream's channel and QUIC's send buffer, which takes data beyond the
+     * server's credit and which the connection's close discards (the server acknowledged them). Null: [out]'s flush says
+     * it (tests).
      */
     private val delivered: (suspend (handed: Long) -> Unit)? = null,
 ) : io.ktor.utils.io.ByteWriteChannel {

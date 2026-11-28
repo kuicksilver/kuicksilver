@@ -394,6 +394,8 @@ abstract interface io.kuicksilver.quic/QuicStream { // io.kuicksilver.quic/QuicS
         open fun <get-sendReleased>(): kotlinx.coroutines.flow/StateFlow<kotlin/Long>? // io.kuicksilver.quic/QuicStream.sendReleased.<get-sendReleased>|<get-sendReleased>(){}[0]
     open val sentFinalSize // io.kuicksilver.quic/QuicStream.sentFinalSize|{}sentFinalSize[0]
         open fun <get-sentFinalSize>(): kotlinx.coroutines/Deferred<kotlin/Long>? // io.kuicksilver.quic/QuicStream.sentFinalSize.<get-sentFinalSize>|<get-sentFinalSize>(){}[0]
+    open val sentToConnection // io.kuicksilver.quic/QuicStream.sentToConnection|{}sentToConnection[0]
+        open fun <get-sentToConnection>(): kotlin/Long? // io.kuicksilver.quic/QuicStream.sentToConnection.<get-sentToConnection>|<get-sentToConnection>(){}[0]
 
     abstract var priority // io.kuicksilver.quic/QuicStream.priority|{}priority[0]
         abstract fun <get-priority>(): io.kuicksilver.quic/StreamPriority // io.kuicksilver.quic/QuicStream.priority.<get-priority>|<get-priority>(){}[0]

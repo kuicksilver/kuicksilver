@@ -34,6 +34,7 @@ import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3Response
 import io.kuicksilver.http3.Http3Stream
+import io.kuicksilver.http3.awaitContentAcknowledged
 import io.kuicksilver.http3.awaitWebTransportExchangeEnd
 import io.kuicksilver.http3.connectUdp
 import io.kuicksilver.http3.contentHandedToTransport
@@ -2648,7 +2649,9 @@ internal class H3Pool(
         val lifetime = WebSocketLifetime(data, callContext, webSocketCloseWaitMillis)
         // the session's channel to the stream: its FIN is sent here, after the session; the frame guard stops reading at
         // the server's Close, and what follows it is read and dropped here
-        val heldEnd = HeldTransportEnd(stream.output, lifetime)
+        // the session's Close is written once the server acknowledged it: not once the stream's channel took it, nor once
+        // QUIC's send buffer did (it takes data beyond the server's credit, and the connection's close would discard it)
+        val heldEnd = HeldTransportEnd(stream.output, lifetime) { handed -> stream.awaitContentAcknowledged(handed) }
         val inputDone = CompletableDeferred<Unit>()
         // the stream ends as RFC 9220 section 3 maps RFC 6455's TCP close onto it ("Orderly TCP-level closures are
         // represented as a FIN bit on the stream ... RST exceptions are represented with a stream error ... of type

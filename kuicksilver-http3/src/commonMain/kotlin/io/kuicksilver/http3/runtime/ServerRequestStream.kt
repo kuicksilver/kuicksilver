@@ -56,6 +56,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -1062,8 +1063,25 @@ internal class ResponseWriterImpl(
      * buffer handed it to the connection's send buffer (its flush returned): what a reset can still discard is no
      * longer queued in front of the transport ([io.kuicksilver.http3.contentHandedToTransport]).
      */
-    @Volatile internal var handedToTransport: Long = 0
-        private set
+    internal val handedToTransport: Long get() = handed.value
+
+    /** [handedToTransport] as it moves: a wait for a count ([awaitHandedToTransport]) needs no polling. */
+    private val handed = MutableStateFlow(0L)
+
+    /**
+     * Returns once the first [bytes] written to [output] were acknowledged by the peer. The pump first has to hand them
+     * to the QUIC stream ([handedToTransport]). Then the connection's send buffer has to release everything the stream
+     * had taken by then ([QuicStream.sendReleased] reaching [QuicStream.sentToConnection]). A stream that does not track
+     * the second step (another QUIC implementation) returns once they were handed. Waits for good when that never happens,
+     * for example when the pump abandoned the response or the peer gives no credit: the caller bounds the wait.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    internal suspend fun awaitAcknowledged(bytes: Long) {
+        handed.first { it >= bytes }
+        val target = st.sentToConnection ?: return
+        val released = st.sendReleased ?: return
+        released.first { it >= target }
+    }
 
     /** Why the pump abandoned the response (set before it ends): [finish] reports it, also once the channel was closed. */
     @Volatile private var abandoned: Throwable? = null
@@ -1101,7 +1119,7 @@ internal class ResponseWriterImpl(
                         session.qlog { it.frameCreated(st.id, FrameType.DATA, n.toLong(), H3Qlog.DATA) }
                         st.output.flush()
                         sent += n
-                        handedToTransport = sent
+                        handed.value = sent
                     }
                 }
                 session.atResponseContentEndForTest?.invoke(st)

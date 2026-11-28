@@ -391,6 +391,19 @@ public val Http3Stream.contentHandedToTransport: Long?
     get() = (this as? io.kuicksilver.http3.runtime.Http3StreamImpl)?.handedToTransport
 
 /**
+ * Returns once the first [bytes] written to [Http3Stream.output] were acknowledged by the peer. Until then a reset of the
+ * stream or the connection's close may discard them. Neither the output's flush nor [contentHandedToTransport] says so:
+ * the flush returns once the stream's channel holds less than its capacity, and the connection's send buffer takes data
+ * beyond the peer's flow-control credit. A buffer released otherwise (a reset, the connection's end) also ends the wait.
+ * Returns at once for streams of other implementations. Waits for good when the peer never acknowledges them (it gives
+ * no credit): the caller bounds the wait.
+ */
+@InternalKuicksilverApi
+public suspend fun Http3Stream.awaitContentAcknowledged(bytes: Long) {
+    (this as? io.kuicksilver.http3.runtime.Http3StreamImpl)?.awaitAcknowledged(bytes)
+}
+
+/**
  * For a server engine that runs one handler per request: from now on [this] request keeps its stream's MAX_STREAMS credit
  * until [handlerEnded], whatever happens to the request meanwhile (the client's reset, a failed response), so the client
  * never has more handlers running than it may open streams (RFC 9114 section 10.5; Rapid Reset, CVE-2023-44487). Call it

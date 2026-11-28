@@ -402,6 +402,12 @@ internal class Http3StreamImpl(
 
     /** [ResponseWriterImpl.handedToTransport] of this stream's writer; null for a writer of another kind. */
     internal val handedToTransport: Long? get() = (writer as? ResponseWriterImpl)?.handedToTransport
+
+    /** [ResponseWriterImpl.awaitAcknowledged] of this stream's writer; returns at once for a writer of another kind. */
+    internal suspend fun awaitAcknowledged(bytes: Long) {
+        (writer as? ResponseWriterImpl)?.awaitAcknowledged(bytes)
+    }
+
     override var priority: StreamPriority
         get() = st.priority
         set(v) {

@@ -179,8 +179,11 @@ internal class StreamRuntime(
     internal var watchingSend = false
         private set
 
-    /** Bytes the core took for this stream's sending half (on the loop, by [StreamOutput]). */
+    /** Bytes the core took for this stream's sending half (written on the loop, by [StreamOutput]; read anywhere). */
+    @Volatile
     internal var sentToCore = 0L
+
+    override val sentToConnection: Long get() = sentToCore
 
     override val sendReleased: kotlinx.coroutines.flow.StateFlow<Long>
         get() {
