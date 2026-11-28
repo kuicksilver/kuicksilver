@@ -178,7 +178,10 @@ class ServerH2FloodTest {
      * refill), depending on how fast the handlers end: on a slow machine that takes longer than any deadline of the test.
      * Here at most 51 requests are accepted, whatever the pace.
      */
-    private fun KuicksilverApplicationEngine.Configuration.smallGlitchBudget(settingsAckTimeout: Duration = 10.seconds) {
+    private fun KuicksilverApplicationEngine.Configuration.smallGlitchBudget(
+        settingsAckTimeout: Duration = 10.seconds,
+        clock: () -> Long = { 0L },
+    ) {
         http2 {
             settings {
                 maxConcurrentStreams = MYR_STREAMS.toLong()
@@ -186,9 +189,9 @@ class ServerH2FloodTest {
                 floodLimits { glitches = RateLimit(1, MYR_GLITCHES) }
             }
         }
-        // a budget refills at 1 a second at least (RateLimit): the server's clock stands still (`h2ClockForTest`), so it
-        // never refills however slow the host
-        h2ClockForTest = { 0L }
+        // a budget refills at 1 a second at least (RateLimit): the server's clock stands still while the budget is spent
+        // (`h2ClockForTest`), so it never refills however slow the host
+        h2ClockForTest = clock
     }
 
     /**
@@ -236,6 +239,9 @@ class ServerH2FloodTest {
      * than the server's `settingsAckTimeout` (1 s here): about 1.5 s to the budget's 51st request, where the client stops
      * once the server counted the flood's end. Unacknowledged SETTINGS ended such a flood with SETTINGS_TIMEOUT (0x4)
      * before any flood limit; acknowledged ([prefaceAcknowledged]), it ends with ENHANCE_YOUR_CALM at the glitch budget.
+     * The server's clock is moved past `settingsAckTimeout` (twice it) before the flood, once a PING was answered (the
+     * acknowledgement before it was read), and stands still from there: the whole flood runs past the SETTINGS deadline,
+     * and the budget, full when the clock moves, gains nothing from it.
      */
     @Test fun negative_madeYouResetSlowerThanTheSettingsTimeoutEndsCalm() =
         madeYouResetFlood(4 * MYR_GLITCHES, pause = 30.milliseconds, settingsAckTimeout = 1.seconds)
@@ -247,10 +253,19 @@ class ServerH2FloodTest {
         settingsAckTimeout: Duration = 10.seconds,
     ) = serverTest {
         val handlers = Handlers()
-        val (server, port) = floodServer(handlers) { smallGlitchBudget(settingsAckTimeout) }
+        val now = kotlin.concurrent.atomics.AtomicLong(0L)
+        val (server, port) = floodServer(handlers) { smallGlitchBudget(settingsAckTimeout) { now.load() } }
         try {
             RawH2Client.connect(port).use { raw ->
                 raw.prefaceAcknowledged()
+                if (pause.isPositive()) {
+                    // the first PING takes no glitch (nothing of ours came before it); its answer says the server read our
+                    // SETTINGS acknowledgement, so the clock can pass the SETTINGS deadline without ending the connection
+                    val payload = byteArrayOf(1, 2, 3, 4, 5, 6, 7, 8)
+                    raw.write(RawH2Client.frame(RawFrame.PING, 0, 0, payload))
+                    assertNotNull(raw.await { it.type == RawFrame.PING && it.flags and 1 == 1 && it.payload.contentEquals(payload) })
+                    now.store(2 * settingsAckTimeout.inWholeNanoseconds)
+                }
                 val sent =
                     if (pause.isPositive()) {
                         raw.pacedFlood(count, pause, { server.engine.h2FloodEnds.value > 0 }, ::madeYouReset)
