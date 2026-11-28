@@ -2986,6 +2986,8 @@ kuicksilver-ktor-client/src/iosTest	io.kuicksilver.ktor.client.HostInteropTest.h
 kuicksilver-ktor-client/src/iosTest	io.kuicksilver.ktor.client.HostInteropTest.ktorH1ToTheHost
 kuicksilver-ktor-client/src/iosTest	io.kuicksilver.ktor.client.HostInteropTest.ktorH3ToTheHost
 kuicksilver-ktor-client/src/iosTest	io.kuicksilver.ktor.client.HostInteropTest.rawQuicEchoToTheHost
+kuicksilver-ktor-client/src/jvmCommonTest	io.kuicksilver.ktor.client.ClientRefusedQuicHandshakeTest.negative_aGetOnARefusedQuicHandshakeFailsAsOverTcp
+kuicksilver-ktor-client/src/jvmCommonTest	io.kuicksilver.ktor.client.ClientRefusedQuicHandshakeTest.negative_aPostOnARefusedQuicHandshakeFailsAsOverTcp
 kuicksilver-ktor-client/src/jvmCommonTest	io.kuicksilver.ktor.client.DnsJvmTest.aBlockingDnsRunsOnItsDispatcher
 kuicksilver-ktor-client/src/jvmCommonTest	io.kuicksilver.ktor.client.DnsJvmTest.inetAddressesConvert
 kuicksilver-ktor-client/src/jvmCommonTest	io.kuicksilver.ktor.client.H3OrderlyCloseTest.aResetLostWithTheCloseStillReachesTheServerBeforeTheEngineCloses
