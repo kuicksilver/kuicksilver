@@ -36,7 +36,6 @@ import io.kuicksilver.ktor.client.priority
 import io.kuicksilver.ktor.client.webSocketAfterHandshake
 import io.kuicksilver.ktor.client.withSocketTimeout
 import io.kuicksilver.ktor.network.WebSocketPongs
-import io.kuicksilver.ktor.network.awaitWebSocketOutputEnd
 import io.kuicksilver.ktor.network.guardWebSocketInput
 import io.kuicksilver.ktor.network.guardWebSocketOutput
 import io.kuicksilver.ktor.network.isAtWebSocketFrameBoundary
@@ -201,8 +200,9 @@ internal suspend fun h2WebSocket(
         }
         var guard: io.ktor.utils.io.ByteWriteChannel? = null
         lifetime.invokeOnEnd { cause ->
-            // the end the frame guard held for Pongs after the client's Close goes first (RFC 6455 section 5.5.2)
-            guard?.awaitWebSocketOutputEnd()
+            // the end the frame guard held for Pongs after the client's Close goes first (RFC 6455 section 5.5.2); once the
+            // engine was closed within what is left of T1 (at least the grace), the grace after both Closes
+            lifetime.awaitHeldOutputEnd(guard, discardsUnread = true)
             // a call that failed or was cancelled before the session's own Close, or a session cut at T1 or failed, is
             // reset with CANCEL at once; so is one whose frame guard is inside a frame (a writer that ended says nothing:
             // Ktor's ends its channel in order also when cancelled inside a frame), never ended with END_STREAM
@@ -281,7 +281,10 @@ internal suspend fun h2WebSocket(
                     handshake.sentCompression,
                     onClose = ::onOwnClose,
                     pongs = pongs,
-                ).also { guard = it },
+                ).also {
+                    guard = it
+                    lifetime.holdsOutput(it, discardsUnread = true)
+                },
                 masking = false,
                 coroutineContext = lifetime.context,
                 channelsConfig = data.attributes[WEBSOCKETS_KEY].channelsConfig,

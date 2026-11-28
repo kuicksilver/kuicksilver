@@ -641,6 +641,7 @@ internal suspend fun readResponse(
                         val guard =
                             guardWebSocketOutput(held, masking = true, handshake.checkText, handshake.sentCompression, pongs = pongs)
                         handOver.guard = guard
+                        lifetime.holdsOutput(guard, discardsUnread = false)
                         val raw =
                             RawWebSocket(
                                 input = guarded,

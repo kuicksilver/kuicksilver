@@ -11,6 +11,9 @@ import io.ktor.websocket.Frame
 import io.ktor.websocket.WebSocketSession
 import io.ktor.websocket.readReason
 import io.kuicksilver.ktor.client.h1.SpinLock
+import io.kuicksilver.ktor.network.awaitWebSocketOutputEnd
+import io.kuicksilver.ktor.network.endWebSocketOutputHold
+import io.kuicksilver.ktor.network.holdsWebSocketOutputEnd
 import io.kuicksilver.quic.LogLevel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableJob
@@ -326,6 +329,46 @@ internal class WebSocketLifetime(
         }
     }
 
+    /** The session's frame guard of its output, which may hold the transport end for Pongs ([holdsOutput]). */
+    @kotlin.concurrent.Volatile private var heldOutput: io.ktor.utils.io.ByteWriteChannel? = null
+
+    /** Whether the end of [heldOutput]'s transport discards what the server has not read yet ([serverWithin]). */
+    @kotlin.concurrent.Volatile private var heldDiscardsUnread = false
+
+    /**
+     * The session's output goes through [guard], which may hold the transport end for Pongs after the session's own Close
+     * (RFC 6455 section 5.5.2); its transport's end [discardsUnread] as for [serverWithin]. Once the engine was closed and
+     * the session's Close was written, the session goes on answering Pings while that end is held, within the bound of the
+     * waits after this side's own end ([awaitHeldOutputEnd]), and is ended after it.
+     */
+    fun holdsOutput(
+        guard: io.ktor.utils.io.ByteWriteChannel,
+        discardsUnread: Boolean,
+    ) {
+        heldDiscardsUnread = discardsUnread
+        heldOutput = guard
+    }
+
+    /**
+     * Waits for the transport end the frame guard [guard] holds for Pongs after the session's own Close (RFC 6455 section
+     * 5.5.2: Pings are answered until the server's Close). Until the engine is closed that is the guard's own wait; once it
+     * was ([hurry]) the wait is bounded as every wait after this side's own end ([serverWithin], [discardsUnread] as
+     * there), and when that bound passes first the held end is ended now, in order, as at its close wait.
+     */
+    suspend fun awaitHeldOutputEnd(
+        guard: io.ktor.utils.io.ByteWriteChannel?,
+        discardsUnread: Boolean,
+    ) {
+        if (guard == null || !guard.holdsWebSocketOutputEnd) return
+        serverWithin(kotlin.time.Duration.INFINITE, afterOwnEnd = true, discardsUnread = discardsUnread) {
+            guard.awaitWebSocketOutputEnd()
+        }
+        if (guard.holdsWebSocketOutputEnd) {
+            guard.endWebSocketOutputHold()
+            guard.awaitWebSocketOutputEnd()
+        }
+    }
+
     init {
         data.attributes.put(WebSocketLifetimeKey, this)
         // a session that starts after the engine's close() waits for no server either
@@ -444,6 +487,16 @@ internal class WebSocketLifetime(
 
                     false -> {
                         hurriedOut.store(true)
+                        // a transport end held for Pongs: the session goes on answering the server's Pings (RFC 6455 section
+                        // 5.5.2) until the server's Close, within the bound of the waits after this side's own end; then the
+                        // held end goes in order and the session ends
+                        try {
+                            awaitHeldOutputEnd(heldOutput, heldDiscardsUnread)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (_: Throwable) {
+                            // the transport failed under the held end: the session ends now, the engine sees the failure
+                        }
                         job.cancel(CancellationException("the engine was closed: the server's Close is not waited for"))
                     }
 
@@ -614,7 +667,8 @@ internal class HeldTransportEnd(
      * its Close until they went. Null where a flush already waits for that (HTTP/1.1, HTTP/3).
      */
     private val delivered: (suspend () -> Unit)? = null,
-) : io.ktor.utils.io.ByteWriteChannel {
+) : io.ktor.utils.io.ByteWriteChannel,
+    io.kuicksilver.ktor.network.WebSocketHeldOutput {
     @kotlin.concurrent.Volatile var endRequested: Boolean = false
         private set
 
@@ -644,6 +698,18 @@ internal class HeldTransportEnd(
         delivered?.invoke()
         endRequested = true
         // in order only: a transport that failed under the writer did not take its Close
+        if (out.closedCause == null) lifetime?.writerEnded()
+    }
+
+    /**
+     * The frame guard holds this end for Pongs after the writer's Close: the writer is done, its Close handed on as by
+     * [flushAndClose] ([WebSocketLifetime.writerEnded], so a closed engine ends the session once the Close went), and the
+     * end itself comes with [flushAndClose] when the hold is over.
+     */
+    override suspend fun writerDoneHeld() {
+        count()
+        out.flush()
+        delivered?.invoke()
         if (out.closedCause == null) lifetime?.writerEnded()
     }
 

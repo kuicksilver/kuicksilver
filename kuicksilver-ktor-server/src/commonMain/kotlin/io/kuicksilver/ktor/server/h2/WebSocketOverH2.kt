@@ -15,6 +15,8 @@ import io.kuicksilver.http2.runtime.H2ServerStream
 import io.kuicksilver.http2.runtime.H2StreamOutput
 import io.kuicksilver.ktor.network.DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE
 import io.kuicksilver.ktor.network.awaitWebSocketOutputEnd
+import io.kuicksilver.ktor.network.endWebSocketOutputHold
+import io.kuicksilver.ktor.network.holdsWebSocketOutputEnd
 import io.kuicksilver.ktor.network.isWebSocketFrameCut
 import io.kuicksilver.ktor.server.ServerWebSocket
 import io.kuicksilver.ktor.server.checkWebSocketRsvConflicts
@@ -57,6 +59,25 @@ internal object WebSocketOverH2 {
 
     /** A stop request that never comes (an upgrade made outside an engine: tests). */
     val NEVER_STOPS: Job = Job()
+
+    /**
+     * Waits for the stream end the frame guard of [out] holds for Pongs after the server's Close (RFC 6455 section
+     * 5.5.2), over HTTP/2 and HTTP/3. A stop of the server ([stopping]) ends the hold at once, in order, as it ends the
+     * wait for the client's end after it ([CLOSE_WAIT]).
+     */
+    suspend fun awaitHeldEnd(
+        out: io.ktor.utils.io.ByteWriteChannel?,
+        stopping: Job?,
+    ) {
+        if (out == null || !out.holdsWebSocketOutputEnd) return
+        io.kuicksilver.tls.completedWithinUnless(stopping ?: NEVER_STOPS, kotlin.time.Duration.INFINITE) {
+            out.awaitWebSocketOutputEnd()
+        }
+        if (out.holdsWebSocketOutputEnd) {
+            out.endWebSocketOutputHold()
+            out.awaitWebSocketOutputEnd()
+        }
+    }
 
     /**
      * The synthetic HTTP/1.1 upgrade headers of an Extended CONNECT: its fields (split `cookie` fields joined, section
@@ -179,7 +200,7 @@ internal class H2UpgradeResponse(
             // codec of its own, so that order is for clarity, not safety)
             // the stream end the frame guard held for Pongs after the server's Close is ended first, while the guard still
             // reads the client's Pings and Close (RFC 6455 section 5.5.2): a handler that returns right after its Close
-            sessionOutput?.awaitWebSocketOutputEnd()
+            WebSocketOverH2.awaitHeldEnd(sessionOutput, stopping)
             guard.cancel()
             webSocket?.done()
             // a call cancelled while the session ran cannot end the stream in order: CANCEL both ways (RFC 8441 section 5).

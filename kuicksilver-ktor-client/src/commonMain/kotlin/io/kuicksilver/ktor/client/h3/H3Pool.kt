@@ -82,7 +82,6 @@ import io.kuicksilver.ktor.client.withSocketInactivityTimeout
 import io.kuicksilver.ktor.client.withSocketTimeout
 import io.kuicksilver.ktor.network.TcpAddress
 import io.kuicksilver.ktor.network.WebSocketPongs
-import io.kuicksilver.ktor.network.awaitWebSocketOutputEnd
 import io.kuicksilver.ktor.network.guardWebSocketInput
 import io.kuicksilver.ktor.network.guardWebSocketOutput
 import io.kuicksilver.ktor.network.isAtWebSocketFrameBoundary
@@ -3257,8 +3256,9 @@ internal class H3Pool(
         // (h3WebSocketStreamEnd, webSocketTransportEnd)
         var guard: io.ktor.utils.io.ByteWriteChannel? = null
         lifetime.invokeOnEnd { cause ->
-            // the end the frame guard held for Pongs after the client's Close goes first (RFC 6455 section 5.5.2)
-            guard?.awaitWebSocketOutputEnd()
+            // the end the frame guard held for Pongs after the client's Close goes first (RFC 6455 section 5.5.2); once the
+            // engine was closed within what is left of T1 (at least the grace), the grace after both Closes
+            lifetime.awaitHeldOutputEnd(guard, discardsUnread = true)
             val failed = stream.output.closedCause != null
             val writerDone = heldEnd.endRequested && !failed
             val atFrameBoundary = guard?.isAtWebSocketFrameBoundary() == true
@@ -3354,7 +3354,10 @@ internal class H3Pool(
                             pongs = pongs,
                         ),
                         guardWebSocketOutput(heldEnd, masking = true, handshake.checkText, handshake.sentCompression, pongs = pongs)
-                            .also { guard = it },
+                            .also {
+                                guard = it
+                                lifetime.holdsOutput(it, discardsUnread = true)
+                            },
                         masking = false,
                         coroutineContext = lifetime.context,
                         channelsConfig = data.attributes[WEBSOCKETS_KEY].channelsConfig,

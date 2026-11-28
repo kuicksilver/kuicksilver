@@ -54,6 +54,7 @@ import kotlin.time.Duration.Companion.seconds
  * failure, and an exception from here would reach the uncaught-exception handler, which ends the process on Android and
  * Kotlin/Native.
  */
+
 @InternalKuicksilverApi
 public class WebSocketPongs(
     private val closeWait: Duration = DEFAULT_CLOSE_WAIT,
@@ -106,6 +107,18 @@ public class WebSocketPongs(
         peerDone.complete(Unit)
     }
 
+    /**
+     * The engine's own bound on the wait after this side's Close ran out ([endWebSocketOutputHold]): the held end goes
+     * now, in order, as when [closeWait] passes.
+     */
+    @kotlin.concurrent.Volatile private var released = false
+
+    /** Ends a held end now, in order, as at [closeWait] ([endWebSocketOutputHold]). */
+    internal fun release() {
+        released = true
+        peerDone.complete(Unit)
+    }
+
     /** The input ended in order (no cause): as [peerClosed] for the held end. */
     internal fun inputEnded() {
         peerEndedInOrder = true
@@ -114,7 +127,8 @@ public class WebSocketPongs(
 
     /**
      * The writer ended the output guard's channel after this side's Close, before the peer's Close: the transport stays
-     * open for Pongs until the peer's Close is read, the input ends, or [closeWait] passes (RFC 6455 section 5.5.2: Pongs
+     * open for Pongs until the peer's Close is read, the input ends, [closeWait] passes or the engine [release]s it (its own
+     * bound on the waits after this side's Close: a closed client, a stopping server) (RFC 6455 section 5.5.2: Pongs
      * are owed "unless it already received a Close frame"; section 5.5.1: the transport is closed "after both sending and
      * receiving a Close message"), then [OutputPongs.endHeld] ends it in order. An input that stopped otherwise (it
      * failed, or the engine stopped the input guard) and the engine's own end of the session (the guard's job cancelled)
@@ -134,7 +148,7 @@ public class WebSocketPongs(
                 // the peer's Close, its end in order, or the close wait passing end the hold in order; an input stopped
                 // otherwise ends it too, and then in order only if the peer had ended in order before
                 val waited = withTimeoutOrNull(closeWait) { peerDone.await() }
-                val inOrder = waited == null || peerEndedInOrder
+                val inOrder = waited == null || peerEndedInOrder || released
                 // bounded too, its wait for the lock included (a writer stuck on a full output holds it): the end path waits
                 // two close waits at most; markEnded below covers an end the bound cut
                 withTimeoutOrNull(closeWait) { lock.withLock { guard.endHeld(this@WebSocketPongs, close = inOrder) } }
@@ -142,9 +156,9 @@ public class WebSocketPongs(
             } finally {
                 try {
                     if (!ended) {
-                        // cancelled (the engine ended the session): in order only after the peer's Close or its end in order,
+                        // cancelled (the engine ended the session): in order only after the peer's Close, its end in order or a release,
                         // within one close wait (a peer that reads nothing more cannot keep it); a cancellation alone never is
-                        val inOrder = peerEndedInOrder
+                        val inOrder = peerEndedInOrder || released
                         withContext(NonCancellable) {
                             withTimeoutOrNull(closeWait) { lock.withLock { guard.endHeld(this@WebSocketPongs, close = inOrder) } }
                         }

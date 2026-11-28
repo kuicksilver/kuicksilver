@@ -138,6 +138,34 @@ public suspend fun ByteWriteChannel.awaitWebSocketOutputEnd() {
     }
 }
 
+/**
+ * Whether this channel, made by [guardWebSocketOutput], holds the transport end for the engine's Pongs after this side's
+ * Close and has not ended it yet ([awaitWebSocketOutputEnd] would wait). False for any other channel.
+ */
+@InternalKuicksilverApi
+public val ByteWriteChannel.holdsWebSocketOutputEnd: Boolean get() = (this as? OutputGuard)?.holdsEnd == true
+
+/**
+ * Ends the transport end this channel, made by [guardWebSocketOutput], holds for Pongs now, as when its close wait
+ * passes: the waiting Pongs go out and the transport is ended in order. For an engine whose own bound on the wait after
+ * this side's Close ran out first (a closed client, a stopping server). Nothing when no end is held.
+ */
+@InternalKuicksilverApi
+public fun ByteWriteChannel.endWebSocketOutputHold() {
+    (this as? OutputGuard)?.releaseHold()
+}
+
+/**
+ * A transport channel under [guardWebSocketOutput] that wants to know when the writer has ended its frames, its Close
+ * written, while the guard keeps the transport end for Pongs ([WebSocketPongs]): the end itself comes later, with
+ * `flushAndClose`.
+ */
+@InternalKuicksilverApi
+public interface WebSocketHeldOutput {
+    /** The writer ended its channel after its Close and the end is held: everything it wrote was flushed. */
+    public suspend fun writerDoneHeld()
+}
+
 /** How the extension that compresses what this side sends (permessage-deflate) frames a compressed message. */
 @InternalKuicksilverApi
 public enum class SentCompression {
@@ -280,6 +308,15 @@ private class OutputGuard(
                 output.flush()
                 if (pongs.holdEnd(this)) {
                     holding = true
+                    // the writer is done (its Close written): a transport that counts on its end learns it now, not when
+                    // the held end goes
+                    try {
+                        (output as? WebSocketHeldOutput)?.writerDoneHeld()
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (_: Throwable) {
+                        // the transport failed under the writer: the engine sees it on the output
+                    }
                     return
                 }
             }
@@ -306,6 +343,7 @@ private class OutputGuard(
             heldEnded.complete(Unit)
             return
         }
+        cutWhileEnding = false
         try {
             if (close && failure == null && !output.isClosedForWrite) {
                 sendWaiting(pongs, flush = false)
@@ -316,15 +354,24 @@ private class OutputGuard(
                 }
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
+            // cut while the end waited for the transport (HTTP/2: until the stream took the Close): not ended, so the
+            // held end's cancelled path ends it again, in order when it may, within its bound ([WebSocketPongs.holdEnd]);
+            // the end is marked over only after that
+            cutWhileEnding = true
             throw e
         } catch (_: Throwable) {
             // the transport failed under the held end: the engine sees it on the output
         } finally {
-            closed = true
-            pongs.dropWaiting()
-            heldEnded.complete(Unit)
+            if (!cutWhileEnding) {
+                closed = true
+                pongs.dropWaiting()
+                heldEnded.complete(Unit)
+            }
         }
     }
+
+    /** [endHeld] was cancelled before it ended the transport; the next [endHeld] (the cancelled path's) tries again. */
+    private var cutWhileEnding = false
 
     override fun markEnded() {
         abandoned = true
@@ -333,6 +380,14 @@ private class OutputGuard(
 
     /** The held end is over ([markEnded]) without [endHeld] having run: no Pong goes out any more. */
     @kotlin.concurrent.Volatile private var abandoned = false
+
+    /** A held end ([holding]) not ended yet. */
+    val holdsEnd: Boolean get() = holding && !heldEnded.isCompleted
+
+    /** Ends the held end now, in order ([WebSocketPongs.release]). */
+    fun releaseHold() {
+        if (holding) pongs?.release()
+    }
 
     /** Waits for a held end ([holding]) to be ended; at once when none is held. */
     suspend fun awaitHeldEnd() {
