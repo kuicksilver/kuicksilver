@@ -9,6 +9,7 @@ import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.availableForRead
 import io.ktor.utils.io.discard
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.readByte
@@ -444,8 +445,11 @@ internal class ReadProgress {
 }
 
 /**
- * [input] as a server that reads slowly but steadily sees it: [chunk] bytes at a time (or to the end), a pause of
- * [pause] after each; the end or the failure of [input] ends the copy alike. The pause is the behaviour under test.
+ * [input] as a server that reads slowly but steadily sees it: at most [chunk] bytes at a time, what has arrived of them
+ * (a server's read takes what is there, it does not wait to fill its buffer), a pause of [pause] after each; the end or
+ * the failure of [input] ends the copy alike. The pause is the behaviour under test. A read that waited for a whole
+ * chunk would hold the last bytes before the client's end (its Close, held behind a client that keeps its end open for
+ * Pongs until the server's Close, RFC 6455 section 5.5.2) until that end came, which it never does.
  */
 internal fun CoroutineScope.throttled(
     input: ByteReadChannel,
@@ -459,17 +463,16 @@ internal fun CoroutineScope.throttled(
         val buf = ByteArray(chunk)
         try {
             while (true) {
-                var got = 0
-                while (got < chunk) {
+                // at least one byte (or the end), then what else has arrived, up to the chunk
+                var got = input.readAvailable(buf, 0, chunk)
+                if (got < 0) break
+                while (got < chunk && input.availableForRead > 0) {
                     val n = input.readAvailable(buf, got, chunk - got)
-                    if (n < 0) break
+                    if (n <= 0) break
                     got += n
                 }
-                if (got > 0) {
-                    out.writeFully(buf, 0, got)
-                    out.flush()
-                }
-                if (got < chunk) break
+                out.writeFully(buf, 0, got)
+                out.flush()
                 kotlinx.coroutines.delay(pause)
             }
             input.closedCause?.let { throw it }
