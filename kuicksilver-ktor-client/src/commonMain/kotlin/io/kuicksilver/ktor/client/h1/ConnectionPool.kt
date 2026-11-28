@@ -131,6 +131,12 @@ internal abstract class PooledConnection(
      * for an exchange, which reads the input alone.
      */
     internal open suspend fun stopIdleWatch() {}
+
+    /**
+     * Whether the watch saw the peer's close or bytes no request asked for ([startIdleWatch]'s signal). Read once the
+     * watch is over ([stopIdleWatch]); false by default (no watch).
+     */
+    internal open val signalledWhileIdle: Boolean get() = false
 }
 
 /**
@@ -228,13 +234,24 @@ internal class ConnectionPool<C : PooledConnection>(
      * its watch over ([PooledConnection.stopIdleWatch]): the caller is its input's only reader.
      */
     suspend fun acquire(route: String): C? {
-        val c = take(route) ?: return null
-        // the connection left the idle list under the lock, so the watch can no longer close it ([closeIfIdle]); its end
-        // is waited for also by a caller cancelled meanwhile, who settles what it got as any other. A close or bytes the
-        // watch had not acted on by the take are the exchange's to see, as those that come after it
-        withContext(NonCancellable) { c.stopIdleWatch() }
-        return c
+        while (true) {
+            val c = take(route) ?: return null
+            afterTakeForTest?.invoke(c)
+            // the connection left the idle list under the lock, so the watch can no longer close it ([closeIfIdle]); its
+            // end is waited for also by a caller cancelled meanwhile, who settles what it got as any other
+            withContext(NonCancellable) { c.stopIdleWatch() }
+            // the watch signalled between the take's look and its own end: the server closed the connection, or sent bytes
+            // no request asked for (an unsolicited 408), which the caller would read as its response (RFC 9112 section 9.2:
+            // the client "MUST NOT consider that data to be a valid response" and "SHOULD close the connection"). The
+            // caller never sees it: it is closed here and another one taken, or a permit given. A close or bytes that
+            // come once the watch is over are the exchange's to see
+            if (!c.signalledWhileIdle) return c
+            c.close()
+        }
     }
+
+    /** Runs after a take and before the taken connection's watch is stopped (tests: a signal in between). */
+    @kotlin.concurrent.Volatile internal var afterTakeForTest: (suspend (C) -> Unit)? = null
 
     private suspend fun take(route: String): C? {
         val toClose = ArrayList<C>()

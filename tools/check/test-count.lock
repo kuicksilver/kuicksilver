@@ -2680,6 +2680,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1IdleConne
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1IdleConnectionTest.negative_aFailedStreamedRequestBodyClosesTheConnection
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1IdleConnectionTest.negative_anIdleConnectionIsTakenOrClosedNeverBoth
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1IdleConnectionTest.negative_anIdleConnectionTheServerEndsIsClosedWhileIdle
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1IdleConnectionTest.negative_anIdleConnectionTheWatchSignalsDuringItsTakeIsNotHandedOut
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1IdleConnectionTest.negative_strayBytesCloseAnIdleConnectionWhileIdle
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1IdleConnectionTest.negative_theIdleWatchIsTheOnlyReaderOfAnIdleConnectionsInput
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1IdleConnectionTest.quietIdleConnectionIsReused

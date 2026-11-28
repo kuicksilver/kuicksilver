@@ -174,6 +174,8 @@ internal class H1Connection(
     /** The watch saw the server's close or bytes no request asked for: the connection is not reused. */
     @kotlin.concurrent.Volatile private var watchSignalled = false
 
+    override val signalledWhileIdle: Boolean get() = watchSignalled
+
     /**
      * Watches the input of the connection while it is idle, as Go's net/http (its persistConn's read loop peeks while
      * idle): the server's close (close_notify, its FIN, a failure) or bytes no request asked for (RFC 9112 section 9.2:

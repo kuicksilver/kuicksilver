@@ -171,6 +171,38 @@ class H1IdleConnectionTest {
         }
 
     /**
+     * The window between a take's look at an idle connection and the end of its watch: the server sends an unsolicited
+     * `408 Request Timeout` there, and the watch sees it (its signal). The caller does not get that connection, whose 408
+     * it would read as its own response (RFC 9112 section 9.2: the client "MUST NOT consider that data to be a valid
+     * response" and "SHOULD close the connection"): the pool closes it and gives a permit for a fresh one. The hook holds
+     * the take in that window until the watch has signalled.
+     */
+    @Test fun negative_anIdleConnectionTheWatchSignalsDuringItsTakeIsNotHandedOut() =
+        runTest {
+            val watchers = CoroutineScope(Dispatchers.Default + SupervisorJob())
+            try {
+                val wire = Wire()
+                val (pool, conn) = watchedIdle(wire, watchers)
+                pool.afterTakeForTest = { c ->
+                    pool.afterTakeForTest = null
+                    assertSame(conn, c, "the take got the idle connection")
+                    wire.fromServer.writeStringUtf8("HTTP/1.1 408 Request Timeout\r\nConnection: close\r\n\r\n")
+                    wire.fromServer.flush()
+                    // on the real clock: the watch runs on Dispatchers.Default, not under the test's virtual time
+                    kotlinx.coroutines.withContext(Dispatchers.Default) {
+                        kotlinx.coroutines.withTimeout(10_000) { while (!c.signalledWhileIdle) yield() }
+                    }
+                }
+                assertNull(pool.acquire("r"), "the connection with the unsolicited 408 was handed out")
+                assertTrue(conn.closed, "it was closed, not left for the next take")
+                assertEquals(1, pool.liveCount, "the permit for a fresh connection, counted once")
+                assertEquals(0, pool.idleCount)
+            } finally {
+                watchers.cancel()
+            }
+        }
+
+    /**
      * While the idle watch waits on the connection's input, the pool's looks at the connection (a take, an eviction, under
      * the pool's lock on the pool's thread) do not look into that input: they ask the watch. `HeadLimitedInput.hasUnread`
      * read the socket channel's `readBuffer`, whose getter moves the channel's flushed bytes into the buffer its reader
