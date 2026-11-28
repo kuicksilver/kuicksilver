@@ -400,8 +400,9 @@ jobs:
         # the Autobahn|Testsuite against the JVM engines, on the .so just built: the release gate runs the JVM client but
         # not the JVM server, which Docker Desktop reaches only through host.docker.internal (an occasional connect times
         # out there); here Docker is native and the suite reaches the server on the host network as 127.0.0.1. The image is
-        # the digest pin of tools/interop/autobahn.sh, pulled here (the script never pulls)
-        if: matrix.arch == 'x64'
+        # the digest pin of tools/interop/autobahn.sh, pulled here (the script never pulls). It runs also when a step before
+        # failed (a unit test of the JVM run above): the conformance run still runs and reports, and the job still fails
+        if: "!cancelled() && matrix.arch == 'x64'"
         run: |
           image=$(sed -n 's/^image="\(crossbario\/autobahn-testsuite:[^"]*@sha256:[0-9a-f]\{64\}\)"$/\1/p' tools/interop/autobahn.sh)
           [ -n "$image" ] || { echo "::error::no digest-pinned image= line in tools/interop/autobahn.sh"; exit 1; }
@@ -411,7 +412,7 @@ jobs:
         # the run's reports and logs, so a failed run can be read: each mode's summary, index.json and per-case JSON, the
         # fuzzing suite's and the engine's output, the server's state when the suite ended (tools/interop/autobahn.sh); not
         # the per-case HTML, which repeats the JSON
-        if: always() && matrix.arch == 'x64'
+        if: "!cancelled() && matrix.arch == 'x64'"
         with:
           name: 'autobahn-jvm-linux-x64-a${{ github.run_attempt }}'
           path: |
@@ -515,7 +516,9 @@ jobs:
       - name: 'docker: Autobahn linux-x64 (WebSocket server and client)'
         # the Autobahn|Testsuite against the linuxX64 server and client, in the suite's own container: every case OK or
         # INFORMATIONAL but the ones tools/interop/autobahn.sh records. The image is the digest pin of the script itself,
-        # pulled here (the script never pulls); its runs are listed in build/autobahn/variants.txt
+        # pulled here (the script never pulls); its runs are listed in build/autobahn/variants.txt. As the JVM run's, also when
+        # a step before failed: the job fails all the same
+        if: '!cancelled()'
         run: |
           image=$(sed -n 's/^image="\(crossbario\/autobahn-testsuite:[^"]*@sha256:[0-9a-f]\{64\}\)"$/\1/p' tools/interop/autobahn.sh)
           [ -n "$image" ] || { echo "::error::no digest-pinned image= line in tools/interop/autobahn.sh"; exit 1; }
@@ -523,7 +526,7 @@ jobs:
           KSL_GRADLE="$G" bash tools/interop/autobahn.sh linux-x64
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         # as after the JVM run: the reports and logs, not the per-case HTML
-        if: always()
+        if: '!cancelled()'
         with:
           name: 'autobahn-linux-native-a${{ github.run_attempt }}'
           path: |
