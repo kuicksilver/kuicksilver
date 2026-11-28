@@ -207,8 +207,9 @@ public class WebSocketPongs(
     }
 
     /**
-     * Under [lock]: the Pings read since the last call, now waiting and owed. When [MAX_WAITING] are waiting already, only
-     * the newest is kept and the others are no longer owed (section 5.5.3), so the session's Pongs answer them.
+     * Under [lock]: the Pings read since the last call, now waiting and owed (not owed once this side's Close was written,
+     * [ownCloseWritten]: the session sends no Pong after it). When [MAX_WAITING] are waiting already, only the newest is
+     * kept and the others are no longer owed (section 5.5.3), so the session's Pongs answer them.
      */
     internal fun takeRequests() {
         while (true) {
@@ -218,6 +219,8 @@ public class WebSocketPongs(
                 waiting.clear()
             }
             waiting.addLast(data)
+            // after this side's Close the session sends no Pong (its outgoing channel is closed): none is owed to it
+            if (ownCloseWritten) continue
             if (owed.size == MAX_OWED) owed.removeFirst()
             owed.addLast(data)
         }
