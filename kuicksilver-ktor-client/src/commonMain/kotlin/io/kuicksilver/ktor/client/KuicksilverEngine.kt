@@ -1948,7 +1948,7 @@ internal class KuicksilverEngine(
         events.emit("fallback") { fallback(data, cause) }
         // HTTP/1.1 is one more attempt only when HTTP/3 tried the request (H3NotSent: it never reached a stream, except
         // after the repeats the server did not process, which were attempts)
-        if (h3Failure !is H3NotSent || h3Failure.cause is Http3Exception.RequestNotProcessed) d.attempts++
+        if (h3Failure !is H3NotSent || h3Failure.tried || h3Failure.cause is Http3Exception.RequestNotProcessed) d.attempts++
         d.h3Failure = cause
         val reason = classifyH3Failure(cause) ?: FallbackReason.Other
         d.fallback = reason

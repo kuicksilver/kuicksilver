@@ -103,6 +103,7 @@ import io.kuicksilver.quic.probeUnsettled
 import io.kuicksilver.quic.repeatClose
 import io.kuicksilver.quic.sendsUnsettled
 import io.kuicksilver.quic.unmappedLiteral
+import io.kuicksilver.quic.wasHandshakeConfirmed
 import io.kuicksilver.tls.TlsException
 import io.kuicksilver.tls.completedWithin
 import kotlinx.coroutines.CancellationException
@@ -316,6 +317,12 @@ internal class H3FailureFacts(
     val peerShutdown: Boolean,
     /** The ECH rejection in the failure's causes ([echRejectionIn]). */
     val echRejected: TlsException.EchRejected?,
+    /**
+     * The connection ended with a CRYPTO_ERROR (0x0100 to 0x01ff, a TLS alert, RFC 9001 section 4.8) before this side's
+     * handshake was confirmed: the server refused the handshake, and a server "MUST NOT process incoming 1-RTT protected
+     * packets before the TLS handshake is complete" (RFC 9001 section 5.7), so no request sent on it was processed.
+     */
+    val refusedUnconfirmed: Boolean = false,
 )
 
 /**
@@ -326,10 +333,15 @@ internal class H3FailureFacts(
 internal fun h3FailureFacts(
     e: Throwable,
     connectionEnd: Throwable?,
+    /** Whether the connection's handshake was ever confirmed (`QuicConnection.wasHandshakeConfirmed`); null when not known. */
+    handshakeConfirmed: Boolean? = null,
 ): H3FailureFacts {
     val cidChange = e !is CancellationException && (resumedServerCidChange(e) || resumedServerCidChange(connectionEnd))
     val named = e is QuicStalledException || e.cause is QuicStalledException
-    return H3FailureFacts(cidChange, named, isPeerShutdownClose(e), echRejectionIn(e))
+    val refused =
+        e !is CancellationException && connectionEnd is QuicException.ConnectionLost.TransportClosed &&
+            connectionEnd.code in 0x0100L..0x01ffL && handshakeConfirmed == false
+    return H3FailureFacts(cidChange, named, isPeerShutdownClose(e), echRejectionIn(e), refused)
 }
 
 /** The request attributes [H3Pool.execute]'s retry loop reads or sets, through [h3RequestMark]. */
@@ -374,6 +386,8 @@ internal fun h3RequestMark(
 /** A failure that happened before the request could have reached the server: safe to repeat on HTTP/1.1. */
 internal class H3NotSent(
     cause: Throwable,
+    /** The request reached a stream all the same, and the server cannot have processed it ([H3FailureFacts.refusedUnconfirmed]). */
+    val tried: Boolean = false,
 ) : Exception(cause.message, cause)
 
 /**
@@ -2881,6 +2895,8 @@ internal class H3Pool(
                                 .takeIf { it.isCompleted }
                                 ?.getCompleted()
                         },
+                        @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+                        conn.quic.wasHandshakeConfirmed(),
                     )
                 // a resumed handshake that met a server SCID change: the host's backoff starts now, before the retry below or
                 // the caller's fallback, so a retry makes a plain full handshake
@@ -2933,6 +2949,12 @@ internal class H3Pool(
                     events.emit("retry") { retry(data, repeats + 1, e) }
                     continue
                 }
+                // the server refused the handshake (a CRYPTO_ERROR before the handshake was confirmed: certificate_required
+                // after this side's own handshake completed, as over TLS 1.3 on TCP): it processed nothing, so the request
+                // was not processed (RFC 9001 section 5.7) and goes over TCP whatever its method, as a request that never
+                // reached a stream does, when its body can be sent again. Not again over HTTP/3: a new handshake meets the
+                // same refusal
+                if (facts.refusedUnconfirmed && data.body.isReplayable()) throw H3NotSent(e, tried = true)
                 if (e is H3Misdirected) {
                     // RFC 9110 section 15.5.20: "A client that receives a 421 (Misdirected Request) response MAY retry the
                     // request, whether or not the request method is idempotent, over a different connection, such as a

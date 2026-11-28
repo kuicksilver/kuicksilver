@@ -300,6 +300,15 @@ public suspend fun QuicConnection.probeUnsettled() {
 @io.kuicksilver.annotations.InternalKuicksilverApi
 public suspend fun QuicConnection.repeatClose(): Boolean = (this as? io.kuicksilver.quic.runtime.ConnectionRuntime)?.repeatClose() ?: false
 
+/**
+ * Whether this side's handshake on [this] connection was ever confirmed (RFC 9001 section 4.1.2: HANDSHAKE_DONE on a
+ * client), also once it ended; null when not an endpoint's connection. Read after the connection ended (its `closed`
+ * completed) it is final.
+ */
+@io.kuicksilver.annotations.InternalKuicksilverApi
+public fun QuicConnection.wasHandshakeConfirmed(): Boolean? =
+    (this as? io.kuicksilver.quic.runtime.ConnectionRuntime)?.wasHandshakeConfirmed
+
 /** The current probe timeout of [this] connection (RFC 9002 section 6.2.1, without the backoff); null when not an endpoint's. */
 @io.kuicksilver.annotations.InternalKuicksilverApi
 public suspend fun QuicConnection.currentPto(): kotlin.time.Duration? =

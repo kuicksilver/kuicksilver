@@ -166,6 +166,9 @@ internal class ConnectionRuntime(
 
     override val isHandshakeComplete: Boolean get() = handshake.isCompleted && !handshake.isCancelled
 
+    /** `QuicConnection.wasHandshakeConfirmed`: the core's confirmation time, set on the loop and kept after the end. */
+    internal val wasHandshakeConfirmed: Boolean get() = core.handshakeConfirmedAt != null
+
     /** A server connection still handshaking, counted by its loop against the accept queue. Loop dispatcher only. */
     internal var handshaking = false
 

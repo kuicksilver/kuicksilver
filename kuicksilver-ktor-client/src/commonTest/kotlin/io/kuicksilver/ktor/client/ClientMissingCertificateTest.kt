@@ -3,6 +3,8 @@
 package io.kuicksilver.ktor.client
 
 import io.ktor.client.request.get
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
@@ -340,6 +342,29 @@ class ClientMissingCertificateTest {
                 }
             } finally {
                 origin.stopSuspend(0, 0)
+            }
+        }
+
+    /**
+     * The POST variant of [negative_preferredFailsAsOverTcpWhicheverOrder]: whichever setup wins the race, the POST fails
+     * as over TCP. When HTTP/3 wins (its handshake completed on this side before the server's certificate_required came)
+     * the request went out on the QUIC connection, whose handshake the server then refused before HANDSHAKE_DONE (a
+     * CRYPTO_ERROR): it processed nothing (RFC 9001 section 5.7), so the POST goes over TCP, where it fails as there.
+     * Before, only an idempotent request fell back, and the POST failed with the QUIC close in those rounds. Which setup
+     * wins is the host's timing; H3FailureFactsTest has the classification itself.
+     */
+    @Test fun negative_preferredPostFailsAsOverTcpWhicheverOrder() =
+        h3Test {
+            withServer(http2 = true) { port ->
+                repeat(ROUNDS) { round ->
+                    val e =
+                        assertFails {
+                            testClient(Http3Discovery.Preferred).use { c -> c.post("https://127.0.0.1:$port/") { setBody("a body") } }
+                        }
+                    assertIs<Http2Exception.ConnectionClosed>(e, "round $round: the POST fails as over TCP: $e")
+                    assertEquals("the connection was lost: $alert", e.message, "round $round")
+                    assertEquals(emptyList(), e.suppressedExceptions.filter { it !is FailureDiagnostics }, "round $round: $e")
+                }
             }
         }
 

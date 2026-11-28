@@ -2273,7 +2273,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   certificate the client sent) fails the call with that refusal instead of passing on to the next endpoint and the
   origin, which it did only when the refusal came before the request's stream; an endpoint with any other alert, or
   whose certificate fails the client's verification, is still passed over for the next one and the origin (RFC 9460
-  section 3).
+  section 3). In `Preferred` mode, a request HTTP/3 sent on a connection whose handshake the server then refused (a
+  CRYPTO_ERROR before the handshake was confirmed) goes over TCP whatever its method when its body can be sent again:
+  the server processed none of it (RFC 9001 section 5.7). Before, only an idempotent one did, so a POST failed with the
+  QUIC close when HTTP/3 won the race and with the TCP failure when TCP did.
 - HTTP/1.1 client, a streamed upload the server stopped taking: the call could fail with
   `ClosedByteChannelException` ("connection closed") instead of its `SocketTimeoutException`. The timeout's expiry
   closes the connection under the stalled body, whose write then fails too, and that failure, preferred as the call's
