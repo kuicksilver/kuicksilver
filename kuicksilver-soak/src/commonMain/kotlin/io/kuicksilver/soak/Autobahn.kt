@@ -25,13 +25,42 @@ import io.kuicksilver.ktor.client.Kuicksilver as KuicksilverClient
  * HTTP/3 off explicitly, so the run tests that upgrade whatever the engine's defaults), Ktor's `WebSockets` plugin with
  * this library's `PerMessageDeflate`, the engine's default limits (`webSockets { maxMessageSize }`, 16 MiB). Every path is an echo: each Text and Binary frame goes back as it came (its FIN bit kept, so a fragmented
  * message is echoed fragment by fragment); the engine answers each Ping as soon as it reads it (`WebSocketPongs`, the
- * session's own Pong for it dropped), Ktor's session answers the Close. Arguments: `[host] [port]` (default 127.0.0.1, 0); the bound port is printed as
- * `autobahn-server listening on <port>` once the server accepts connections. Runs until the process is killed.
+ * session's own Pong for it dropped), Ktor's session answers the Close. Arguments: `[host] [port] [--log-connections]` (default 127.0.0.1, 0); the bound port is printed as
+ * `autobahn-server listening on <port>` once the server accepts connections. With `--log-connections` every connection
+ * prints `autobahn-server: opened <n> from <address>` once accepted and `autobahn-server: closed <n>` once over (n counts
+ * from 1, at the milliseconds since the start): whether the fuzzing client reached the server at all, and which
+ * connection was still open, when a run stops early. Runs until the process is killed.
  */
+@OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
 public fun autobahnServerMain(args: Array<String>) {
-    require(args.size <= 2) { "usage: autobahn-server [host] [port]" }
-    val host = args.getOrNull(0) ?: "127.0.0.1"
-    val port = args.getOrNull(1)?.toInt() ?: 0
+    val logConnections = "--log-connections" in args
+    val positional = args.filter { it != "--log-connections" }
+    require(positional.size <= 2) { "usage: autobahn-server [host] [port] [--log-connections]" }
+    val host = positional.getOrNull(0) ?: "127.0.0.1"
+    val port = positional.getOrNull(1)?.toInt() ?: 0
+    val started =
+        kotlin.time.TimeSource.Monotonic
+            .markNow()
+    val opened = kotlin.concurrent.atomics.AtomicInt(0)
+    val closed = kotlin.concurrent.atomics.AtomicInt(0)
+    val connections =
+        object : io.kuicksilver.ktor.server.KuicksilverServerEventListener() {
+            override fun connectionOpened(
+                protocol: io.ktor.http.HttpProtocolVersion,
+                remote: io.ktor.network.sockets.InetSocketAddress?,
+            ) {
+                println(
+                    "autobahn-server: opened ${opened.addAndFetch(1)} from $remote at ${started.elapsedNow().inWholeMilliseconds} ms",
+                )
+            }
+
+            override fun connectionClosed(
+                protocol: io.ktor.http.HttpProtocolVersion,
+                remote: io.ktor.network.sockets.InetSocketAddress?,
+            ) {
+                println("autobahn-server: closed ${closed.addAndFetch(1)} ($remote) at ${started.elapsedNow().inWholeMilliseconds} ms")
+            }
+        }
     runBlocking {
         val server =
             embeddedServer(Kuicksilver, configure = {
@@ -41,6 +70,7 @@ public fun autobahnServerMain(args: Array<String>) {
                 }
                 http2 { enabled = false }
                 http3 { enabled = false }
+                if (logConnections) observability { eventListener = connections }
             }) {
                 install(ServerWebSockets) { extensions { install(PerMessageDeflate) } }
                 routing { webSocket("{...}") { echo() } }

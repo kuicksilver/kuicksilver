@@ -139,19 +139,76 @@ stop_server() { # <pid>: SIGTERM, then SIGKILL (a Kotlin/Native executable may h
 }
 
 # What the server was doing when the fuzzing client ended, for a run that stops early (a client that can no longer
-# connect, as 9.2.1 in int39's run): its sockets (lsof, when there is one) and, for the JVM, its threads (jcmd, of the
-# java process the background subshell started). Both go to <dir>/server-state.txt; nothing here fails the run.
+# connect, as 9.2.1 in int39's run): its sockets (lsof; on Linux also ss, the listening socket and the connections of the
+# port), the last lines of its output (server.log, with a line per connection from --log-connections) and, for the JVM, its
+# threads (jcmd, of the java process the background subshell started). All of it goes to <dir>/server-state.txt; nothing
+# here fails the run.
 server_state() { # <kind> <pid> <port> <dir>
   local kind=$1 pid=$2 port=$3 dir=$4 jpid
   {
     echo "== sockets of port $port"
     if command -v lsof > /dev/null; then lsof -nP -iTCP:"$port" 2>&1 || true; else echo "(no lsof)"; fi
+    if [ "$(uname -s)" = Linux ] && command -v ss > /dev/null; then
+      echo "== ss: the listening socket of port $port"
+      ss -tlnp "( sport = :$port )" 2>&1 || true
+      echo "== ss: the connections of port $port"
+      ss -tnp "( sport = :$port or dport = :$port )" 2>&1 || true
+    fi
+    echo "== the last 50 lines of the server's output ($dir/server.log)"
+    tail -n 50 "$dir/server.log" 2>&1 || true
     if [ "$kind" = jvm ]; then
       jpid=$(pgrep -P "$pid" java 2>/dev/null | head -1)
       echo "== threads of the server JVM (pid ${jpid:-$pid})"
       if command -v jcmd > /dev/null; then jcmd "${jpid:-$pid}" Thread.print 2>&1 || true; else echo "(no jcmd)"; fi
     fi
   } > "$dir/server-state.txt" 2>&1
+}
+
+# Docker Desktop reaches a server on this Mac only through host.docker.internal, a path that now and then drops a
+# connection before it reaches the host (int39: a connect timeout at 9.2.1 in one run, at 9.7.2 in the next, the server
+# listening and idle). When the fuzzing client's last connect timed out ("User timeout caused connection failure") and
+# the server logged no connection for that case (one "autobahn-server: opened" line per case the report has), the cases
+# not reported yet run again, in a fuzzing client of their own, and their reports join the first ones; at most 3 times. A
+# connection the server did see is never retried: that failure is the server's, and the verdict reports it.
+# Prints the cases still to run, or nothing (no retry: every case reported, or the failure is not that one).
+dropped_by_docker_desktop() { # <dir>
+  local dir=$1
+  grep -q 'User timeout caused connection failure' "$dir/wstest.log" 2>/dev/null || return 0
+  python3 -I - "$dir" "$agent" << 'PYEOF'
+import ast, json, os, re, sys
+d, agent = sys.argv[1], sys.argv[2]
+log = open(os.path.join(d, "wstest.log"), encoding="utf-8", errors="replace").read()
+m = re.search(r"^Cases = (\[.*\])$", log, re.M)
+if not m:
+    sys.exit(0)
+cases = ast.literal_eval(m.group(1))
+done = set()
+if os.path.exists(os.path.join(d, "index.json")):
+    done = set(json.load(open(os.path.join(d, "index.json"))).get(agent, {}))
+opened = len(re.findall(r"^autobahn-server: opened ", open(os.path.join(d, "server.log"), errors="replace").read(), re.M))
+left = [c for c in cases if c not in done]
+# a connection the server saw for the case that failed is no drop of the path
+if left and opened <= len(done):
+    print(" ".join(left))
+PYEOF
+}
+
+# Joins the reports of a rerun (<dir>/<sub>) to those of <dir>: the per-case files and index.json's entries.
+join_reports() { # <dir> <sub>
+  python3 -I - "$1" "$2" "$agent" << 'PYEOF'
+import json, os, shutil, sys
+d, sub, agent = sys.argv[1], sys.argv[2], sys.argv[3]
+src = os.path.join(d, sub)
+main = os.path.join(d, "index.json")
+index = json.load(open(main)) if os.path.exists(main) else {agent: {}}
+if os.path.exists(os.path.join(src, "index.json")):
+    for case, entry in json.load(open(os.path.join(src, "index.json"))).get(agent, {}).items():
+        index.setdefault(agent, {})[case] = entry
+for name in os.listdir(src):
+    if name.startswith(agent + "_case_"):
+        shutil.copy(os.path.join(src, name), os.path.join(d, name))
+json.dump(index, open(main, "w"), indent=1, sort_keys=True)
+PYEOF
 }
 
 # The conformance program of a host kind with its arguments.
@@ -166,7 +223,7 @@ run_host() { # <kind> <program> <argument>...
 host_server() { # <kind>: the server on this host, the fuzzing client in its container
   local kind=$1 dir="build/autobahn/$1-server" pid port target=127.0.0.1 net=(--network host)
   mkdir -p "$dir"
-  run_host "$kind" autobahn-server 127.0.0.1 0 > "$dir/server.log" 2>&1 &
+  run_host "$kind" autobahn-server 127.0.0.1 0 --log-connections > "$dir/server.log" 2>&1 &
   pid=$!
   port=""
   for _ in $(seq 1 120); do
@@ -180,6 +237,22 @@ host_server() { # <kind>: the server on this host, the fuzzing client in its con
   echo "{\"outdir\": \"/out\", \"servers\": [{\"agent\": \"$agent\", \"url\": \"ws://$target:$port\"}], $spec_cases}" > "$dir/spec.json"
   docker run --rm --platform linux/amd64 ${net[@]+"${net[@]}"} -v "$root/$dir:/out" "$image" \
     wstest -m fuzzingclient -s /out/spec.json > "$dir/wstest.log" 2>&1 || true
+  if [ "$(uname -s)" = Darwin ]; then
+    local retry left list
+    for retry in 1 2 3; do
+      left=$(dropped_by_docker_desktop "$dir")
+      [ -n "$left" ] || break
+      echo "autobahn ($kind server): Docker Desktop's host networking dropped the connection of case ${left%% *} before it reached the server (it logged no connection for it): the $(wc -w <<< "$left" | tr -d ' ') cases not reported run again (retry $retry of 3)" >&2
+      list=$(sed 's/[^ ][^ ]*/"&"/g; s/ /, /g' <<< "$left")
+      mkdir -p "$dir/retry-$retry"
+      echo "{\"outdir\": \"/out/retry-$retry\", \"servers\": [{\"agent\": \"$agent\", \"url\": \"ws://$target:$port\"}], \"cases\": [$list], \"exclude-cases\": [], \"exclude-agent-cases\": {}}" > "$dir/retry-$retry/spec.json"
+      { echo "== retry $retry: the cases from ${left%% *} on"
+        docker run --rm --platform linux/amd64 -v "$root/$dir:/out" "$image" wstest -m fuzzingclient -s "/out/retry-$retry/spec.json" 2>&1 || true
+      } >> "$dir/wstest.log"
+      join_reports "$dir" "retry-$retry"
+    done
+    [ -z "$(dropped_by_docker_desktop "$dir")" ] || echo "autobahn ($kind server): Docker Desktop's host networking kept dropping connections after 3 reruns; the cases not reported fail the run" >&2
+  fi
   server_state "$kind" "$pid" "$port" "$dir"
   stop_server "$pid"
   verdict "$kind" server "$dir"
@@ -214,7 +287,7 @@ linux_run() { # <mode>: the linuxX64 executable and the suite in one container o
   [ "$(uname -s)" = Linux ] && user=(--user "$(id -u):$(id -g)" -e HOME=/tmp)
   if [ "$mode" = server ]; then
     docker run --rm ${user[@]+"${user[@]}"} --platform linux/amd64 -v "$root:/w" -w /w --entrypoint bash "$image" -c "
-      $exe_path autobahn-server 127.0.0.1 0 > $dir/server.log 2>&1 &
+      $exe_path autobahn-server 127.0.0.1 0 --log-connections > $dir/server.log 2>&1 &
       for i in \$(seq 1 120); do port=\$(sed -n 's/^autobahn-server listening on \\([0-9]*\\)\$/\\1/p' $dir/server.log); [ -n \"\$port\" ] && break; sleep 1; done
       [ -n \"\$port\" ] || { echo 'the server did not start within 120 s'; cat $dir/server.log; exit 1; }
       echo '{\"outdir\": \"$dir\", \"servers\": [{\"agent\": \"$agent\", \"url\": \"ws://127.0.0.1:'\$port'\"}], $spec_cases}' > $dir/spec.json
