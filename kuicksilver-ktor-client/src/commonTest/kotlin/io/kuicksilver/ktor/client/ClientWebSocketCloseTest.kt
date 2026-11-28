@@ -128,7 +128,8 @@ class ClientWebSocketCloseTest {
      * held less than its capacity), the session counted it as written and ended at the engine's close with the server's
      * grace (1 s); the Close never left, and the connection's close, cut short by the engine's cleanup, ended the stream
      * inside a frame with a FIN (the server read `cut`). The connection is filled 64 KiB frame by frame until a frame
-     * stays queued ([fillUntilAFrameStaysQueued]); the Close then fits behind it.
+     * stays queued once the server's channel is full ([fillUntilAFrameStaysQueued], [readLoopHeld]); the Close then fits
+     * behind it.
      */
     @Test fun negative_aCloseQueuedInFrontOfAFullKernelIsNotWritten() =
         clientTest {
@@ -136,6 +137,7 @@ class ClientWebSocketCloseTest {
             val listener = bindTcp(selector, "127.0.0.1", 0)
             val released = CompletableDeferred<Unit>()
             val handed = CompletableDeferred<io.kuicksilver.ktor.client.h1.H1Connection>()
+            val serverInput = CompletableDeferred<ByteReadChannel>()
             val closeWait = 3_000L
             try {
                 coroutineScope {
@@ -145,6 +147,7 @@ class ClientWebSocketCloseTest {
                                 val input = s.openReadChannel()
                                 val output = s.openWriteChannel(autoFlush = true)
                                 output.writeStringUtf8(switchingProtocols(input.readWebSocketKey()))
+                                serverInput.complete(input)
                                 released.await() // reads nothing before the engine's cleanup is over
                                 probing(output) { readClientFrames(input, it) }
                             }
@@ -158,7 +161,8 @@ class ClientWebSocketCloseTest {
                     val lifetime = session.call.attributes[WebSocketLifetimeKey]
                     val conn = withTimeout(10.seconds) { handed.await() }
                     val frame = ByteArray(64 * 1024)
-                    val frames = fillUntilAFrameStaysQueued(session, conn, frame)
+                    val input = withTimeout(10.seconds) { serverInput.await() }
+                    val frames = fillUntilAFrameStaysQueued(session, conn, frame) { readLoopHeld(input) }
                     val started =
                         kotlin.time.TimeSource.Monotonic
                             .markNow()
@@ -524,16 +528,28 @@ internal const val MAX_FILL_FRAMES: Int = 1024
  * of a peer that reads nothing: the kernels' socket buffers (and the peer's channel) are full. Returns the frames sent.
  * Stays queued means: bytes handed to the connection have not reached the kernel
  * ([io.kuicksilver.ktor.client.h1.H1Connection.pendingForTest], from the counts: the channels are not looked at from
- * outside their readers), and none of them did for 1 s (polled every 10 ms); a frame the kernel took all of is followed
- * by the next. After each frame a pause of 20 ms lets Ktor's writer hand it on. Fails after [MAX_FILL_FRAMES] frames: buffers
- * that take more than that are not what this models. Fails as well when more than 256 KiB wait at the end, so that a
- * Close still fits into the channel behind them: with a full channel the writer is held in its flush and has not written
- * its Close either way, which the other tests cover.
+ * outside their readers), and none of them did for 1 s (polled every 10 ms) once [peerFull] said the peer's own read
+ * loop is held; a frame the kernel took all of is followed by the next. After each frame a pause of 20 ms lets Ktor's
+ * writer hand it on.
+ *
+ * A pause of the kernel alone is no full connection while the peer's read loop still takes bytes from its kernel into
+ * its channel: the room that makes reaches the sender only with a window update, which TCP holds back while the room is
+ * small (silly window avoidance), and the sender then finds it with its zero-window probe, whose interval backs off. On
+ * Windows (GitHub's runner, run 46118932855) the kernel took nothing for over 1 s after 18 frames, then took the rest
+ * and the Close behind it. So a stall counts only once [peerFull] (it stays so: nothing reads the peer's channel), its
+ * 1 s counted from then, and only with at least a whole [frame] queued: room the window had but had not advertised when
+ * the peer became full is less than a segment. Otherwise one more frame follows.
+ *
+ * Fails after [MAX_FILL_FRAMES] frames: buffers that take more than that are not what this models. Fails as well when
+ * more than 256 KiB wait at the end, so that a Close still fits into the channel behind them: with a full channel the
+ * writer is held in its flush and has not written its Close either way, which the other tests cover. Fails when bytes
+ * stay queued for 30 s with the peer's channel not full.
  */
 internal suspend fun fillUntilAFrameStaysQueued(
     session: io.ktor.websocket.WebSocketSession,
     conn: io.kuicksilver.ktor.client.h1.H1Connection,
     frame: ByteArray,
+    peerFull: () -> Boolean,
 ): Int {
     var frames = 0
     while (true) {
@@ -544,25 +560,40 @@ internal suspend fun fillUntilAFrameStaysQueued(
         frames++
         kotlinx.coroutines.delay(20) // Ktor's writer hands the frame on
         var seen = -1L
+        var full = false
         var since =
             kotlin.time.TimeSource.Monotonic
                 .markNow()
         while (true) {
             val now = conn.pendingForTest(conn.handedForTest!!.invoke())!!
             if (now <= 0L) break
-            if (now != seen) {
+            // the peer's read loop held: from now on its kernel's buffer only fills, the stall is counted from here
+            val fullNow = full || peerFull()
+            if (now != seen || fullNow != full) {
                 seen = now
+                full = fullNow
                 since =
                     kotlin.time.TimeSource.Monotonic
                         .markNow()
-            } else if (since.elapsedNow() >= 1.seconds) {
-                assertTrue(now in 1L..(256L * 1024), "$now bytes queued in front of the kernel after $frames frames")
+            } else if (full && since.elapsedNow() >= 1.seconds) {
+                if (now < frame.size) break // less than a frame queued: one more
+                assertTrue(now <= 256L * 1024, "$now bytes queued in front of the kernel after $frames frames")
                 return frames
+            } else if (!full && since.elapsedNow() >= 30.seconds) {
+                kotlin.test.fail("$now bytes queued for 30 s after $frames frames, the peer's channel not full")
             }
             kotlinx.coroutines.delay(10)
         }
     }
 }
+
+/**
+ * Whether the read loop of the socket behind [input] (a server's `openReadChannel()`, a ktor-io `ByteChannel` no one
+ * reads) is held in its flush for good: the channel holds Ktor's `CHANNEL_MAX_SIZE` (1 MiB) flushed and not taken, and
+ * only its reader would release it. A volatile count, read from any thread; the channel's buffers are not looked at.
+ */
+@OptIn(io.ktor.utils.io.InternalAPI::class)
+internal fun readLoopHeld(input: ByteReadChannel): Boolean = !(input as io.ktor.utils.io.ByteChannel).hasFreeSpace
 
 /**
  * The bound of a test that runs [unwrittenCloseAttempts]: its worst case is four attempts (1, 2, 4 and 8 frames of

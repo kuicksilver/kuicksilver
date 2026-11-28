@@ -117,6 +117,12 @@ class ClientWebSocketCloseOrderTest {
          * dropped, so its end ("client FIN" or "client RST") is still seen. Without TLS nothing.
          */
         val stopFeeding: () -> Unit = {},
+        /**
+         * The server's channels are full and no one reads them, so its socket's read loop takes nothing more from the
+         * kernel ([readLoopHeld]): over TLS the socket's channel and the copy the TLS session reads, whose pump is then
+         * held on its own full input.
+         */
+        val readLoopHeld: () -> Boolean,
     )
 
     /**
@@ -156,7 +162,7 @@ class ClientWebSocketCloseOrderTest {
                                         }, close = {
                                             events += "server FIN"
                                             socketOut.flushAndClose()
-                                        })
+                                        }, readLoopHeld = { readLoopHeld(socketIn) })
                                     } else {
                                         // the TLS session reads a copy of the socket's input, so that its end is seen. Once
                                         // the session stopped reading ([RawConnection.stopFeeding]: a failed TLS write
@@ -216,7 +222,7 @@ class ClientWebSocketCloseOrderTest {
                                         }, stopFeeding = {
                                             stopped.complete(Unit)
                                             fed.cancel(kotlinx.io.IOException("the TLS session stopped reading"))
-                                        })
+                                        }, readLoopHeld = { readLoopHeld(fed) && readLoopHeld(socketIn) })
                                     }
                                 conn.output.writeStringUtf8(switchingProtocols(conn.input.readWebSocketKey()))
                                 conn.output.flush()
@@ -495,7 +501,9 @@ class ClientWebSocketCloseOrderTest {
             var ends = emptyList<String>()
             val handed = CompletableDeferred<io.kuicksilver.ktor.client.h1.H1Connection>()
             val closeWait = 3_000L
+            val served = CompletableDeferred<RawConnection>()
             rawServer(true, serve = { conn ->
+                served.complete(conn)
                 released.await() // reads nothing before the engine's cleanup is over
                 val read = probing(conn.output) { readClientFrames(conn.input, it) }
                 conn.stopFeeding()
@@ -511,7 +519,8 @@ class ClientWebSocketCloseOrderTest {
                     val lifetime = session.call.attributes[WebSocketLifetimeKey]
                     val conn = withTimeout(10.seconds) { handed.await() }
                     val frame = ByteArray(64 * 1024)
-                    val frames = fillUntilAFrameStaysQueued(session, conn, frame)
+                    val raw = withTimeout(10.seconds) { served.await() }
+                    val frames = fillUntilAFrameStaysQueued(session, conn, frame, raw.readLoopHeld)
                     launch { session.close(CloseReason(4002, "client bye")) }
                     session.call.coroutineContext[kotlinx.coroutines.Job]!!.join()
                     c.close()
